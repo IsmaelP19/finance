@@ -1,16 +1,20 @@
 //
-//  PatrimonyPieChart.swift
+//  CategoryPieChart.swift
 //  Finance
 //
-//  Created by Ismael Perez on 11/02/2026.
+//  Created by OpenCode on 12/02/2026.
 //
 
 import SwiftUI
 import Charts
 
-struct PatrimonyPieChart: View {
+struct CategoryPieChart: View {
     @Environment(\.colorScheme) private var colorScheme
-    let data: [TypeBalanceDatum]
+
+    let title: String
+    let emptyTitle: String
+    let emptyDescription: String
+    let data: [CategoryAmountDatum]
     let currencyCode: String
 
     private var total: Double {
@@ -19,27 +23,27 @@ struct PatrimonyPieChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Label("Patrimonio por tipo", systemImage: "chart.pie.fill")
+            Label(title, systemImage: "chart.pie.fill")
                 .font(.headline)
-                .foregroundStyle(.primary)
+                .foregroundStyle(colorScheme == .dark ? .white : .primary)
 
             if data.isEmpty || total <= 0 {
                 ContentUnavailableView(
-                    "Sin valores positivos",
+                    emptyTitle,
                     systemImage: "chart.pie",
-                    description: Text("El grafico circular necesita saldos positivos.")
+                    description: Text(emptyDescription)
                 )
             } else {
                 Chart(data) { item in
                     SectorMark(
-                        angle: .value("Saldo", item.amountDouble),
+                        angle: .value("Importe", item.amountDouble),
                         innerRadius: .ratio(0.56),
                         angularInset: 1.6
                     )
-                    .foregroundStyle(item.type.color.gradient)
+                    .foregroundStyle(item.color.gradient)
                     .cornerRadius(4)
                 }
-                .frame(height: 220)
+                .frame(height: 230)
                 .chartLegend(.hidden)
                 .chartBackground { proxy in
                     GeometryReader { geo in
@@ -63,18 +67,18 @@ struct PatrimonyPieChart: View {
                 VStack(spacing: 8) {
                     ForEach(data) { item in
                         HStack(spacing: 10) {
-                            Circle()
-                                .fill(item.type.color)
-                                .frame(width: 10, height: 10)
+                            Image(systemName: item.iconName)
+                                .foregroundStyle(item.color)
+                                .frame(width: 14)
 
-                            Text(item.type.displayName)
+                            Text(item.name)
                                 .font(.subheadline)
                                 .foregroundStyle(colorScheme == .dark ? .white : .primary)
 
                             Spacer()
 
                             Text("\(Int((item.amountDouble / total) * 100))%")
-                                .font(.subheadline)
+                                .font(.caption)
                                 .foregroundStyle(colorScheme == .dark ? .white.opacity(0.65) : .secondary)
 
                             Text(item.amount.asCurrency(code: currencyCode))

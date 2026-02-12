@@ -13,6 +13,7 @@ import SwiftData
 struct AccountDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
 
     @Bindable var account: BankAccount
 
@@ -39,7 +40,7 @@ struct AccountDetailView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
-                    Text(account.balance.asCurrency(code: account.currency))
+                    Text(account.balance.asCurrency())
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .foregroundStyle(account.balance.isNegative ? .red : .primary)
                         .padding(.top, 4)
@@ -53,18 +54,14 @@ struct AccountDetailView: View {
             Section("Detalles") {
                 DetailRow(label: "Banco", value: account.bankDisplayName)
                 DetailRow(label: "Tipo", value: account.accountType.displayName)
-                DetailRow(label: "Moneda", value: account.currency)
+                DetailRow(label: "Moneda", value: appCurrencyCode)
                 DetailRow(
                     label: "Creada",
-                    value: account.createdAt.formatted(
-                        .dateTime.day().month(.wide).year().hour().minute()
-                    )
+                    value: account.createdAt.asSpanishDateTime()
                 )
                 DetailRow(
                     label: "Última actualización",
-                    value: account.updatedAt.formatted(
-                        .dateTime.day().month(.wide).year().hour().minute()
-                    )
+                    value: account.updatedAt.asSpanishDateTime()
                 )
             }
 

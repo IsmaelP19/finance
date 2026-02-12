@@ -37,19 +37,15 @@ private enum AppNumberFormatter {
     }()
 
     static func currencySymbol(for code: String) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .currency
-        formatter.currencyCode = code
-        formatter.locale = Locale(identifier: "es_ES")
-        return formatter.currencySymbol ?? code
+        AppCurrency.symbol(for: code)
     }
 }
 
 /// Extensión para formatear valores Decimal como moneda.
 extension Decimal {
-    /// Formatea el valor como moneda (por defecto EUR con locale es_ES).
+    /// Formatea el valor como moneda (por defecto la moneda global de la app).
     /// Ejemplo: 1234.56 -> "1.234,56 €"
-    func asCurrency(code: String = "EUR") -> String {
+    func asCurrency(code: String = AppCurrency.currentCode()) -> String {
         let amount = AppNumberFormatter.decimal.string(from: self as NSDecimalNumber) ?? "0,00"
         return "\(amount) \(AppNumberFormatter.currencySymbol(for: code))"
     }

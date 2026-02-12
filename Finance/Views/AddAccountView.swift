@@ -14,6 +14,7 @@ import SwiftData
 struct AddAccountView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
 
     @Query(sort: \Bank.name) private var banks: [Bank]
 
@@ -29,7 +30,6 @@ struct AddAccountView: View {
     @State private var newBankColor: BankColor = .blue
     @State private var accountType: AccountType = .checking
     @State private var balanceText: String = ""
-    @State private var currency: String = "EUR"
     @State private var notes: String = ""
 
     @State private var showingValidationAlert = false
@@ -139,7 +139,7 @@ struct AddAccountView: View {
                     HStack {
                         TextField("0,00", text: $balanceText)
                             .keyboardType(.decimalPad)
-                        Text(currency)
+                        Text(appCurrencyCode)
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -196,7 +196,6 @@ struct AddAccountView: View {
         selectedBank = account.bank
         accountType = account.accountType
         balanceText = formatBalanceForEditing(account.balance)
-        currency = account.currency
         notes = account.notes
     }
 
@@ -242,7 +241,7 @@ struct AddAccountView: View {
             account.bank = selectedBank
             account.accountType = accountType
             account.balance = balance
-            account.currency = currency
+            account.currency = appCurrencyCode
             account.notes = notes.trimmingCharacters(in: .whitespaces)
             account.updatedAt = Date()
         } else {
@@ -252,7 +251,7 @@ struct AddAccountView: View {
                 bank: selectedBank,
                 accountType: accountType,
                 balance: balance,
-                currency: currency,
+                currency: appCurrencyCode,
                 notes: notes.trimmingCharacters(in: .whitespaces)
             )
             modelContext.insert(newAccount)

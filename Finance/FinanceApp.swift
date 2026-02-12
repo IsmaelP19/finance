@@ -14,6 +14,8 @@ struct FinanceApp: App {
         let schema = Schema([
             Bank.self,
             BankAccount.self,
+            MovementCategory.self,
+            Movement.self,
         ])
         let modelConfiguration = ModelConfiguration(
             schema: schema,

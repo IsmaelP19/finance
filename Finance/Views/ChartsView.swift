@@ -35,6 +35,7 @@ struct BankBalanceDatum: Identifiable {
 /// Pestana de graficos y resumen del patrimonio.
 struct ChartsView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
 
     private var totalBalance: Decimal {
@@ -123,9 +124,9 @@ struct ChartsView: View {
                     } else {
                         patrimonyHeroCard
 
-                        PatrimonyPieChart(data: pieTypeBalances)
+                        PatrimonyPieChart(data: pieTypeBalances, currencyCode: appCurrencyCode)
 
-                        BalanceByBankBarChart(data: bankBalances)
+                        BalanceByBankBarChart(data: bankBalances, currencyCode: appCurrencyCode)
 
                         summarySection
                     }
@@ -156,7 +157,7 @@ struct ChartsView: View {
                     .foregroundStyle(.white)
             }
 
-            Text(totalBalance.asCurrency())
+            Text(totalBalance.asCurrency(code: appCurrencyCode))
                 .font(.system(size: 34, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
 
@@ -201,12 +202,12 @@ struct ChartsView: View {
                 .foregroundStyle(.primary)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                SummaryMetricCard(title: "Patrimonio total", value: totalBalance.asCurrency(), icon: "eurosign.circle")
+                SummaryMetricCard(title: "Patrimonio total", value: totalBalance.asCurrency(code: appCurrencyCode), icon: "creditcard")
                 SummaryMetricCard(title: "Cuentas", value: "\(accounts.count)", icon: "building.columns")
                 SummaryMetricCard(title: "Bancos", value: "\(bankBalances.count)", icon: "building.2")
                 SummaryMetricCard(
                     title: "Saldo medio/cuenta",
-                    value: accounts.isEmpty ? "0,00 EUR" : (totalBalance / Decimal(accounts.count)).asCurrency(),
+                    value: accounts.isEmpty ? Decimal(0).asCurrency(code: appCurrencyCode) : (totalBalance / Decimal(accounts.count)).asCurrency(code: appCurrencyCode),
                     icon: "divide.circle"
                 )
                 SummaryMetricCard(

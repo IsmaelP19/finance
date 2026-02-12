@@ -20,12 +20,59 @@ enum DataExportService {
         let exportDate: Date
         let banks: [BankDTO]
         let accounts: [BankAccountDTO]
+        let categories: [MovementCategoryDTO]
+        let movements: [MovementDTO]
+
+        enum CodingKeys: String, CodingKey {
+            case version
+            case exportDate
+            case banks
+            case accounts
+            case categories
+            case movements
+        }
+
+        init(
+            version: Int,
+            exportDate: Date,
+            banks: [BankDTO],
+            accounts: [BankAccountDTO],
+            categories: [MovementCategoryDTO],
+            movements: [MovementDTO]
+        ) {
+            self.version = version
+            self.exportDate = exportDate
+            self.banks = banks
+            self.accounts = accounts
+            self.categories = categories
+            self.movements = movements
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            version = try container.decode(Int.self, forKey: .version)
+            exportDate = try container.decode(Date.self, forKey: .exportDate)
+            banks = try container.decode([BankDTO].self, forKey: .banks)
+            accounts = try container.decode([BankAccountDTO].self, forKey: .accounts)
+            categories = try container.decodeIfPresent([MovementCategoryDTO].self, forKey: .categories) ?? []
+            movements = try container.decodeIfPresent([MovementDTO].self, forKey: .movements) ?? []
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(version, forKey: .version)
+            try container.encode(exportDate, forKey: .exportDate)
+            try container.encode(banks, forKey: .banks)
+            try container.encode(accounts, forKey: .accounts)
+            try container.encode(categories, forKey: .categories)
+            try container.encode(movements, forKey: .movements)
+        }
     }
 
-    /// Nombre del archivo exportado.
+    /// Nombre del archivo exportado con timestamp.
     private static var exportFileName: String {
         let dateFormatter = DateFormatter()
-        dateFormatter.dateFormat = "yyyy-MM-dd_HHmmss"
+        dateFormatter.dateFormat = "yyyy-MM-dd_HHmmssSSS"
         let dateString = dateFormatter.string(from: Date())
         return "Finance_backup_\(dateString).json"
     }
@@ -46,17 +93,26 @@ enum DataExportService {
 
     // MARK: - Exportar
 
-    /// Exporta todos los bancos y cuentas a un archivo JSON temporal.
+    /// Exporta todos los bancos, cuentas, categorías y movimientos a un archivo JSON temporal.
     @discardableResult
-    static func exportData(banks: [Bank], accounts: [BankAccount]) throws -> URL {
+    static func exportData(
+        banks: [Bank],
+        accounts: [BankAccount],
+        categories: [MovementCategory],
+        movements: [Movement]
+    ) throws -> URL {
         let bankDTOs = banks.map { BankDTO(from: $0) }
         let accountDTOs = accounts.map { BankAccountDTO(from: $0) }
+        let categoryDTOs = categories.map { MovementCategoryDTO(from: $0) }
+        let movementDTOs = movements.map { MovementDTO(from: $0) }
 
         let exportData = ExportData(
-            version: 2,
+            version: 3,
             exportDate: Date(),
             banks: bankDTOs,
-            accounts: accountDTOs
+            accounts: accountDTOs,
+            categories: categoryDTOs,
+            movements: movementDTOs
         )
 
         let encoder = JSONEncoder()
@@ -67,9 +123,21 @@ enum DataExportService {
 
         let tempDir = FileManager.default.temporaryDirectory
         let fileURL = tempDir.appendingPathComponent(exportFileName)
+
         try jsonData.write(to: fileURL)
 
         return fileURL
+    }
+
+    /// Lee la fecha de exportación incluida dentro del JSON.
+    static func readExportDate(from url: URL) -> Date? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        guard let exportData = try? decoder.decode(ExportData.self, from: data) else { return nil }
+        return exportData.exportDate
     }
 
     // MARK: - Importar
@@ -78,10 +146,12 @@ enum DataExportService {
     struct ImportResult {
         let banks: [Bank]
         let accounts: [BankAccount]
+        let categories: [MovementCategory]
+        let movements: [Movement]
     }
 
-    /// Importa bancos y cuentas desde un archivo JSON.
-    /// Vincula automáticamente cada cuenta con su banco correspondiente por UUID.
+    /// Importa bancos, cuentas, categorías y movimientos desde un archivo JSON.
+    /// Vincula automáticamente las relaciones por UUID.
     static func importData(from url: URL) throws -> ImportResult {
         let data = try Data(contentsOf: url)
 
@@ -90,13 +160,15 @@ enum DataExportService {
 
         let exportData = try decoder.decode(ExportData.self, from: data)
 
-        // Crear los bancos
+        // Crear bancos y categorías
         let banks = exportData.banks.map { $0.toModel() }
+        let categories = exportData.categories.map { $0.toModel() }
 
-        // Crear un diccionario de bancos por UUID para vincular
+        // Diccionarios por UUID para vincular relaciones
         let banksByID = Dictionary(uniqueKeysWithValues: banks.map { ($0.id, $0) })
+        let categoriesByID = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
 
-        // Crear las cuentas y vincular cada una con su banco
+        // Crear cuentas y vincular cada una con su banco
         let accounts = exportData.accounts.map { dto -> BankAccount in
             let account = dto.toModel()
             if let bankId = dto.bankId {
@@ -105,6 +177,26 @@ enum DataExportService {
             return account
         }
 
-        return ImportResult(banks: banks, accounts: accounts)
+        // Crear diccionario de cuentas para vincular movimientos
+        let accountsByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+
+        // Crear movimientos y vincular cuenta/categoría
+        let movements = exportData.movements.map { dto -> Movement in
+            let movement = dto.toModel()
+            if let accountId = dto.accountId {
+                movement.account = accountsByID[accountId]
+            }
+            if let categoryId = dto.categoryId {
+                movement.category = categoriesByID[categoryId]
+            }
+            return movement
+        }
+
+        return ImportResult(
+            banks: banks,
+            accounts: accounts,
+            categories: categories,
+            movements: movements
+        )
     }
 }

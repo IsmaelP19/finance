@@ -1,53 +1,53 @@
 //
-//  BankManagementView.swift
+//  CategoryManagementView.swift
 //  Finance
 //
-//  Created by Ismael Pérez on 11/02/2026.
+//  Created by OpenCode on 12/02/2026.
 //
 
 import SwiftUI
 import SwiftData
 
-/// Pantalla para gestionar bancos guardados: crear, editar y eliminar.
-struct BankManagementView: View {
+/// Pantalla para gestionar categorías de movimientos.
+struct CategoryManagementView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @Query(sort: \Bank.name) private var banks: [Bank]
+    @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
 
-    @State private var editingBank: Bank?
-    @State private var showingCreateBank = false
+    @State private var editingCategory: MovementCategory?
+    @State private var showingCreateCategory = false
 
     var body: some View {
         NavigationStack {
             List {
-                if banks.isEmpty {
+                if categories.isEmpty {
                     ContentUnavailableView(
-                        "Sin bancos",
-                        systemImage: "building.columns",
-                        description: Text("Pulsa + para crear tu primer banco")
+                        "Sin categorías",
+                        systemImage: "tag",
+                        description: Text("Pulsa + para crear tu primera categoría")
                     )
                     .listRowBackground(Color.clear)
                 } else {
-                    ForEach(banks, id: \.id) { bank in
+                    ForEach(categories, id: \.id) { category in
                         Button {
-                            editingBank = bank
+                            editingCategory = category
                         } label: {
                             HStack(spacing: 12) {
-                                Image(systemName: bank.iconName)
+                                Image(systemName: category.iconName)
                                     .font(.title3)
                                     .foregroundStyle(.white)
                                     .frame(width: 34, height: 34)
-                                    .background(bank.color)
+                                    .background(category.color)
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
 
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(bank.name)
+                                    Text(category.name)
                                         .font(.body)
                                         .fontWeight(.medium)
                                         .foregroundStyle(.primary)
 
-                                    Text("\((bank.accounts ?? []).count) \((bank.accounts ?? []).count == 1 ? "cuenta" : "cuentas")")
+                                    Text(movementCountText(for: category))
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -62,17 +62,17 @@ struct BankManagementView: View {
                         .buttonStyle(.plain)
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
-                                editingBank = bank
+                                editingCategory = category
                             } label: {
                                 Label("Editar", systemImage: "pencil")
                             }
                             .tint(.blue)
                         }
                     }
-                    .onDelete(perform: deleteBanks)
+                    .onDelete(perform: deleteCategories)
                 }
             }
-            .navigationTitle("Bancos")
+            .navigationTitle("Categorías")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -83,63 +83,66 @@ struct BankManagementView: View {
 
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        showingCreateBank = true
+                        showingCreateCategory = true
                     } label: {
                         Image(systemName: "plus")
                     }
                 }
             }
-            .sheet(item: $editingBank) { (bank: Bank) in
-                BankEditorSheet(bank: bank)
+            .sheet(item: $editingCategory) { (category: MovementCategory) in
+                CategoryEditorSheet(category: category)
             }
-            .sheet(isPresented: $showingCreateBank) {
-                BankEditorSheet()
+            .sheet(isPresented: $showingCreateCategory) {
+                CategoryEditorSheet()
             }
         }
     }
 
-    private func deleteBanks(at offsets: IndexSet) {
+    private func deleteCategories(at offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                modelContext.delete(banks[index])
+                modelContext.delete(categories[index])
             }
         }
+    }
+
+    private func movementCountText(for category: MovementCategory) -> String {
+        let count = (category.movements ?? []).count
+        return "\(count) \(count == 1 ? "movimiento" : "movimientos")"
     }
 }
 
-/// Formulario para crear o editar un banco.
-struct BankEditorSheet: View {
+/// Formulario para crear o editar una categoría.
+struct CategoryEditorSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @Query(sort: \Bank.name) private var banks: [Bank]
+    @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
 
-    var bank: Bank?
+    var category: MovementCategory?
 
-    init(bank: Bank? = nil) {
-        self.bank = bank
+    init(category: MovementCategory? = nil) {
+        self.category = category
     }
 
-    @State private var bankName: String = ""
-    @State private var selectedIcon: BankIcon = .buildingColumns
-    @State private var selectedColor: BankColor = .blue
+    @State private var categoryName: String = ""
+    @State private var selectedIcon: CategoryIcon = .tag
+    @State private var selectedColor: CategoryColor = .blue
     @State private var showingValidationAlert = false
     @State private var validationMessage = ""
 
-    private var isEditing: Bool { bank != nil }
+    private var isEditing: Bool { category != nil }
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Nombre") {
-                    TextField("Nombre del banco", text: $bankName)
-                        .textInputAutocapitalization(.words)
-                        .autocorrectionDisabled()
+                    TextField("Nombre de la categoría", text: $categoryName)
                 }
 
                 Section("Icono") {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
-                        ForEach(BankIcon.allCases) { icon in
+                        ForEach(CategoryIcon.allCases) { icon in
                             Button {
                                 selectedIcon = icon
                             } label: {
@@ -162,13 +165,13 @@ struct BankEditorSheet: View {
 
                 Section("Color") {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
-                        ForEach(BankColor.allCases) { color in
+                        ForEach(CategoryColor.allCases) { color in
                             Button {
                                 selectedColor = color
                             } label: {
                                 Circle()
                                     .fill(color.color)
-                                    .frame(width: 36, height: 36)
+                                    .frame(width: 34, height: 34)
                                     .overlay(
                                         Circle().stroke(Color.white, lineWidth: selectedColor == color ? 3 : 0)
                                     )
@@ -192,12 +195,12 @@ struct BankEditorSheet: View {
                             .background(selectedColor.color)
                             .clipShape(RoundedRectangle(cornerRadius: 10))
 
-                        Text(bankName.isEmpty ? "Nombre del banco" : bankName)
+                        Text(categoryName.isEmpty ? "Nombre de la categoría" : categoryName)
                             .fontWeight(.medium)
                     }
                 }
             }
-            .navigationTitle(isEditing ? "Editar banco" : "Nuevo banco")
+            .navigationTitle(isEditing ? "Editar categoría" : "Nueva categoría")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -208,7 +211,7 @@ struct BankEditorSheet: View {
 
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isEditing ? "Guardar" : "Crear") {
-                        saveBank()
+                        saveCategory()
                     }
                     .fontWeight(.semibold)
                 }
@@ -223,22 +226,22 @@ struct BankEditorSheet: View {
     }
 
     private func loadData() {
-        guard let bank else { return }
-        bankName = bank.name
-        selectedIcon = bank.icon
-        selectedColor = bank.bankColor
+        guard let category else { return }
+        categoryName = category.name
+        selectedIcon = category.icon
+        selectedColor = category.categoryColor
     }
 
-    private func saveBank() {
-        let trimmedName = bankName.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func saveCategory() {
+        let trimmedName = categoryName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedName.isEmpty else {
-            validationMessage = "El nombre del banco es obligatorio."
+            validationMessage = "El nombre de la categoría es obligatorio."
             showingValidationAlert = true
             return
         }
 
-        let duplicateExists = banks.contains { existing in
-            guard let current = bank else {
+        let duplicateExists = categories.contains { existing in
+            guard let current = category else {
                 return existing.name.localizedCaseInsensitiveCompare(trimmedName) == .orderedSame
             }
 
@@ -246,18 +249,18 @@ struct BankEditorSheet: View {
         }
 
         guard !duplicateExists else {
-            validationMessage = "Ya existe un banco con ese nombre."
+            validationMessage = "Ya existe una categoría con ese nombre."
             showingValidationAlert = true
             return
         }
 
-        if let bank {
-            bank.name = trimmedName
-            bank.icon = selectedIcon
-            bank.bankColor = selectedColor
+        if let category {
+            category.name = trimmedName
+            category.icon = selectedIcon
+            category.categoryColor = selectedColor
         } else {
-            let newBank = Bank(name: trimmedName, icon: selectedIcon, bankColor: selectedColor)
-            modelContext.insert(newBank)
+            let newCategory = MovementCategory(name: trimmedName, icon: selectedIcon, color: selectedColor)
+            modelContext.insert(newCategory)
         }
 
         dismiss()

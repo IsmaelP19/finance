@@ -11,6 +11,7 @@ import SwiftUI
 /// Solo muestra los tipos que tienen al menos una cuenta asociada.
 struct BalanceByTypeCard: View {
     let balancesByType: [(AccountType, Decimal, Int)]
+    let currencyCode: String
 
     var body: some View {
         VStack(spacing: 12) {
@@ -44,7 +45,7 @@ struct BalanceByTypeCard: View {
 
                             Spacer()
 
-                            Text(balance.asCurrency())
+                            Text(balance.asCurrency(code: currencyCode))
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(.white)

@@ -11,6 +11,7 @@ import SwiftUI
 struct TotalBalanceCard: View {
     let totalBalance: Decimal
     let accountCount: Int
+    let currencyCode: String
 
     var body: some View {
         VStack(spacing: 8) {
@@ -18,7 +19,7 @@ struct TotalBalanceCard: View {
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.85))
 
-            Text(totalBalance.asCurrency())
+            Text(totalBalance.asCurrency(code: currencyCode))
                 .font(.system(size: 32, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
 

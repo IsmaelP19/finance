@@ -25,6 +25,11 @@ final class BankAccount {
     /// Relación con la entidad Bank.
     var bank: Bank?
 
+    /// Relación inversa: movimientos asociados a esta cuenta.
+    /// Si se elimina la cuenta, se eliminan también sus movimientos.
+    @Relationship(deleteRule: .cascade, inverse: \Movement.account)
+    var movements: [Movement]?
+
     /// Tipo de cuenta (wrapper tipado sobre accountTypeRaw).
     var accountType: AccountType {
         get { AccountType(rawValue: accountTypeRaw) ?? .checking }

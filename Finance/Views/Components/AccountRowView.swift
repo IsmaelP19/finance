@@ -37,7 +37,7 @@ struct AccountRowView: View {
             Spacer()
 
             // Saldo
-            Text(account.balance.asCurrency(code: account.currency))
+            Text(account.balance.asCurrency())
                 .font(.body)
                 .fontWeight(.semibold)
                 .foregroundStyle(account.balance.isNegative ? .red : .primary)

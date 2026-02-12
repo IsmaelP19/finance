@@ -12,9 +12,13 @@ import SwiftData
 /// Muestra el patrimonio total y la lista de cuentas agrupadas por tipo.
 struct AccountListView: View {
     @Environment(\.modelContext) private var modelContext
+    @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
 
     @State private var showingAddAccount = false
+    @State private var editingAccount: BankAccount?
+    @State private var pendingAccountsDeletion: [BankAccount] = []
+    @State private var showingDeleteConfirmation = false
 
     private var totalBalance: Decimal {
         accounts.reduce(Decimal(0)) { $0 + $1.balance }
@@ -44,11 +48,13 @@ struct AccountListView: View {
                     TabView {
                         TotalBalanceCard(
                             totalBalance: totalBalance,
-                            accountCount: accounts.count
+                            accountCount: accounts.count,
+                            currencyCode: appCurrencyCode
                         )
 
                         BalanceByTypeCard(
-                            balancesByType: balancesByType
+                            balancesByType: balancesByType,
+                            currencyCode: appCurrencyCode
                         )
                     }
                     .tabViewStyle(.page(indexDisplayMode: .always))
@@ -73,9 +79,17 @@ struct AccountListView: View {
                                 NavigationLink(destination: AccountDetailView(account: account)) {
                                     AccountRowView(account: account)
                                 }
+                                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                    Button {
+                                        editingAccount = account
+                                    } label: {
+                                        Label("Editar", systemImage: "pencil")
+                                    }
+                                    .tint(.blue)
+                                }
                             }
                             .onDelete { offsets in
-                                deleteAccounts(from: typeAccounts, at: offsets)
+                                requestDeleteAccounts(from: typeAccounts, at: offsets)
                             }
                         }
                     }
@@ -94,15 +108,48 @@ struct AccountListView: View {
             .sheet(isPresented: $showingAddAccount) {
                 AddAccountView()
             }
+            .sheet(item: $editingAccount) { (account: BankAccount) in
+                AddAccountView(existingAccount: account)
+            }
+            .confirmationDialog(
+                "Eliminar cuenta",
+                isPresented: $showingDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Cancelar", role: .cancel) {
+                    pendingAccountsDeletion = []
+                }
+                Button("Eliminar", role: .destructive) {
+                    deletePendingAccounts()
+                }
+            } message: {
+                if pendingAccountsDeletion.count == 1 {
+                    if let name = pendingAccountsDeletion.first?.name {
+                        Text("Se eliminará la cuenta \(name). Esta acción no se puede deshacer.")
+                    } else {
+                        Text("Se eliminará una cuenta. Esta acción no se puede deshacer.")
+                    }
+                } else {
+                    Text("Se eliminarán \(pendingAccountsDeletion.count) cuentas. Esta acción no se puede deshacer.")
+                }
+            }
         }
     }
 
-    private func deleteAccounts(from typeAccounts: [BankAccount], at offsets: IndexSet) {
+    private func requestDeleteAccounts(from typeAccounts: [BankAccount], at offsets: IndexSet) {
+        pendingAccountsDeletion = offsets.map { typeAccounts[$0] }
+        if !pendingAccountsDeletion.isEmpty {
+            showingDeleteConfirmation = true
+        }
+    }
+
+    private func deletePendingAccounts() {
         withAnimation {
-            for index in offsets {
-                modelContext.delete(typeAccounts[index])
+            for account in pendingAccountsDeletion {
+                modelContext.delete(account)
             }
         }
+        pendingAccountsDeletion = []
     }
 }
 
@@ -116,3 +163,4 @@ struct ShareSheet: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
+

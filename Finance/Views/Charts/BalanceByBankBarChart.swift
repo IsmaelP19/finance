@@ -11,6 +11,7 @@ import Charts
 struct BalanceByBankBarChart: View {
     @Environment(\.colorScheme) private var colorScheme
     let data: [BankBalanceDatum]
+    let currencyCode: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -26,7 +27,7 @@ struct BalanceByBankBarChart: View {
                 .foregroundStyle(item.color.gradient)
                 .cornerRadius(5)
                 .annotation(position: .trailing) {
-                    Text(item.amount.asCurrency())
+                    Text(item.amount.asCurrency(code: currencyCode))
                         .font(.caption)
                         .foregroundStyle(colorScheme == .dark ? .white.opacity(0.7) : .secondary)
                 }
