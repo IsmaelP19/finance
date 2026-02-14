@@ -24,6 +24,9 @@ final class Movement {
     /// Cuenta asociada al movimiento.
     var account: BankAccount?
 
+    /// Cuenta destino para transferencias entre cuentas.
+    var destinationAccount: BankAccount?
+
     /// Categoría del movimiento.
     var category: MovementCategory?
 
@@ -43,6 +46,7 @@ final class Movement {
         type: MovementType,
         occurredAt: Date = Date(),
         account: BankAccount? = nil,
+        destinationAccount: BankAccount? = nil,
         category: MovementCategory? = nil,
         notes: String = "",
         resultingBalance: Decimal? = nil
@@ -53,6 +57,7 @@ final class Movement {
         self.typeRaw = type.rawValue
         self.occurredAt = occurredAt
         self.account = account
+        self.destinationAccount = destinationAccount
         self.category = category
         self.notes = notes
         self.resultingBalance = resultingBalance
@@ -74,6 +79,7 @@ struct MovementDTO: Codable {
     let createdAt: Date
     let updatedAt: Date
     let accountId: UUID?
+    let destinationAccountId: UUID?
     let categoryId: UUID?
 
     enum CodingKeys: String, CodingKey {
@@ -87,6 +93,7 @@ struct MovementDTO: Codable {
         case createdAt
         case updatedAt
         case accountId
+        case destinationAccountId
         case categoryId
     }
 
@@ -101,6 +108,7 @@ struct MovementDTO: Codable {
         self.createdAt = movement.createdAt
         self.updatedAt = movement.updatedAt
         self.accountId = movement.account?.id
+        self.destinationAccountId = movement.destinationAccount?.id
         self.categoryId = movement.category?.id
     }
 
@@ -116,6 +124,7 @@ struct MovementDTO: Codable {
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         accountId = try container.decodeIfPresent(UUID.self, forKey: .accountId)
+        destinationAccountId = try container.decodeIfPresent(UUID.self, forKey: .destinationAccountId)
         categoryId = try container.decodeIfPresent(UUID.self, forKey: .categoryId)
     }
 
@@ -126,6 +135,7 @@ struct MovementDTO: Codable {
             type: MovementType(rawValue: type) ?? .expense,
             occurredAt: occurredAt,
             account: nil,
+            destinationAccount: nil,
             category: nil,
             notes: notes,
             resultingBalance: resultingBalance

@@ -186,8 +186,13 @@ enum DataExportService {
             if let accountId = dto.accountId {
                 movement.account = accountsByID[accountId]
             }
-            if let categoryId = dto.categoryId {
+            if let destinationAccountId = dto.destinationAccountId {
+                movement.destinationAccount = accountsByID[destinationAccountId]
+            }
+            if movement.type != .transfer, let categoryId = dto.categoryId {
                 movement.category = categoriesByID[categoryId]
+            } else if movement.type == .transfer {
+                movement.category = nil
             }
             return movement
         }

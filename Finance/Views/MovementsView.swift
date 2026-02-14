@@ -8,6 +8,46 @@
 import SwiftUI
 import SwiftData
 
+private enum MovementListTypeFilter: String, CaseIterable, Identifiable {
+    case all
+    case expense
+    case income
+    case transfer
+
+    var id: String { rawValue }
+
+    var color: Color {
+        switch self {
+        case .all: return .gray
+        case .expense: return .red
+        case .income: return .green
+        case .transfer: return .blue
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .all: return "Todos"
+        case .expense: return "Gastos"
+        case .income: return "Ingresos"
+        case .transfer: return "Transferencias"
+        }
+    }
+
+    func matches(_ type: MovementType) -> Bool {
+        switch self {
+        case .all: return true
+        case .expense: return type == .expense
+        case .income: return type == .income
+        case .transfer: return type == .transfer
+        }
+    }
+}
+
+private enum MovementCategoryFilter: Hashable {
+    case category(UUID)
+}
+
 /// Pantalla principal de movimientos (gastos e ingresos).
 struct MovementsView: View {
     @Environment(\.modelContext) private var modelContext
@@ -19,10 +59,53 @@ struct MovementsView: View {
     @State private var showingEditMovement = false
     @State private var movementToEdit: Movement?
     @State private var selectedAccountFilterID: UUID?
+    @State private var selectedTypeFilter: MovementListTypeFilter = .all
+    @State private var selectedCategoryFilters: Set<MovementCategoryFilter> = []
+    @State private var searchText = ""
+
+    private var accountFilteredMovements: [Movement] {
+        guard let selectedAccountFilterID else { return movements }
+        return movements.filter {
+            $0.account?.id == selectedAccountFilterID || $0.destinationAccount?.id == selectedAccountFilterID
+        }
+    }
+
+    private var typeFilteredMovements: [Movement] {
+        accountFilteredMovements.filter { selectedTypeFilter.matches($0.type) }
+    }
 
     private var filteredMovements: [Movement] {
-        guard let selectedAccountFilterID else { return movements }
-        return movements.filter { $0.account?.id == selectedAccountFilterID }
+        let categoryFiltered: [Movement]
+        if selectedTypeFilter == .transfer {
+            categoryFiltered = typeFilteredMovements
+        } else if selectedCategoryFilters.isEmpty {
+            categoryFiltered = typeFilteredMovements
+        } else {
+            categoryFiltered = typeFilteredMovements.filter { movement in
+                guard let categoryID = movement.category?.id else { return false }
+                return selectedCategoryFilters.contains(.category(categoryID))
+            }
+        }
+
+        let trimmedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty else { return categoryFiltered }
+
+        return categoryFiltered.filter { matchesSearch($0, query: trimmedQuery) }
+    }
+
+    private var categoryFilterOptions: [(id: MovementCategoryFilter, title: String, color: Color)] {
+        var options: [(MovementCategoryFilter, String, Color)] = []
+
+        let grouped = Dictionary(grouping: typeFilteredMovements.compactMap { $0.category }) { $0.id }
+        let sortedCategories = grouped.values
+            .compactMap { $0.first }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        options += sortedCategories.map { category in
+            (MovementCategoryFilter.category(category.id), category.name, category.color)
+        }
+
+        return options
     }
 
     private var totalIncome: Decimal {
@@ -47,73 +130,88 @@ struct MovementsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                if !accounts.isEmpty {
-                    Section {
-                        Picker("Cuenta", selection: $selectedAccountFilterID) {
-                            Text("Todas las cuentas")
-                                .tag(nil as UUID?)
-
-                            ForEach(accounts, id: \.id) { account in
-                                Text("\(account.name) · \(account.bankDisplayName)")
-                                    .tag(Optional(account.id))
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
-                }
-
+            VStack(spacing: 0) {
                 if !movements.isEmpty {
-                    Section {
-                        MovementSummaryView(
-                            totalIncome: totalIncome,
-                            totalExpense: totalExpense,
-                            netBalance: netBalance,
-                            movementCount: movementCount,
-                            currencyCode: appCurrencyCode
-                        )
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                    }
+                    filtersHeader
+                        .padding(.bottom, 8)
                 }
 
-                if movements.isEmpty {
-                    ContentUnavailableView(
-                        accounts.isEmpty ? "Sin cuentas" : "Sin movimientos",
-                        systemImage: accounts.isEmpty ? "building.columns" : "arrow.left.arrow.right.circle",
-                        description: Text(accounts.isEmpty
-                                          ? "Crea al menos una cuenta en Inicio para registrar movimientos"
-                                          : "Pulsa + para registrar tu primer gasto o ingreso")
-                    )
-                    .listRowBackground(Color.clear)
-                } else if filteredMovements.isEmpty {
-                    ContentUnavailableView(
-                        "Sin movimientos en esta cuenta",
-                        systemImage: "line.3.horizontal.decrease.circle",
-                        description: Text("Cambia el filtro para ver movimientos de otras cuentas")
-                    )
-                    .listRowBackground(Color.clear)
-                } else {
-                    ForEach(filteredMovements, id: \.id) { movement in
-                        MovementRowView(movement: movement, currencyCode: appCurrencyCode)
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                movementToEdit = movement
-                                showingEditMovement = true
+                List {
+                    if !accounts.isEmpty {
+                        Section {
+                            Picker("Cuenta", selection: $selectedAccountFilterID) {
+                                Text("Todas las cuentas")
+                                    .tag(nil as UUID?)
+
+                                ForEach(accounts, id: \.id) { account in
+                                    Text("\(account.name) · \(account.bankDisplayName)")
+                                        .tag(Optional(account.id))
+                                }
                             }
-                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                Button {
+                            .pickerStyle(.menu)
+                        }
+                    }
+
+                    if !movements.isEmpty {
+                        Section {
+                            MovementSummaryView(
+                                totalIncome: totalIncome,
+                                totalExpense: totalExpense,
+                                netBalance: netBalance,
+                                movementCount: movementCount,
+                                currencyCode: appCurrencyCode
+                            )
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        }
+                    }
+
+                    if movements.isEmpty {
+                        ContentUnavailableView(
+                            accounts.isEmpty ? "Sin cuentas" : "Sin movimientos",
+                            systemImage: accounts.isEmpty ? "building.columns" : "arrow.left.arrow.right.circle",
+                            description: Text(accounts.isEmpty
+                                              ? "Crea al menos una cuenta en Inicio para registrar movimientos"
+                                              : "Pulsa + para registrar tu primer gasto, ingreso o transferencia")
+                        )
+                        .listRowBackground(Color.clear)
+                    } else if filteredMovements.isEmpty {
+                        ContentUnavailableView(
+                            "Sin movimientos con estos filtros",
+                            systemImage: "line.3.horizontal.decrease.circle",
+                            description: Text("Ajusta cuenta, tipo o búsqueda para ver más resultados")
+                        )
+                        .listRowBackground(Color.clear)
+                    } else {
+                        ForEach(filteredMovements, id: \.id) { movement in
+                            MovementRowView(movement: movement, currencyCode: appCurrencyCode)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
                                     movementToEdit = movement
                                     showingEditMovement = true
-                                } label: {
-                                    Label("Editar", systemImage: "pencil")
                                 }
-                                .tint(.blue)
-                            }
+                                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                    Button {
+                                        movementToEdit = movement
+                                        showingEditMovement = true
+                                    } label: {
+                                        Label("Editar", systemImage: "pencil")
+                                    }
+                                    .tint(.blue)
+                                }
+                        }
+                        .onDelete(perform: deleteMovements)
                     }
-                    .onDelete(perform: deleteMovements)
                 }
             }
             .navigationTitle("Movimientos")
+            .searchable(text: $searchText, prompt: "Buscar movimientos")
+            .onChange(of: selectedTypeFilter) { _, newValue in
+                if newValue == .transfer {
+                    selectedCategoryFilters.removeAll()
+                } else {
+                    pruneCategorySelections()
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -142,12 +240,148 @@ struct MovementsView: View {
             for index in offsets {
                 let movement = filteredMovements[index]
                 if let account = movement.account {
-                    account.balance -= movement.signedAmount
+                    switch movement.type {
+                    case .expense:
+                        account.balance += movement.amount
+                    case .income:
+                        account.balance -= movement.amount
+                    case .transfer:
+                        account.balance += movement.amount
+                        if let destination = movement.destinationAccount {
+                            destination.balance -= movement.amount
+                            destination.updatedAt = Date()
+                        }
+                    }
+
                     account.updatedAt = Date()
                 }
                 modelContext.delete(movement)
             }
         }
+    }
+
+    private func matchesSearch(_ movement: Movement, query: String) -> Bool {
+        let normalizedQuery = normalizeForSearch(query)
+        guard !normalizedQuery.isEmpty else { return true }
+
+        let currencyAmount = movement.amount.asCurrency(code: appCurrencyCode)
+        let rawAmount = NSDecimalNumber(decimal: movement.amount).stringValue
+        let signedRawAmount = NSDecimalNumber(decimal: movement.signedAmount).stringValue
+
+        let candidates: [String] = [
+            movement.concept,
+            movement.notes,
+            movement.type.displayName,
+            movement.category?.name ?? "",
+            movement.account?.name ?? "",
+            movement.account?.bankDisplayName ?? "",
+            movement.destinationAccount?.name ?? "",
+            movement.destinationAccount?.bankDisplayName ?? "",
+            movement.occurredAt.asSpanishShortDate(),
+            movement.occurredAt.asSpanishDateTime(),
+            currencyAmount,
+            rawAmount,
+            signedRawAmount,
+            rawAmount.replacingOccurrences(of: ".", with: ","),
+            signedRawAmount.replacingOccurrences(of: ".", with: ",")
+        ]
+
+        return candidates
+            .map(normalizeForSearch)
+            .contains { $0.contains(normalizedQuery) }
+    }
+
+    private func normalizeForSearch(_ text: String) -> String {
+        text
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var filtersHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(MovementListTypeFilter.allCases) { filter in
+                        MovementFilterChip(
+                            title: filter.title,
+                            color: filter.color,
+                            isSelected: selectedTypeFilter == filter,
+                            action: { selectedTypeFilter = filter }
+                        )
+                    }
+                }
+                .padding(.leading, 16)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if selectedTypeFilter != .transfer {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        MovementFilterChip(
+                            title: "Todas",
+                            color: .gray,
+                            isSelected: selectedCategoryFilters.isEmpty,
+                            action: { selectedCategoryFilters.removeAll() }
+                        )
+
+                        ForEach(categoryFilterOptions, id: \.id) { option in
+                            MovementFilterChip(
+                                title: option.title,
+                                color: option.color,
+                                isSelected: selectedCategoryFilters.contains(option.id),
+                                action: { toggleCategoryFilter(option.id) }
+                            )
+                        }
+                    }
+                    .padding(.leading, 16)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(.top, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func toggleCategoryFilter(_ filter: MovementCategoryFilter) {
+        if selectedCategoryFilters.contains(filter) {
+            selectedCategoryFilters.remove(filter)
+        } else {
+            selectedCategoryFilters.insert(filter)
+        }
+    }
+
+    private func pruneCategorySelections() {
+        let validFilters = Set(categoryFilterOptions.map { $0.id })
+        selectedCategoryFilters = selectedCategoryFilters.intersection(validFilters)
+    }
+}
+
+private struct MovementFilterChip: View {
+    let title: String
+    let color: Color
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.subheadline)
+                .fontWeight(.medium)
+                .foregroundStyle(isSelected ? color : .primary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    isSelected
+                    ? color.opacity(0.16)
+                    : Color.secondary.opacity(0.12)
+                )
+                .clipShape(Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(isSelected ? color.opacity(0.28) : Color.clear, lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -227,6 +461,10 @@ private struct MovementRowView: View {
     private var accountAndBankText: String {
         let accountName = movement.account?.name ?? "Sin cuenta"
         let bankName = movement.account?.bankDisplayName ?? "Sin banco"
+        if movement.type == .transfer {
+            let destinationName = movement.destinationAccount?.name ?? "Sin cuenta destino"
+            return "\(accountName) -> \(destinationName)"
+        }
         return "\(accountName) · \(bankName)"
     }
 
@@ -250,11 +488,19 @@ private struct MovementRowView: View {
                     .fontWeight(.medium)
                     .lineLimit(1)
 
-                CategoryChipView(
-                    name: movement.category?.name ?? "Sin categoría",
-                    iconName: movement.category?.iconName ?? "tag",
-                    color: movement.category?.color ?? .secondary
-                )
+                if movement.type == .transfer {
+                    CategoryChipView(
+                        name: "Transferencia",
+                        iconName: "arrow.left.arrow.right",
+                        color: .blue
+                    )
+                } else {
+                    CategoryChipView(
+                        name: movement.category?.name ?? "Sin categoría",
+                        iconName: movement.category?.iconName ?? "tag",
+                        color: movement.category?.color ?? .secondary
+                    )
+                }
 
                 Text(accountAndBankText)
                     .font(.caption2)
@@ -272,10 +518,10 @@ private struct MovementRowView: View {
             Spacer()
 
             VStack(alignment: .trailing, spacing: 3) {
-                Text(movement.signedAmount.asCurrency(code: currencyCode))
+                Text(displayAmount)
                     .font(.body)
                     .fontWeight(.semibold)
-                    .foregroundStyle(movement.type.color)
+                    .foregroundStyle(displayAmountColor)
 
                 Text(movement.occurredAt.asSpanishShortDate())
                     .font(.caption)
@@ -283,5 +529,25 @@ private struct MovementRowView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var displayAmount: String {
+        switch movement.type {
+        case .expense, .income:
+            return movement.signedAmount.asCurrency(code: currencyCode)
+        case .transfer:
+            return movement.amount.asCurrency(code: currencyCode)
+        }
+    }
+
+    private var displayAmountColor: Color {
+        switch movement.type {
+        case .expense:
+            return .red
+        case .income:
+            return .green
+        case .transfer:
+            return .blue
+        }
     }
 }

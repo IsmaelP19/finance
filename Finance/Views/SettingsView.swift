@@ -111,7 +111,7 @@ struct SettingsView: View {
                     Button(role: .destructive) {
                         showingSyncImportConfirmation = true
                     } label: {
-                        Label("Importar última copia de iCloud", systemImage: "Noicloud.and.arrow.down")
+                        Label("Importar última copia de iCloud", systemImage: "icloud.and.arrow.down")
                             .foregroundStyle(.red)
                     }
                     .disabled(!ManualSyncService.isConfigured)

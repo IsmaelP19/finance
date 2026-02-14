@@ -18,6 +18,7 @@ struct AddMovementView: View {
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
 
     @State private var selectedAccount: BankAccount?
+    @State private var selectedDestinationAccount: BankAccount?
     @State private var movementType: MovementType = .expense
     @State private var amountText: String = ""
     @State private var concept: String = ""
@@ -63,10 +64,22 @@ struct AddMovementView: View {
                         Text("No hay cuentas disponibles. Crea una cuenta antes de registrar movimientos.")
                             .foregroundStyle(.secondary)
                     } else {
-                        Picker("Cuenta", selection: $selectedAccount) {
+                        Picker("Cuenta origen", selection: $selectedAccount) {
                             ForEach(accounts, id: \.id) { account in
                                 Text("\(account.name) · \(account.bankDisplayName)")
                                     .tag(Optional(account))
+                            }
+                        }
+
+                        if movementType == .transfer {
+                            Picker("Cuenta destino", selection: $selectedDestinationAccount) {
+                                Text("Selecciona una cuenta")
+                                    .tag(nil as BankAccount?)
+
+                                ForEach(accounts, id: \.id) { account in
+                                    Text("\(account.name) · \(account.bankDisplayName)")
+                                        .tag(Optional(account))
+                                }
                             }
                         }
                     }
@@ -95,7 +108,8 @@ struct AddMovementView: View {
                     }
                 }
 
-                Section("Categoría") {
+                if movementType != .transfer {
+                    Section("Categoría") {
                     if let category = selectedCategory {
                         HStack {
                             CategoryChipView(
@@ -143,6 +157,7 @@ struct AddMovementView: View {
                         }
                     }
                 }
+                }
 
                 Section("Fecha") {
                     DatePicker("Fecha del movimiento", selection: $occurredAt, displayedComponents: [.date, .hourAndMinute])
@@ -171,6 +186,20 @@ struct AddMovementView: View {
                 }
             }
             .onAppear(perform: setupDefaults)
+            .onChange(of: movementType) { _, newValue in
+                if newValue == .transfer {
+                    selectedCategory = nil
+                    categorySearchText = ""
+                    ensureTransferAccountsAreDifferent()
+                } else if selectedCategory == nil {
+                    selectedCategory = categories.first
+                }
+            }
+            .onChange(of: selectedAccount?.id) { _, _ in
+                if movementType == .transfer {
+                    ensureTransferAccountsAreDifferent()
+                }
+            }
             .sheet(isPresented: $isCreatingNewCategory) {
                 CreateMovementCategorySheet(categoryName: $newCategoryName) { category in
                     selectedCategory = category
@@ -188,6 +217,7 @@ struct AddMovementView: View {
     private func setupDefaults() {
         if !didLoadExistingData, let movementToEdit {
             selectedAccount = movementToEdit.account
+            selectedDestinationAccount = movementToEdit.destinationAccount
             movementType = movementToEdit.type
             amountText = formatAmountForEditing(movementToEdit.amount)
             concept = movementToEdit.concept
@@ -201,9 +231,14 @@ struct AddMovementView: View {
         if selectedAccount == nil {
             selectedAccount = accounts.first
         }
+        if selectedDestinationAccount == nil {
+            selectedDestinationAccount = accounts.dropFirst().first ?? accounts.first
+        }
         if selectedCategory == nil {
             selectedCategory = categories.first
         }
+
+        ensureTransferAccountsAreDifferent()
     }
 
     private func parseAmount() -> Decimal {
@@ -231,10 +266,12 @@ struct AddMovementView: View {
             return
         }
 
-        guard let selectedCategory else {
-            validationMessage = "Selecciona o crea una categoría."
-            showingValidationAlert = true
-            return
+        if movementType != .transfer {
+            guard selectedCategory != nil else {
+                validationMessage = "Selecciona o crea una categoría."
+                showingValidationAlert = true
+                return
+            }
         }
 
         let amount = parseAmount()
@@ -244,51 +281,119 @@ struct AddMovementView: View {
             return
         }
 
-        let notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        let newSignedAmount = amount * movementType.signMultiplier
-
-        if let movementToEdit {
-            if let oldAccount = movementToEdit.account {
-                oldAccount.balance -= movementToEdit.signedAmount
-                oldAccount.updatedAt = Date()
+        if movementType == .transfer {
+            guard let selectedDestinationAccount else {
+                validationMessage = "Selecciona una cuenta destino para la transferencia."
+                showingValidationAlert = true
+                return
             }
 
-            let resultingBalance = selectedAccount.balance + newSignedAmount
+            guard selectedDestinationAccount.id != selectedAccount.id else {
+                validationMessage = "La cuenta origen y destino no pueden ser la misma."
+                showingValidationAlert = true
+                return
+            }
+        }
 
-            selectedAccount.currency = appCurrencyCode
-            selectedAccount.balance = resultingBalance
-            selectedAccount.updatedAt = Date()
+        let notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let movementToEdit {
+            revertMovementImpact(movementToEdit)
+
+            let resultingBalance = applyMovementImpact(
+                type: movementType,
+                amount: amount,
+                sourceAccount: selectedAccount,
+                destinationAccount: movementType == .transfer ? selectedDestinationAccount : nil
+            )
 
             movementToEdit.concept = trimmedConcept
             movementToEdit.amount = amount
             movementToEdit.type = movementType
             movementToEdit.occurredAt = occurredAt
             movementToEdit.account = selectedAccount
-            movementToEdit.category = selectedCategory
+            movementToEdit.destinationAccount = movementType == .transfer ? selectedDestinationAccount : nil
+            movementToEdit.category = movementType == .transfer ? nil : selectedCategory
             movementToEdit.notes = notes
             movementToEdit.resultingBalance = resultingBalance
             movementToEdit.updatedAt = Date()
         } else {
-            let resultingBalance = selectedAccount.balance + newSignedAmount
+            let resultingBalance = applyMovementImpact(
+                type: movementType,
+                amount: amount,
+                sourceAccount: selectedAccount,
+                destinationAccount: movementType == .transfer ? selectedDestinationAccount : nil
+            )
+
             let movement = Movement(
                 concept: trimmedConcept,
                 amount: amount,
                 type: movementType,
                 occurredAt: occurredAt,
                 account: selectedAccount,
-                category: selectedCategory,
+                destinationAccount: movementType == .transfer ? selectedDestinationAccount : nil,
+                category: movementType == .transfer ? nil : selectedCategory,
                 notes: notes,
                 resultingBalance: resultingBalance
             )
 
             modelContext.insert(movement)
-
-            selectedAccount.currency = appCurrencyCode
-            selectedAccount.balance = resultingBalance
-            selectedAccount.updatedAt = Date()
         }
 
         dismiss()
+    }
+
+    @discardableResult
+    private func applyMovementImpact(
+        type: MovementType,
+        amount: Decimal,
+        sourceAccount: BankAccount,
+        destinationAccount: BankAccount?
+    ) -> Decimal {
+        sourceAccount.currency = appCurrencyCode
+
+        switch type {
+        case .expense:
+            sourceAccount.balance -= amount
+        case .income:
+            sourceAccount.balance += amount
+        case .transfer:
+            sourceAccount.balance -= amount
+            if let destinationAccount {
+                destinationAccount.currency = appCurrencyCode
+                destinationAccount.balance += amount
+                destinationAccount.updatedAt = Date()
+            }
+        }
+
+        sourceAccount.updatedAt = Date()
+        return sourceAccount.balance
+    }
+
+    private func revertMovementImpact(_ movement: Movement) {
+        guard let sourceAccount = movement.account else { return }
+
+        switch movement.type {
+        case .expense:
+            sourceAccount.balance += movement.amount
+        case .income:
+            sourceAccount.balance -= movement.amount
+        case .transfer:
+            sourceAccount.balance += movement.amount
+            if let destination = movement.destinationAccount {
+                destination.balance -= movement.amount
+                destination.updatedAt = Date()
+            }
+        }
+
+        sourceAccount.updatedAt = Date()
+    }
+
+    private func ensureTransferAccountsAreDifferent() {
+        guard let selectedAccount else { return }
+        if selectedDestinationAccount?.id == selectedAccount.id {
+            selectedDestinationAccount = accounts.first(where: { $0.id != selectedAccount.id })
+        }
     }
 }
 

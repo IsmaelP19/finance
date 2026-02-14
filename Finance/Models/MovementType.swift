@@ -12,6 +12,7 @@ import Foundation
 enum MovementType: String, CaseIterable, Codable, Identifiable {
     case expense = "expense"
     case income = "income"
+    case transfer = "transfer"
 
     var id: String { rawValue }
 
@@ -21,6 +22,8 @@ enum MovementType: String, CaseIterable, Codable, Identifiable {
             return "Gasto"
         case .income:
             return "Ingreso"
+        case .transfer:
+            return "Transferencia"
         }
     }
 
@@ -30,6 +33,8 @@ enum MovementType: String, CaseIterable, Codable, Identifiable {
             return "arrow.down.circle.fill"
         case .income:
             return "arrow.up.circle.fill"
+        case .transfer:
+            return "arrow.left.arrow.right.circle.fill"
         }
     }
 
@@ -39,6 +44,8 @@ enum MovementType: String, CaseIterable, Codable, Identifiable {
             return .red
         case .income:
             return .green
+        case .transfer:
+            return .blue
         }
     }
 
@@ -49,6 +56,8 @@ enum MovementType: String, CaseIterable, Codable, Identifiable {
             return -1
         case .income:
             return 1
+        case .transfer:
+            return -1
         }
     }
 }
