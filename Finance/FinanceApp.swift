@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import BackgroundTasks
 
 @main
 struct FinanceApp: App {
@@ -16,6 +17,7 @@ struct FinanceApp: App {
             BankAccount.self,
             MovementCategory.self,
             Movement.self,
+            InvestmentSnapshot.self,
         ])
         let modelConfiguration = ModelConfiguration(
             schema: schema,
@@ -34,5 +36,12 @@ struct FinanceApp: App {
             ContentView()
         }
         .modelContainer(sharedModelContainer)
+        .backgroundTask(.appRefresh(AutoBackupService.taskIdentifier)) {
+            await AutoBackupService.handleBackgroundRefresh(modelContainer: sharedModelContainer)
+        }
+    }
+
+    init() {
+        AutoBackupService.refreshBackgroundScheduleFromSettings()
     }
 }

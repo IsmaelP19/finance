@@ -17,6 +17,14 @@ struct SettingsView: View {
     @Query(sort: \Bank.name) private var banks: [Bank]
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
+    @Query(sort: \InvestmentSnapshot.snapshotDate, order: .reverse) private var investmentSnapshots: [InvestmentSnapshot]
+
+    @AppStorage("investmentReminderEnabled") private var investmentReminderEnabled = false
+    @AppStorage("investmentReminderHour") private var investmentReminderHour = 21
+    @AppStorage("investmentReminderMinute") private var investmentReminderMinute = 0
+    @AppStorage(AutoBackupService.enabledStorageKey) private var autoBackupEnabled = false
+    @AppStorage(AutoBackupService.hourStorageKey) private var autoBackupHour = 0
+    @AppStorage(AutoBackupService.minuteStorageKey) private var autoBackupMinute = 0
 
     @State private var showingBankManagement = false
     @State private var showingCategoryManagement = false
@@ -116,6 +124,70 @@ struct SettingsView: View {
                     }
                     .disabled(!ManualSyncService.isConfigured)
                 }
+
+                Section("Backup automático") {
+                    Toggle("Backup diario", isOn: $autoBackupEnabled)
+
+                    DatePicker(
+                        "Hora",
+                        selection: Binding(
+                            get: {
+                                Calendar.current.date(
+                                    bySettingHour: autoBackupHour,
+                                    minute: autoBackupMinute,
+                                    second: 0,
+                                    of: Date()
+                                ) ?? Date()
+                            },
+                            set: { newDate in
+                                autoBackupHour = Calendar.current.component(.hour, from: newDate)
+                                autoBackupMinute = Calendar.current.component(.minute, from: newDate)
+                            }
+                        ),
+                        displayedComponents: .hourAndMinute
+                    )
+                    .disabled(!autoBackupEnabled)
+
+                    Text("Se ejecuta en modo best effort. iOS puede retrasar la ejecución exacta con la app cerrada.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Recordatorio inversión") {
+                    Toggle("Recordatorio diario (L-V)", isOn: $investmentReminderEnabled)
+
+                    DatePicker(
+                        "Hora",
+                        selection: Binding(
+                            get: {
+                                Calendar.current.date(
+                                    bySettingHour: investmentReminderHour,
+                                    minute: investmentReminderMinute,
+                                    second: 0,
+                                    of: Date()
+                                ) ?? Date()
+                            },
+                            set: { newDate in
+                                investmentReminderHour = Calendar.current.component(.hour, from: newDate)
+                                investmentReminderMinute = Calendar.current.component(.minute, from: newDate)
+                            }
+                        ),
+                        displayedComponents: .hourAndMinute
+                    )
+                    .disabled(!investmentReminderEnabled)
+                }
+
+                HStack {
+                    Spacer()
+                    Text("v\(AppVersion.current)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Spacer()
+                }
+                .listRowInsets(EdgeInsets(top: 18, leading: 0, bottom: 8, trailing: 0))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+
             }
             .navigationTitle("Ajustes")
             .sheet(isPresented: $showingBankManagement) {
@@ -180,7 +252,7 @@ struct SettingsView: View {
                     deleteAllData(showSuccessAlert: true)
                 }
             } message: {
-                Text("Se eliminaran \(banks.count) banco(s), \(accounts.count) cuenta(s), \(categories.count) categoria(s) y \(movements.count) movimiento(s). Esta accion no se puede deshacer.")
+                Text("Se eliminaran \(banks.count) banco(s), \(accounts.count) cuenta(s), \(categories.count) categoria(s), \(movements.count) movimiento(s) y \(investmentSnapshots.count) snapshot(s) de inversión. Esta accion no se puede deshacer.")
             }
             .alert(alertTitle, isPresented: $showingAlert) {
                 Button("Aceptar", role: .cancel) {}
@@ -189,8 +261,30 @@ struct SettingsView: View {
             }
         }
         .onAppear(perform: applyGlobalCurrencyToAccounts)
+        .onAppear {
+            updateInvestmentReminderSchedule()
+            updateAutoBackupSchedule()
+        }
         .onChange(of: appCurrencyCode) { _, _ in
             applyGlobalCurrencyToAccounts()
+        }
+        .onChange(of: investmentReminderEnabled) { _, _ in
+            updateInvestmentReminderSchedule()
+        }
+        .onChange(of: investmentReminderHour) { _, _ in
+            updateInvestmentReminderSchedule()
+        }
+        .onChange(of: investmentReminderMinute) { _, _ in
+            updateInvestmentReminderSchedule()
+        }
+        .onChange(of: autoBackupEnabled) { _, _ in
+            updateAutoBackupSchedule()
+        }
+        .onChange(of: autoBackupHour) { _, _ in
+            updateAutoBackupSchedule()
+        }
+        .onChange(of: autoBackupMinute) { _, _ in
+            updateAutoBackupSchedule()
         }
     }
 
@@ -200,7 +294,8 @@ struct SettingsView: View {
                 banks: banks,
                 accounts: accounts,
                 categories: categories,
-                movements: movements
+                movements: movements,
+                investmentSnapshots: investmentSnapshots
             )
             showingExportSheet = true
         } catch {
@@ -253,8 +348,12 @@ struct SettingsView: View {
                 modelContext.insert(movement)
             }
 
+            for snapshot in importResult.investmentSnapshots {
+                modelContext.insert(snapshot)
+            }
+
             alertTitle = "Importacion completada"
-            alertMessage = "Se importaron \(importResult.banks.count) banco(s), \(importResult.accounts.count) cuenta(s), \(importResult.categories.count) categoria(s) y \(importResult.movements.count) movimiento(s)."
+            alertMessage = "Se importaron \(importResult.banks.count) banco(s), \(importResult.accounts.count) cuenta(s), \(importResult.categories.count) categoria(s), \(importResult.movements.count) movimiento(s) y \(importResult.investmentSnapshots.count) snapshot(s) de inversión."
             showingAlert = true
         } catch {
             showError("Error al importar: \(error.localizedDescription)")
@@ -265,6 +364,10 @@ struct SettingsView: View {
         withAnimation {
             for movement in movements {
                 modelContext.delete(movement)
+            }
+
+            for snapshot in investmentSnapshots {
+                modelContext.delete(snapshot)
             }
 
             for category in categories {
@@ -311,6 +414,7 @@ struct SettingsView: View {
 
             do {
                 try ManualSyncService.setSyncDirectory(url)
+                updateAutoBackupSchedule()
                 alertTitle = "Carpeta configurada"
                 alertMessage = "Se guardarán backups en \(url.lastPathComponent)."
                 showingAlert = true
@@ -328,7 +432,8 @@ struct SettingsView: View {
                 banks: banks,
                 accounts: accounts,
                 categories: categories,
-                movements: movements
+                movements: movements,
+                investmentSnapshots: investmentSnapshots
             )
 
             let formatter = DateFormatter()
@@ -366,6 +471,10 @@ struct SettingsView: View {
                 modelContext.insert(movement)
             }
 
+            for snapshot in importResult.investmentSnapshots {
+                modelContext.insert(snapshot)
+            }
+
             ManualSyncService.markImported(exportDate: exportDate)
 
             let formatter = DateFormatter()
@@ -385,5 +494,21 @@ struct SettingsView: View {
             account.currency = appCurrencyCode
             account.updatedAt = Date()
         }
+    }
+
+    private func updateInvestmentReminderSchedule() {
+        InvestmentReminderService.configureWeekdayReminder(
+            enabled: investmentReminderEnabled,
+            hour: investmentReminderHour,
+            minute: investmentReminderMinute
+        )
+    }
+
+    private func updateAutoBackupSchedule() {
+        AutoBackupService.refreshBackgroundSchedule(
+            enabled: autoBackupEnabled,
+            hour: autoBackupHour,
+            minute: autoBackupMinute
+        )
     }
 }

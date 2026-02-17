@@ -30,6 +30,8 @@ struct AddAccountView: View {
     @State private var newBankColor: BankColor = .blue
     @State private var accountType: AccountType = .checking
     @State private var balanceText: String = ""
+    @State private var investedAmountText: String = ""
+    @State private var marketValueText: String = ""
     @State private var notes: String = ""
 
     @State private var showingValidationAlert = false
@@ -134,13 +136,33 @@ struct AddAccountView: View {
                     }
                 }
 
-                // Saldo
-                Section("Saldo") {
-                    HStack {
-                        TextField("0,00", text: $balanceText)
-                            .keyboardType(.decimalPad)
-                        Text(appCurrencyCode)
-                            .foregroundStyle(.secondary)
+                // Saldo (solo para cuentas no inversión)
+                if accountType != .investment {
+                    Section("Saldo") {
+                        HStack {
+                            TextField("0,00", text: $balanceText)
+                                .keyboardType(.decimalPad)
+                            Text(appCurrencyCode)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                if accountType == .investment {
+                    Section("Inversión") {
+                        HStack {
+                            TextField("Cantidad invertida", text: $investedAmountText)
+                                .keyboardType(.decimalPad)
+                            Text(appCurrencyCode)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack {
+                            TextField("Valor de mercado", text: $marketValueText)
+                                .keyboardType(.decimalPad)
+                            Text(appCurrencyCode)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
@@ -169,6 +191,16 @@ struct AddAccountView: View {
             .onAppear {
                 loadExistingData()
             }
+            .onChange(of: accountType) { _, newType in
+                if newType == .investment {
+                    if investedAmountText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        investedAmountText = balanceText
+                    }
+                    if marketValueText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        marketValueText = balanceText
+                    }
+                }
+            }
             .alert("Campos requeridos", isPresented: $showingValidationAlert) {
                 Button("Aceptar", role: .cancel) {}
             } message: {
@@ -196,7 +228,16 @@ struct AddAccountView: View {
         selectedBank = account.bank
         accountType = account.accountType
         balanceText = formatBalanceForEditing(account.balance)
+        investedAmountText = formatBalanceForEditing(account.effectiveInvestedAmount)
+        marketValueText = formatBalanceForEditing(account.effectiveMarketValue)
         notes = account.notes
+    }
+
+    private func parseDecimal(_ text: String) -> Decimal {
+        let cleaned = text
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: ",", with: ".")
+        return Decimal(string: cleaned) ?? 0
     }
 
     /// Parsea el texto del saldo a Decimal, soportando tanto coma como punto decimal.
@@ -234,13 +275,30 @@ struct AddAccountView: View {
         }
 
         let balance = parseBalance()
+        let investedAmount = parseDecimal(investedAmountText)
+        let marketValue = parseDecimal(marketValueText)
 
         if let account = existingAccount {
             // Editar cuenta existente
             account.name = name.trimmingCharacters(in: .whitespaces)
             account.bank = selectedBank
             account.accountType = accountType
-            account.balance = balance
+            if accountType == .investment {
+                account.investedAmount = investedAmount
+                account.marketValue = marketValue
+                account.marketValueUpdatedAt = Date()
+                account.balance = marketValue
+                upsertTodayInvestmentSnapshot(
+                    for: account,
+                    investedAmount: investedAmount,
+                    marketValue: marketValue
+                )
+            } else {
+                account.investedAmount = nil
+                account.marketValue = nil
+                account.marketValueUpdatedAt = nil
+                account.balance = balance
+            }
             account.currency = appCurrencyCode
             account.notes = notes.trimmingCharacters(in: .whitespaces)
             account.updatedAt = Date()
@@ -250,14 +308,50 @@ struct AddAccountView: View {
                 name: name.trimmingCharacters(in: .whitespaces),
                 bank: selectedBank,
                 accountType: accountType,
-                balance: balance,
+                balance: accountType == .investment ? marketValue : balance,
                 currency: appCurrencyCode,
-                notes: notes.trimmingCharacters(in: .whitespaces)
+                notes: notes.trimmingCharacters(in: .whitespaces),
+                investedAmount: accountType == .investment ? investedAmount : nil,
+                marketValue: accountType == .investment ? marketValue : nil,
+                marketValueUpdatedAt: accountType == .investment ? Date() : nil
             )
             modelContext.insert(newAccount)
+
+            if accountType == .investment {
+                upsertTodayInvestmentSnapshot(
+                    for: newAccount,
+                    investedAmount: investedAmount,
+                    marketValue: marketValue
+                )
+            }
         }
 
         dismiss()
+    }
+
+    private func upsertTodayInvestmentSnapshot(
+        for account: BankAccount,
+        investedAmount: Decimal,
+        marketValue: Decimal
+    ) {
+        let today = Calendar.current.startOfDay(for: Date())
+
+        if let existing = (account.investmentSnapshots ?? []).first(where: {
+            Calendar.current.isDate($0.snapshotDate, inSameDayAs: today)
+        }) {
+            existing.investedAmount = investedAmount
+            existing.marketValue = marketValue
+            existing.updatedAt = Date()
+            return
+        }
+
+        let snapshot = InvestmentSnapshot(
+            snapshotDate: today,
+            investedAmount: investedAmount,
+            marketValue: marketValue,
+            account: account
+        )
+        modelContext.insert(snapshot)
     }
 }
 

@@ -41,6 +41,18 @@ struct AccountListView: View {
         }
     }
 
+    private var investmentAccounts: [BankAccount] {
+        accounts.filter { $0.accountType == .investment }
+    }
+
+    private var totalInvestedInInvestments: Decimal {
+        investmentAccounts.reduce(Decimal(0)) { $0 + $1.effectiveInvestedAmount }
+    }
+
+    private var totalMarketValueInInvestments: Decimal {
+        investmentAccounts.reduce(Decimal(0)) { $0 + $1.effectiveMarketValue }
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -56,9 +68,17 @@ struct AccountListView: View {
                             balancesByType: balancesByType,
                             currencyCode: appCurrencyCode
                         )
+
+                        if !investmentAccounts.isEmpty {
+                            InvestmentPerformanceCard(
+                                totalInvested: totalInvestedInInvestments,
+                                totalMarketValue: totalMarketValueInInvestments,
+                                currencyCode: appCurrencyCode
+                            )
+                        }
                     }
                     .tabViewStyle(.page(indexDisplayMode: .always))
-                    .frame(height: max(150, CGFloat(balancesByType.count) * 38 + 80))
+                    .frame(height: investmentAccounts.isEmpty ? max(150, CGFloat(balancesByType.count) * 38 + 80) : 210)
                     .listRowInsets(EdgeInsets())
                     .listRowBackground(Color.clear)
                 }
@@ -95,7 +115,7 @@ struct AccountListView: View {
                     }
                 }
             }
-            .navigationTitle("Finance")
+            .navigationTitle("Cuentas")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -163,4 +183,3 @@ struct ShareSheet: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
-

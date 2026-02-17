@@ -34,6 +34,7 @@ enum ManualSyncService {
     private static let bookmarkKey = "manualSyncFolderBookmark"
     private static let lastImportedExportDateKey = "manualSyncLastImportedExportDate"
     private static let lastDismissedExportDateKey = "manualSyncLastDismissedExportDate"
+    private static let lastExportedExportDateKey = "manualSyncLastExportedExportDate"
     private static let maxBackupFiles = 2
 
     static var isConfigured: Bool {
@@ -48,6 +49,10 @@ enum ManualSyncService {
         UserDefaults.standard.object(forKey: lastDismissedExportDateKey) as? Date
     }
 
+    static var lastExportedExportDate: Date? {
+        UserDefaults.standard.object(forKey: lastExportedExportDateKey) as? Date
+    }
+
     static func setSyncDirectory(_ url: URL) throws {
         let bookmark = try url.bookmarkData(options: .minimalBookmark, includingResourceValuesForKeys: nil, relativeTo: nil)
         UserDefaults.standard.set(bookmark, forKey: bookmarkKey)
@@ -57,6 +62,7 @@ enum ManualSyncService {
         UserDefaults.standard.removeObject(forKey: bookmarkKey)
         UserDefaults.standard.removeObject(forKey: lastImportedExportDateKey)
         UserDefaults.standard.removeObject(forKey: lastDismissedExportDateKey)
+        UserDefaults.standard.removeObject(forKey: lastExportedExportDateKey)
     }
 
     @discardableResult
@@ -64,14 +70,16 @@ enum ManualSyncService {
         banks: [Bank],
         accounts: [BankAccount],
         categories: [MovementCategory],
-        movements: [Movement]
+        movements: [Movement],
+        investmentSnapshots: [InvestmentSnapshot]
     ) throws -> BackupInfo {
         try withSyncDirectoryAccess { directoryURL in
             let tempURL = try DataExportService.exportData(
                 banks: banks,
                 accounts: accounts,
                 categories: categories,
-                movements: movements
+                movements: movements,
+                investmentSnapshots: investmentSnapshots
             )
 
             let destinationURL = directoryURL.appendingPathComponent(tempURL.lastPathComponent)
@@ -83,6 +91,7 @@ enum ManualSyncService {
             try pruneBackups(in: directoryURL)
 
             let exportDate = DataExportService.readExportDate(from: destinationURL) ?? Date()
+            markExported(exportDate: exportDate)
             return BackupInfo(url: destinationURL, exportDate: exportDate)
         }
     }
@@ -106,6 +115,10 @@ enum ManualSyncService {
         UserDefaults.standard.removeObject(forKey: lastDismissedExportDateKey)
     }
 
+    static func markExported(exportDate: Date) {
+        UserDefaults.standard.set(exportDate, forKey: lastExportedExportDateKey)
+    }
+
     static func markDismissed(exportDate: Date) {
         UserDefaults.standard.set(exportDate, forKey: lastDismissedExportDateKey)
     }
@@ -113,7 +126,8 @@ enum ManualSyncService {
     static func shouldPromptForNewBackup() -> Bool {
         guard let latest = try? latestBackup() else { return false }
 
-        let baseline = maxDate(lastImportedExportDate, lastDismissedExportDate)
+        let acknowledgedDate = maxDate(lastImportedExportDate, lastDismissedExportDate)
+        let baseline = maxDate(acknowledgedDate, lastExportedExportDate)
         guard let baseline else { return true }
         return latest.exportDate > baseline
     }

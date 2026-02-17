@@ -137,7 +137,7 @@ struct ChartsView: View {
             .background(
                 pageBackground
             )
-            .navigationTitle("Gráficos")
+            .navigationTitle("Finance")
         }
     }
 

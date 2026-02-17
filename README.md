@@ -30,26 +30,35 @@ Aplicacion iOS para gestionar patrimonio financiero personal de forma local: cue
 
 ## Funcionalidades actuales
 
-- Gestion de cuentas bancarias
-  - Alta, edicion y eliminacion de cuentas
+- Cuentas, bancos y patrimonio
+  - Alta, edicion y eliminacion de cuentas y bancos
   - Tipos de cuenta (corriente, ahorro, inversion, etc.)
-  - Saldos con formato monetario consistente (`1.234,56 €`)
-- Gestion de bancos
-  - Entidad dinamica (no hardcodeada)
-  - Crear, editar y eliminar bancos
   - Banco con icono y color personalizado
-- Dashboard (Inicio)
-  - Tarjeta de patrimonio total
-  - Tarjeta de patrimonio por tipo
-  - Listado agrupado por tipo de cuenta
-- Graficos
-  - Donut de patrimonio por tipo
-  - Barras de saldo por banco
-  - Tarjetas de resumen rapido
-- Ajustes de datos
-  - Exportar datos a JSON
-  - Importar datos (mantener o reemplazar datos actuales)
-  - Eliminar todos los datos con confirmacion
+  - Moneda global configurable para toda la app
+- Movimientos
+  - Registro de ingresos, gastos y transferencias entre cuentas
+  - Edicion y eliminacion con ajuste de saldos
+  - Filtros por tipo/categoria y buscador de movimientos
+- Categorias
+  - Gestion completa de categorias (crear, editar, eliminar)
+  - Categoria con icono y color
+- Estadisticas
+  - Analitica en una sola pantalla con dos ambitos: Movimientos e Inversiones
+  - Filtros temporales (mes actual, ultimo mes, ultimos 3 meses, ano actual, ano anterior, personalizado y todo)
+  - Graficos por categoria para ingresos y gastos
+  - KPIs de inversion (invertido, mercado, rentabilidad y rentabilidad %)
+  - Evolucion historica de inversiones y desglose por cuenta
+- Inversiones
+  - Campos de cantidad invertida y valor de mercado por cuenta de inversion
+  - Actualizacion manual con fecha seleccionable para completar historico
+  - Snapshots diarios para construir series temporales
+  - Recordatorio local de actualizacion de inversiones de lunes a viernes
+- Exportacion, importacion y sync manual
+  - Exportar/importar JSON con compatibilidad retroactiva entre versiones
+  - Modo de importacion: mantener datos actuales o reemplazar
+  - Backup manual en iCloud Drive con retencion automatica de las 2 ultimas copias
+  - Backup automatico diario configurable por hora (modo best effort en iOS)
+  - Aviso al abrir la app si existe una copia mas reciente en iCloud Drive
 - App Icon
   - Variantes light/dark/tinted
 
@@ -71,32 +80,49 @@ Finance/
       home.png
       charts.png
       settings.png
-  FinanceApp.swift
-  ContentView.swift
-  Models/
-    AccountType.swift
-    Bank.swift
-    BankAccount.swift
-    BankColor.swift
-    BankIcon.swift
-  Views/
-    AccountListView.swift
-    AddAccountView.swift
-    AccountDetailView.swift
-    BankManagementView.swift
-    ChartsView.swift
-    SettingsView.swift
-    Charts/
-      PatrimonyPieChart.swift
-      BalanceByBankBarChart.swift
-    Components/
-      AccountRowView.swift
-      TotalBalanceCard.swift
-      BalanceByTypeCard.swift
-  Services/
-    DataExportService.swift
-  Utilities/
-    CurrencyFormatter.swift
+  Finance/
+    FinanceApp.swift
+    ContentView.swift
+    Models/
+      AccountType.swift
+      Bank.swift
+      BankAccount.swift
+      BankColor.swift
+      BankIcon.swift
+      Movement.swift
+      MovementCategory.swift
+      MovementType.swift
+      InvestmentSnapshot.swift
+    Views/
+      AccountListView.swift
+      AddAccountView.swift
+      AccountDetailView.swift
+      MovementsView.swift
+      AddMovementView.swift
+      MovementStatsView.swift
+      ChartsView.swift
+      BankManagementView.swift
+      CategoryManagementView.swift
+      SettingsView.swift
+      Charts/
+        PatrimonyPieChart.swift
+        BalanceByBankBarChart.swift
+        CategoryPieChart.swift
+        CategoryAmountBarChart.swift
+      Components/
+        AccountRowView.swift
+        TotalBalanceCard.swift
+        BalanceByTypeCard.swift
+        CategoryChipView.swift
+        InvestmentPerformanceCard.swift
+    Services/
+      DataExportService.swift
+      ManualSyncService.swift
+      InvestmentReminderService.swift
+    Utilities/
+      CurrencyFormatter.swift
+      AppDateFormatter.swift
+      AppCurrency.swift
 ```
 
 ## Ejecutar en local
@@ -121,10 +147,9 @@ La aplicacion usa este formato monetario:
 
 ## Roadmap (proximos pasos)
 
-- Movimientos (gastos/ingresos)
-- Categorias por movimiento
-- Filtros temporales en graficos
-- Backups versionados
+- Mejoras de UX y pulido visual en estadisticas y movimientos
+- Filtros avanzados y comparativas entre periodos
+- Mas automatizaciones alrededor de inversiones (alertas y seguimiento)
 
 ---
 

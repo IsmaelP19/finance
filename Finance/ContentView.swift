@@ -18,6 +18,7 @@ struct ContentView: View {
     @Query(sort: \Bank.name) private var banks: [Bank]
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
+    @Query(sort: \InvestmentSnapshot.snapshotDate, order: .reverse) private var investmentSnapshots: [InvestmentSnapshot]
 
     @State private var showingSyncImportPrompt = false
     @State private var pendingSyncExportDate: Date?
@@ -52,11 +53,11 @@ struct ContentView: View {
                 }
         }
         .task {
-            checkForSyncUpdates()
+            refreshSyncState()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                checkForSyncUpdates()
+                refreshSyncState()
             }
         }
         .alert("Backup más reciente disponible", isPresented: $showingSyncImportPrompt) {
@@ -90,6 +91,25 @@ struct ContentView: View {
         showingSyncImportPrompt = true
     }
 
+    private func refreshSyncState() {
+        runAutomaticBackupIfDue()
+        checkForSyncUpdates()
+    }
+
+    private func runAutomaticBackupIfDue() {
+        do {
+            _ = try AutoBackupService.performAutoBackupIfDue(
+                banks: banks,
+                accounts: accounts,
+                categories: categories,
+                movements: movements,
+                investmentSnapshots: investmentSnapshots
+            )
+        } catch {
+            return
+        }
+    }
+
     private func importLatestBackupFromICloudDrive() {
         do {
             let (importResult, exportDate) = try ManualSyncService.importLatestBackup()
@@ -113,6 +133,10 @@ struct ContentView: View {
                 modelContext.insert(movement)
             }
 
+            for snapshot in importResult.investmentSnapshots {
+                modelContext.insert(snapshot)
+            }
+
             ManualSyncService.markImported(exportDate: exportDate)
             pendingSyncExportDate = nil
         } catch {
@@ -125,6 +149,10 @@ struct ContentView: View {
         withAnimation {
             for movement in movements {
                 modelContext.delete(movement)
+            }
+
+            for snapshot in investmentSnapshots {
+                modelContext.delete(snapshot)
             }
 
             for category in categories {
@@ -144,5 +172,5 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-        .modelContainer(for: [Bank.self, BankAccount.self, MovementCategory.self, Movement.self], inMemory: true)
+        .modelContainer(for: [Bank.self, BankAccount.self, MovementCategory.self, Movement.self, InvestmentSnapshot.self], inMemory: true)
 }

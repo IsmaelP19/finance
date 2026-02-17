@@ -7,6 +7,56 @@
 
 import SwiftUI
 import SwiftData
+import Charts
+
+private enum StatsDomain: String, CaseIterable, Identifiable {
+    case movements
+    case investments
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .movements:
+            return "Movimientos"
+        case .investments:
+            return "Inversiones"
+        }
+    }
+}
+
+private struct InvestmentSeriesPoint: Identifiable {
+    let id: Date
+    let date: Date
+    let invested: Decimal
+    let market: Decimal
+
+    var profit: Decimal {
+        market - invested
+    }
+
+    var returnPercent: Decimal? {
+        guard invested > 0 else { return nil }
+        return (profit / invested) * 100
+    }
+}
+
+private struct InvestmentAccountPerformance: Identifiable {
+    let id: UUID
+    let accountName: String
+    let bankName: String
+    let invested: Decimal
+    let market: Decimal
+
+    var profit: Decimal {
+        market - invested
+    }
+
+    var returnPercent: Decimal? {
+        guard invested > 0 else { return nil }
+        return (profit / invested) * 100
+    }
+}
 
 private enum MovementDateFilter: String, CaseIterable, Identifiable {
     case all
@@ -46,7 +96,10 @@ struct MovementStatsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
+    @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
+    @Query(sort: \InvestmentSnapshot.snapshotDate, order: .forward) private var snapshots: [InvestmentSnapshot]
 
+    @State private var selectedDomain: StatsDomain = .movements
     @State private var selectedDateFilter: MovementDateFilter = .currentMonth
     @State private var selectedMonth: Int = Calendar.current.component(.month, from: Date())
     @State private var selectedYear: Int = Calendar.current.component(.year, from: Date())
@@ -58,9 +111,10 @@ struct MovementStatsView: View {
     private var calendar: Calendar { .current }
 
     private var availableYears: [Int] {
-        let years = Set(movements.map { calendar.component(.year, from: $0.occurredAt) })
+        let movementYears = Set(movements.map { calendar.component(.year, from: $0.occurredAt) })
+        let snapshotYears = Set(snapshots.map { calendar.component(.year, from: $0.snapshotDate) })
         let currentYear = calendar.component(.year, from: Date())
-        return (years.union([currentYear])).sorted(by: >)
+        return (movementYears.union(snapshotYears).union([currentYear])).sorted(by: >)
     }
 
     private var monthOptions: [(Int, String)] {
@@ -75,6 +129,7 @@ struct MovementStatsView: View {
 
     private var quickFilterChips: [(MovementDateFilter, String)] {
         [
+            (.all, "Todo"),
             (.currentMonth, "Mes actual"),
             (.previousMonth, "Último mes"),
             (.last3Months, "Últimos 3 meses"),
@@ -114,6 +169,127 @@ struct MovementStatsView: View {
     private var filteredMovements: [Movement] {
         guard let activeInterval else { return movements }
         return movements.filter { activeInterval.contains($0.occurredAt) }
+    }
+
+    private var investmentAccounts: [BankAccount] {
+        accounts.filter { $0.accountType == .investment }
+    }
+
+    private var filteredInvestmentSnapshots: [InvestmentSnapshot] {
+        let investmentSnapshots = snapshots.filter { $0.account?.accountType == .investment }
+        guard let activeInterval else { return investmentSnapshots }
+        return investmentSnapshots.filter { activeInterval.contains($0.snapshotDate) }
+    }
+
+    private var investmentSeries: [InvestmentSeriesPoint] {
+        let groupedByDate = Dictionary(grouping: filteredInvestmentSnapshots) {
+            calendar.startOfDay(for: $0.snapshotDate)
+        }
+
+        let points = groupedByDate.compactMap { date, dailySnapshots -> InvestmentSeriesPoint? in
+            let groupedByAccount = Dictionary(grouping: dailySnapshots.compactMap { snapshot -> (UUID, InvestmentSnapshot)? in
+                guard let accountId = snapshot.account?.id else { return nil }
+                return (accountId, snapshot)
+            }) { pair in
+                pair.0
+            }
+
+            let latestPerAccount = groupedByAccount.values.compactMap { accountSnapshots in
+                accountSnapshots
+                    .map { $0.1 }
+                    .max { lhs, rhs in lhs.updatedAt < rhs.updatedAt }
+            }
+
+            guard !latestPerAccount.isEmpty else { return nil }
+
+            let totalInvested = latestPerAccount.reduce(Decimal(0)) { $0 + $1.investedAmount }
+            let totalMarket = latestPerAccount.reduce(Decimal(0)) { $0 + $1.marketValue }
+
+            return InvestmentSeriesPoint(
+                id: date,
+                date: date,
+                invested: totalInvested,
+                market: totalMarket
+            )
+        }
+        .sorted { $0.date < $1.date }
+
+        if !points.isEmpty {
+            return points
+        }
+
+        if selectedDateFilter == .all && !investmentAccounts.isEmpty {
+            let today = calendar.startOfDay(for: Date())
+            let invested = investmentAccounts.reduce(Decimal(0)) { $0 + $1.effectiveInvestedAmount }
+            let market = investmentAccounts.reduce(Decimal(0)) { $0 + $1.effectiveMarketValue }
+            return [InvestmentSeriesPoint(id: today, date: today, invested: invested, market: market)]
+        }
+
+        return []
+    }
+
+    private var latestInvestmentPoint: InvestmentSeriesPoint? {
+        investmentSeries.last
+    }
+
+    private var investmentTotalInvested: Decimal {
+        latestInvestmentPoint?.invested ?? 0
+    }
+
+    private var investmentTotalMarket: Decimal {
+        latestInvestmentPoint?.market ?? 0
+    }
+
+    private var investmentTotalProfit: Decimal {
+        investmentTotalMarket - investmentTotalInvested
+    }
+
+    private var investmentTotalReturnPercent: Decimal? {
+        guard investmentTotalInvested > 0 else { return nil }
+        return (investmentTotalProfit / investmentTotalInvested) * 100
+    }
+
+    private var investmentBreakdownByAccount: [InvestmentAccountPerformance] {
+        let grouped = Dictionary(grouping: filteredInvestmentSnapshots.compactMap { snapshot -> (UUID, InvestmentSnapshot)? in
+            guard let accountId = snapshot.account?.id else { return nil }
+            return (accountId, snapshot)
+        }) { pair in
+            pair.0
+        }
+
+        let rowsFromSnapshots = grouped.values.compactMap { snapshots -> InvestmentAccountPerformance? in
+            guard let latest = snapshots.map({ $0.1 }).max(by: { $0.snapshotDate < $1.snapshotDate }),
+                  let account = latest.account else {
+                return nil
+            }
+
+            return InvestmentAccountPerformance(
+                id: account.id,
+                accountName: account.name,
+                bankName: account.bankDisplayName,
+                invested: latest.investedAmount,
+                market: latest.marketValue
+            )
+        }
+
+        if !rowsFromSnapshots.isEmpty {
+            return rowsFromSnapshots.sorted { $0.profit > $1.profit }
+        }
+
+        if selectedDateFilter == .all {
+            return investmentAccounts.map { account in
+                InvestmentAccountPerformance(
+                    id: account.id,
+                    accountName: account.name,
+                    bankName: account.bankDisplayName,
+                    invested: account.effectiveInvestedAmount,
+                    market: account.effectiveMarketValue
+                )
+            }
+            .sorted { $0.profit > $1.profit }
+        }
+
+        return []
     }
 
     private var incomeTotal: Decimal {
@@ -166,34 +342,13 @@ struct MovementStatsView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    domainSection
                     periodSection
 
-                    if movements.isEmpty {
-                        ContentUnavailableView(
-                            "Sin movimientos",
-                            systemImage: "arrow.left.arrow.right.circle",
-                            description: Text("Registra movimientos en la pestaña Movimientos para ver estadísticas")
-                        )
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 36)
+                    if selectedDomain == .movements {
+                        movementsContent
                     } else {
-                        summaryCard
-
-                        CategoryPieChart(
-                            title: "Gastos por categoría",
-                            emptyTitle: "Sin gastos en este periodo",
-                            emptyDescription: "Cambia el filtro de fechas para ver otra ventana temporal.",
-                            data: expenseByCategory,
-                            currencyCode: appCurrencyCode
-                        )
-
-                        CategoryPieChart(
-                            title: "Ingresos por categoría",
-                            emptyTitle: "Sin ingresos en este periodo",
-                            emptyDescription: "Cambia el filtro de fechas para ver otra ventana temporal.",
-                            data: incomeByCategory,
-                            currencyCode: appCurrencyCode
-                        )
+                        investmentsContent
                     }
                 }
                 .padding()
@@ -218,6 +373,82 @@ struct MovementStatsView: View {
                     }
                 )
             }
+        }
+    }
+
+    private var domainSection: some View {
+        Picker("Ámbito", selection: $selectedDomain) {
+            ForEach(StatsDomain.allCases) { domain in
+                Text(domain.displayName).tag(domain)
+            }
+        }
+        .pickerStyle(.segmented)
+    }
+
+    @ViewBuilder
+    private var movementsContent: some View {
+        if movements.isEmpty {
+            ContentUnavailableView(
+                "Sin movimientos",
+                systemImage: "arrow.left.arrow.right.circle",
+                description: Text("Registra movimientos en la pestaña Movimientos para ver estadísticas")
+            )
+            .frame(maxWidth: .infinity)
+            .padding(.top, 36)
+        } else {
+            summaryCard
+
+            CategoryPieChart(
+                title: "Gastos por categoría",
+                emptyTitle: "Sin gastos en este periodo",
+                emptyDescription: "Cambia el filtro de fechas para ver otra ventana temporal.",
+                data: expenseByCategory,
+                currencyCode: appCurrencyCode
+            )
+
+            CategoryPieChart(
+                title: "Ingresos por categoría",
+                emptyTitle: "Sin ingresos en este periodo",
+                emptyDescription: "Cambia el filtro de fechas para ver otra ventana temporal.",
+                data: incomeByCategory,
+                currencyCode: appCurrencyCode
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var investmentsContent: some View {
+        if investmentAccounts.isEmpty {
+            ContentUnavailableView(
+                "Sin cuentas de inversión",
+                systemImage: "chart.line.uptrend.xyaxis",
+                description: Text("Crea una cuenta de tipo Inversión para visualizar evolución y rentabilidad")
+            )
+            .frame(maxWidth: .infinity)
+            .padding(.top, 36)
+        } else if investmentSeries.isEmpty {
+            VStack(spacing: 12) {
+                ContentUnavailableView(
+                    "Sin datos para este periodo",
+                    systemImage: "calendar.badge.exclamationmark",
+                    description: Text("Prueba otro periodo o registra snapshots de inversión para las fechas seleccionadas")
+                )
+
+                if selectedDateFilter != .all {
+                    Button {
+                        selectedDateFilter = .all
+                    } label: {
+                        Label("Ver todo", systemImage: "calendar")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.top, 36)
+        } else {
+            investmentSummaryCard
+            investmentChartCard
+            investmentBreakdownCard
         }
     }
 
@@ -350,6 +581,143 @@ struct MovementStatsView: View {
             RoundedRectangle(cornerRadius: 16)
                 .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
         )
+    }
+
+    private var investmentSummaryCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Resumen de inversión", systemImage: "chart.line.uptrend.xyaxis")
+                .font(.headline)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                StatTile(title: "Invertido", value: investmentTotalInvested.asCurrency(code: appCurrencyCode), tint: .orange)
+                StatTile(title: "Mercado", value: investmentTotalMarket.asCurrency(code: appCurrencyCode), tint: .blue)
+                StatTile(title: "Rentabilidad", value: investmentTotalProfit.asCurrency(code: appCurrencyCode), tint: investmentTotalProfit.isNegative ? .red : .green)
+                StatTile(
+                    title: "Rentabilidad %",
+                    value: investmentTotalReturnPercent.map(formatPercent) ?? "-",
+                    tint: (investmentTotalReturnPercent ?? 0).isNegative ? .red : .green
+                )
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    private var investmentChartCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Evolución de inversión", systemImage: "chart.xyaxis.line")
+                .font(.headline)
+
+            Chart {
+                ForEach(investmentSeries) { point in
+                    LineMark(
+                        x: .value("Fecha", point.date),
+                        y: .value("Invertido", decimalAsDouble(point.invested))
+                    )
+                    .foregroundStyle(.orange)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+
+                    LineMark(
+                        x: .value("Fecha", point.date),
+                        y: .value("Mercado", decimalAsDouble(point.market))
+                    )
+                    .foregroundStyle(.blue)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                }
+            }
+            .frame(height: 240)
+
+            HStack(spacing: 14) {
+                legendItem(color: .orange, title: "Invertido")
+                legendItem(color: .blue, title: "Mercado")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    private var investmentBreakdownCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Rentabilidad por cuenta", systemImage: "building.columns")
+                .font(.headline)
+
+            ForEach(investmentBreakdownByAccount) { row in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(row.accountName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        Spacer()
+
+                        Text(row.profit.asCurrency(code: appCurrencyCode))
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(row.profit.isNegative ? .red : .green)
+                    }
+
+                    HStack {
+                        Text(row.bankName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Text(row.returnPercent.map(formatPercent) ?? "-")
+                            .font(.caption)
+                            .foregroundStyle(row.profit.isNegative ? .red : .green)
+                    }
+                }
+
+                if row.id != investmentBreakdownByAccount.last?.id {
+                    Divider()
+                }
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    private func legendItem(color: Color, title: String) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            Text(title)
+        }
+    }
+
+    private func formatPercent(_ value: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = Locale(identifier: "es_ES")
+        formatter.maximumFractionDigits = 2
+        formatter.minimumFractionDigits = 2
+        formatter.groupingSeparator = "."
+        formatter.decimalSeparator = ","
+        let formatted = formatter.string(from: value as NSDecimalNumber) ?? "0,00"
+        return "\(formatted)%"
+    }
+
+    private func decimalAsDouble(_ value: Decimal) -> Double {
+        (value as NSDecimalNumber).doubleValue
     }
 
     private func monthInterval(for date: Date) -> DateInterval? {

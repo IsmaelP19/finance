@@ -22,6 +22,7 @@ enum DataExportService {
         let accounts: [BankAccountDTO]
         let categories: [MovementCategoryDTO]
         let movements: [MovementDTO]
+        let investmentSnapshots: [InvestmentSnapshotDTO]
 
         enum CodingKeys: String, CodingKey {
             case version
@@ -30,6 +31,7 @@ enum DataExportService {
             case accounts
             case categories
             case movements
+            case investmentSnapshots
         }
 
         init(
@@ -38,7 +40,8 @@ enum DataExportService {
             banks: [BankDTO],
             accounts: [BankAccountDTO],
             categories: [MovementCategoryDTO],
-            movements: [MovementDTO]
+            movements: [MovementDTO],
+            investmentSnapshots: [InvestmentSnapshotDTO]
         ) {
             self.version = version
             self.exportDate = exportDate
@@ -46,6 +49,7 @@ enum DataExportService {
             self.accounts = accounts
             self.categories = categories
             self.movements = movements
+            self.investmentSnapshots = investmentSnapshots
         }
 
         init(from decoder: Decoder) throws {
@@ -56,6 +60,7 @@ enum DataExportService {
             accounts = try container.decode([BankAccountDTO].self, forKey: .accounts)
             categories = try container.decodeIfPresent([MovementCategoryDTO].self, forKey: .categories) ?? []
             movements = try container.decodeIfPresent([MovementDTO].self, forKey: .movements) ?? []
+            investmentSnapshots = try container.decodeIfPresent([InvestmentSnapshotDTO].self, forKey: .investmentSnapshots) ?? []
         }
 
         func encode(to encoder: Encoder) throws {
@@ -66,6 +71,7 @@ enum DataExportService {
             try container.encode(accounts, forKey: .accounts)
             try container.encode(categories, forKey: .categories)
             try container.encode(movements, forKey: .movements)
+            try container.encode(investmentSnapshots, forKey: .investmentSnapshots)
         }
     }
 
@@ -99,20 +105,23 @@ enum DataExportService {
         banks: [Bank],
         accounts: [BankAccount],
         categories: [MovementCategory],
-        movements: [Movement]
+        movements: [Movement],
+        investmentSnapshots: [InvestmentSnapshot]
     ) throws -> URL {
         let bankDTOs = banks.map { BankDTO(from: $0) }
         let accountDTOs = accounts.map { BankAccountDTO(from: $0) }
         let categoryDTOs = categories.map { MovementCategoryDTO(from: $0) }
         let movementDTOs = movements.map { MovementDTO(from: $0) }
+        let snapshotDTOs = investmentSnapshots.map { InvestmentSnapshotDTO(from: $0) }
 
         let exportData = ExportData(
-            version: 3,
+            version: 4,
             exportDate: Date(),
             banks: bankDTOs,
             accounts: accountDTOs,
             categories: categoryDTOs,
-            movements: movementDTOs
+            movements: movementDTOs,
+            investmentSnapshots: snapshotDTOs
         )
 
         let encoder = JSONEncoder()
@@ -148,6 +157,7 @@ enum DataExportService {
         let accounts: [BankAccount]
         let categories: [MovementCategory]
         let movements: [Movement]
+        let investmentSnapshots: [InvestmentSnapshot]
     }
 
     /// Importa bancos, cuentas, categorías y movimientos desde un archivo JSON.
@@ -174,11 +184,35 @@ enum DataExportService {
             if let bankId = dto.bankId {
                 account.bank = banksByID[bankId]
             }
+
+            if account.accountType == .investment {
+                if account.investedAmount == nil {
+                    account.investedAmount = account.balance
+                }
+                if account.marketValue == nil {
+                    account.marketValue = account.balance
+                }
+                if account.marketValueUpdatedAt == nil {
+                    account.marketValueUpdatedAt = account.updatedAt
+                }
+
+                account.balance = account.effectiveMarketValue
+            }
+
             return account
         }
 
         // Crear diccionario de cuentas para vincular movimientos
         let accountsByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
+
+        // Crear snapshots de inversión y vincular cuenta
+        let snapshots = exportData.investmentSnapshots.map { dto -> InvestmentSnapshot in
+            let snapshot = dto.toModel()
+            if let accountId = dto.accountId {
+                snapshot.account = accountsByID[accountId]
+            }
+            return snapshot
+        }
 
         // Crear movimientos y vincular cuenta/categoría
         let movements = exportData.movements.map { dto -> Movement in
@@ -201,7 +235,8 @@ enum DataExportService {
             banks: banks,
             accounts: accounts,
             categories: categories,
-            movements: movements
+            movements: movements,
+            investmentSnapshots: snapshots
         )
     }
 }
