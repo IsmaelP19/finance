@@ -8,6 +8,12 @@
 import SwiftUI
 import SwiftData
 
+private struct AccountBankGroup: Identifiable {
+    let id: String
+    let bankName: String
+    let accounts: [BankAccount]
+}
+
 /// Formulario para crear movimientos (gasto o ingreso).
 struct AddMovementView: View {
     @Environment(\.modelContext) private var modelContext
@@ -16,6 +22,7 @@ struct AddMovementView: View {
 
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
+    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
 
     @State private var selectedAccount: BankAccount?
     @State private var selectedDestinationAccount: BankAccount?
@@ -28,6 +35,11 @@ struct AddMovementView: View {
     @State private var newCategoryName: String = ""
     @State private var occurredAt: Date = Date()
     @State private var notes: String = ""
+    @State private var isRecurring = false
+    @State private var recurringFrequency: RecurringMovementFrequency = .monthly
+    @State private var recurringStartDate: Date = Date()
+    @State private var recurringHasEndDate = false
+    @State private var recurringEndDate: Date = Date()
 
     @State private var showingValidationAlert = false
     @State private var validationMessage = ""
@@ -50,6 +62,37 @@ struct AddMovementView: View {
         return categories.filter { $0.name.localizedCaseInsensitiveContains(categorySearchText) }
     }
 
+    private var accountsSortedByBankThenName: [BankAccount] {
+        accounts.sorted { lhs, rhs in
+            let bankComparison = lhs.bankDisplayName.localizedCaseInsensitiveCompare(rhs.bankDisplayName)
+            if bankComparison != .orderedSame {
+                return bankComparison == .orderedAscending
+            }
+
+            let accountComparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+            if accountComparison != .orderedSame {
+                return accountComparison == .orderedAscending
+            }
+
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    private var groupedAccountsByBank: [AccountBankGroup] {
+        let grouped = Dictionary(grouping: accountsSortedByBankThenName) { account in
+            account.bank?.id.uuidString ?? "no-bank"
+        }
+
+        return grouped
+            .compactMap { key, groupedAccounts in
+                guard let first = groupedAccounts.first else { return nil }
+                return AccountBankGroup(id: key, bankName: first.bankDisplayName, accounts: groupedAccounts)
+            }
+            .sorted { lhs, rhs in
+                lhs.bankName.localizedCaseInsensitiveCompare(rhs.bankName) == .orderedAscending
+            }
+    }
+
     private var canCreateNewCategory: Bool {
         let trimmed = categorySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
@@ -65,9 +108,13 @@ struct AddMovementView: View {
                             .foregroundStyle(.secondary)
                     } else {
                         Picker("Cuenta origen", selection: $selectedAccount) {
-                            ForEach(accounts, id: \.id) { account in
-                                Text("\(account.name) · \(account.bankDisplayName)")
-                                    .tag(Optional(account))
+                            ForEach(groupedAccountsByBank) { bankGroup in
+                                Section(bankGroup.bankName) {
+                                    ForEach(bankGroup.accounts, id: \.id) { account in
+                                        Text(account.name)
+                                            .tag(Optional(account))
+                                    }
+                                }
                             }
                         }
 
@@ -76,9 +123,13 @@ struct AddMovementView: View {
                                 Text("Selecciona una cuenta")
                                     .tag(nil as BankAccount?)
 
-                                ForEach(accounts, id: \.id) { account in
-                                    Text("\(account.name) · \(account.bankDisplayName)")
-                                        .tag(Optional(account))
+                                ForEach(groupedAccountsByBank) { bankGroup in
+                                    Section(bankGroup.bankName) {
+                                        ForEach(bankGroup.accounts, id: \.id) { account in
+                                            Text(account.name)
+                                                .tag(Optional(account))
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -159,8 +210,46 @@ struct AddMovementView: View {
                 }
                 }
 
-                Section("Fecha") {
-                    DatePicker("Fecha del movimiento", selection: $occurredAt, displayedComponents: [.date, .hourAndMinute])
+                if !isRecurring || isEditing {
+                    Section("Fecha") {
+                        DatePicker("Fecha del movimiento", selection: $occurredAt, displayedComponents: [.date, .hourAndMinute])
+                    }
+                }
+
+                if movementType != .transfer {
+                    Section("Recurrencia") {
+                        Toggle("Marcar como recurrente", isOn: $isRecurring)
+
+                        if isRecurring {
+                            Picker("Frecuencia", selection: $recurringFrequency) {
+                                ForEach(RecurringMovementFrequency.allCases) { frequency in
+                                    Text(frequency.displayName)
+                                        .tag(frequency)
+                                }
+                            }
+
+                            DatePicker(
+                                "Primer cobro/pago",
+                                selection: $recurringStartDate,
+                                displayedComponents: .date
+                            )
+
+                            Toggle("Fecha de fin", isOn: $recurringHasEndDate)
+
+                            if recurringHasEndDate {
+                                DatePicker(
+                                    "Fin",
+                                    selection: $recurringEndDate,
+                                    in: recurringStartDate...,
+                                    displayedComponents: .date
+                                )
+                            }
+
+                            Text("Se guardará como pendiente recurrente. No afectará al saldo hasta confirmar el cobro/pago.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
 
                 Section("Notas (opcional)") {
@@ -190,6 +279,7 @@ struct AddMovementView: View {
                 if newValue == .transfer {
                     selectedCategory = nil
                     categorySearchText = ""
+                    isRecurring = false
                     ensureTransferAccountsAreDifferent()
                 } else if selectedCategory == nil {
                     selectedCategory = categories.first
@@ -224,19 +314,43 @@ struct AddMovementView: View {
             selectedCategory = movementToEdit.category
             occurredAt = movementToEdit.occurredAt
             notes = movementToEdit.notes
+
+            if let recurring = linkedRecurringRule(for: movementToEdit) {
+                isRecurring = recurring.isActive
+                recurringFrequency = recurring.frequency
+                recurringStartDate = Calendar.current.startOfDay(for: recurring.startDate)
+                if let endDate = recurring.endDate {
+                    recurringHasEndDate = true
+                    recurringEndDate = Calendar.current.startOfDay(for: endDate)
+                } else {
+                    recurringHasEndDate = false
+                    recurringEndDate = recurringStartDate
+                }
+            } else {
+                isRecurring = false
+                recurringFrequency = .monthly
+                recurringStartDate = Calendar.current.startOfDay(for: movementToEdit.occurredAt)
+                recurringHasEndDate = false
+                recurringEndDate = recurringStartDate
+            }
+
             didLoadExistingData = true
             return
         }
 
         if selectedAccount == nil {
-            selectedAccount = accounts.first
+            selectedAccount = accountsSortedByBankThenName.first
         }
         if selectedDestinationAccount == nil {
-            selectedDestinationAccount = accounts.dropFirst().first ?? accounts.first
+            selectedDestinationAccount = accountsSortedByBankThenName.dropFirst().first ?? accountsSortedByBankThenName.first
         }
         if selectedCategory == nil {
             selectedCategory = categories.first
         }
+
+        recurringFrequency = .monthly
+        recurringStartDate = Calendar.current.startOfDay(for: occurredAt)
+        recurringEndDate = recurringStartDate
 
         ensureTransferAccountsAreDifferent()
     }
@@ -296,6 +410,48 @@ struct AddMovementView: View {
         }
 
         let notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let recurringConfiguration: (startDate: Date, endDate: Date?, anchorDay: Int)?
+
+        if isRecurring && movementType != .transfer {
+            let normalizedStart = Calendar.current.startOfDay(for: recurringStartDate)
+            let normalizedEnd = recurringHasEndDate ? Calendar.current.startOfDay(for: recurringEndDate) : nil
+
+            if let normalizedEnd, normalizedEnd < normalizedStart {
+                validationMessage = "La fecha de fin no puede ser anterior al inicio."
+                showingValidationAlert = true
+                return
+            }
+
+            recurringConfiguration = (
+                startDate: normalizedStart,
+                endDate: normalizedEnd,
+                anchorDay: Calendar.current.component(.day, from: normalizedStart)
+            )
+        } else {
+            recurringConfiguration = nil
+        }
+
+        if isRecurring && !isEditing {
+            guard let recurringConfiguration else { return }
+
+            let recurringMovement = RecurringMovement(
+                concept: trimmedConcept,
+                amount: amount,
+                type: movementType,
+                frequency: recurringFrequency,
+                dayOfMonth: recurringConfiguration.anchorDay,
+                startDate: recurringConfiguration.startDate,
+                endDate: recurringConfiguration.endDate,
+                account: selectedAccount,
+                category: selectedCategory,
+                notes: notes,
+                isActive: true
+            )
+
+            modelContext.insert(recurringMovement)
+            dismiss()
+            return
+        }
 
         if let movementToEdit {
             revertMovementImpact(movementToEdit)
@@ -316,6 +472,52 @@ struct AddMovementView: View {
             movementToEdit.category = movementType == .transfer ? nil : selectedCategory
             movementToEdit.notes = notes
             movementToEdit.resultingBalance = resultingBalance
+
+            if isRecurring {
+                guard let recurringConfiguration else { return }
+
+                if let recurring = linkedRecurringRule(for: movementToEdit) {
+                    recurring.concept = trimmedConcept
+                    recurring.amount = amount
+                    recurring.type = movementType
+                    recurring.frequency = recurringFrequency
+                    recurring.dayOfMonth = recurringConfiguration.anchorDay
+                    recurring.startDate = recurringConfiguration.startDate
+                    recurring.endDate = recurringConfiguration.endDate
+                    recurring.account = selectedAccount
+                    recurring.category = selectedCategory
+                    recurring.notes = notes
+                    recurring.isActive = true
+                    recurring.updatedAt = Date()
+                    movementToEdit.recurringRuleId = recurring.id
+                    movementToEdit.recurringScheduledAt = Calendar.current.startOfDay(for: movementToEdit.occurredAt)
+                } else {
+                    let recurring = RecurringMovement(
+                        concept: trimmedConcept,
+                        amount: amount,
+                        type: movementType,
+                        frequency: recurringFrequency,
+                        dayOfMonth: recurringConfiguration.anchorDay,
+                        startDate: recurringConfiguration.startDate,
+                        endDate: recurringConfiguration.endDate,
+                        account: selectedAccount,
+                        category: selectedCategory,
+                        notes: notes,
+                        isActive: true
+                    )
+                    modelContext.insert(recurring)
+                    movementToEdit.recurringRuleId = recurring.id
+                    movementToEdit.recurringScheduledAt = Calendar.current.startOfDay(for: movementToEdit.occurredAt)
+                }
+            } else {
+                if let recurring = linkedRecurringRule(for: movementToEdit) {
+                    recurring.isActive = false
+                    recurring.updatedAt = Date()
+                }
+                movementToEdit.recurringRuleId = nil
+                movementToEdit.recurringScheduledAt = nil
+            }
+
             movementToEdit.updatedAt = Date()
         } else {
             let resultingBalance = applyMovementImpact(
@@ -392,8 +594,13 @@ struct AddMovementView: View {
     private func ensureTransferAccountsAreDifferent() {
         guard let selectedAccount else { return }
         if selectedDestinationAccount?.id == selectedAccount.id {
-            selectedDestinationAccount = accounts.first(where: { $0.id != selectedAccount.id })
+            selectedDestinationAccount = accountsSortedByBankThenName.first(where: { $0.id != selectedAccount.id })
         }
+    }
+
+    private func linkedRecurringRule(for movement: Movement) -> RecurringMovement? {
+        guard let recurringRuleId = movement.recurringRuleId else { return nil }
+        return recurringMovements.first(where: { $0.id == recurringRuleId })
     }
 }
 

@@ -23,6 +23,7 @@ enum DataExportService {
         let categories: [MovementCategoryDTO]
         let movements: [MovementDTO]
         let investmentSnapshots: [InvestmentSnapshotDTO]
+        let recurringMovements: [RecurringMovementDTO]
 
         enum CodingKeys: String, CodingKey {
             case version
@@ -32,6 +33,7 @@ enum DataExportService {
             case categories
             case movements
             case investmentSnapshots
+            case recurringMovements
         }
 
         init(
@@ -41,7 +43,8 @@ enum DataExportService {
             accounts: [BankAccountDTO],
             categories: [MovementCategoryDTO],
             movements: [MovementDTO],
-            investmentSnapshots: [InvestmentSnapshotDTO]
+            investmentSnapshots: [InvestmentSnapshotDTO],
+            recurringMovements: [RecurringMovementDTO]
         ) {
             self.version = version
             self.exportDate = exportDate
@@ -50,6 +53,7 @@ enum DataExportService {
             self.categories = categories
             self.movements = movements
             self.investmentSnapshots = investmentSnapshots
+            self.recurringMovements = recurringMovements
         }
 
         init(from decoder: Decoder) throws {
@@ -61,6 +65,7 @@ enum DataExportService {
             categories = try container.decodeIfPresent([MovementCategoryDTO].self, forKey: .categories) ?? []
             movements = try container.decodeIfPresent([MovementDTO].self, forKey: .movements) ?? []
             investmentSnapshots = try container.decodeIfPresent([InvestmentSnapshotDTO].self, forKey: .investmentSnapshots) ?? []
+            recurringMovements = try container.decodeIfPresent([RecurringMovementDTO].self, forKey: .recurringMovements) ?? []
         }
 
         func encode(to encoder: Encoder) throws {
@@ -72,6 +77,7 @@ enum DataExportService {
             try container.encode(categories, forKey: .categories)
             try container.encode(movements, forKey: .movements)
             try container.encode(investmentSnapshots, forKey: .investmentSnapshots)
+            try container.encode(recurringMovements, forKey: .recurringMovements)
         }
     }
 
@@ -84,7 +90,7 @@ enum DataExportService {
     }
 
     /// URL temporal donde se guarda el archivo antes de compartir.
-    static func getExportFileURL() -> URL? {
+    @MainActor static func getExportFileURL() -> URL? {
         let tempDir = FileManager.default.temporaryDirectory
         let files = try? FileManager.default.contentsOfDirectory(
             at: tempDir,
@@ -101,31 +107,35 @@ enum DataExportService {
 
     /// Exporta todos los bancos, cuentas, categorías y movimientos a un archivo JSON temporal.
     @discardableResult
-    static func exportData(
+    @MainActor static func exportData(
         banks: [Bank],
         accounts: [BankAccount],
         categories: [MovementCategory],
         movements: [Movement],
-        investmentSnapshots: [InvestmentSnapshot]
+        investmentSnapshots: [InvestmentSnapshot],
+        recurringMovements: [RecurringMovement],
+        compact: Bool = false
     ) throws -> URL {
         let bankDTOs = banks.map { BankDTO(from: $0) }
         let accountDTOs = accounts.map { BankAccountDTO(from: $0) }
         let categoryDTOs = categories.map { MovementCategoryDTO(from: $0) }
         let movementDTOs = movements.map { MovementDTO(from: $0) }
         let snapshotDTOs = investmentSnapshots.map { InvestmentSnapshotDTO(from: $0) }
+        let recurringDTOs = recurringMovements.map { RecurringMovementDTO(from: $0) }
 
         let exportData = ExportData(
-            version: 4,
+            version: 5,
             exportDate: Date(),
             banks: bankDTOs,
             accounts: accountDTOs,
             categories: categoryDTOs,
             movements: movementDTOs,
-            investmentSnapshots: snapshotDTOs
+            investmentSnapshots: snapshotDTOs,
+            recurringMovements: recurringDTOs
         )
 
         let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.outputFormatting = compact ? [.sortedKeys] : [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
 
         let jsonData = try encoder.encode(exportData)
@@ -139,7 +149,7 @@ enum DataExportService {
     }
 
     /// Lee la fecha de exportación incluida dentro del JSON.
-    static func readExportDate(from url: URL) -> Date? {
+    @MainActor static func readExportDate(from url: URL) -> Date? {
         guard let data = try? Data(contentsOf: url) else { return nil }
 
         let decoder = JSONDecoder()
@@ -158,11 +168,12 @@ enum DataExportService {
         let categories: [MovementCategory]
         let movements: [Movement]
         let investmentSnapshots: [InvestmentSnapshot]
+        let recurringMovements: [RecurringMovement]
     }
 
     /// Importa bancos, cuentas, categorías y movimientos desde un archivo JSON.
     /// Vincula automáticamente las relaciones por UUID.
-    static func importData(from url: URL) throws -> ImportResult {
+    @MainActor static func importData(from url: URL) throws -> ImportResult {
         let data = try Data(contentsOf: url)
 
         let decoder = JSONDecoder()
@@ -214,6 +225,18 @@ enum DataExportService {
             return snapshot
         }
 
+        // Crear plantillas de movimientos recurrentes y vincular relaciones
+        let recurringMovements = exportData.recurringMovements.map { dto -> RecurringMovement in
+            let recurring = dto.toModel()
+            if let accountId = dto.accountId {
+                recurring.account = accountsByID[accountId]
+            }
+            if let categoryId = dto.categoryId {
+                recurring.category = categoriesByID[categoryId]
+            }
+            return recurring
+        }
+
         // Crear movimientos y vincular cuenta/categoría
         let movements = exportData.movements.map { dto -> Movement in
             let movement = dto.toModel()
@@ -236,7 +259,9 @@ enum DataExportService {
             accounts: accounts,
             categories: categories,
             movements: movements,
-            investmentSnapshots: snapshots
+            investmentSnapshots: snapshots,
+            recurringMovements: recurringMovements
         )
     }
 }
+

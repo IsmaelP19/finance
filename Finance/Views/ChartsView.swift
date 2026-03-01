@@ -37,6 +37,7 @@ struct ChartsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
+    @State private var showingDetailedStats = false
 
     private var totalBalance: Decimal {
         accounts.reduce(Decimal(0)) { $0 + $1.balance }
@@ -138,6 +139,19 @@ struct ChartsView: View {
                 pageBackground
             )
             .navigationTitle("Finance")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingDetailedStats = true
+                    } label: {
+                        Label("Estadísticas", systemImage: "chart.bar.xaxis")
+                    }
+                    .accessibilityLabel("Abrir estadísticas detalladas")
+                }
+            }
+            .sheet(isPresented: $showingDetailedStats) {
+                MovementStatsView()
+            }
         }
     }
 

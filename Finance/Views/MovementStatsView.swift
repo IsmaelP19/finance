@@ -107,6 +107,10 @@ struct MovementStatsView: View {
     @State private var customPeriodMode: CustomPeriodMode = .month
     @State private var customMonthDraft: Int = Calendar.current.component(.month, from: Date())
     @State private var customYearDraft: Int = Calendar.current.component(.year, from: Date())
+    @State private var selectedInvestmentDate: Date?
+
+    private let investedAreaColor = Color(red: 0.58, green: 0.86, blue: 0.89)
+    private let marketLineColor = Color(red: 0.96, green: 0.26, blue: 0.50)
 
     private var calendar: Calendar { .current }
 
@@ -230,6 +234,58 @@ struct MovementStatsView: View {
 
     private var latestInvestmentPoint: InvestmentSeriesPoint? {
         investmentSeries.last
+    }
+
+    private var selectedInvestmentPoint: InvestmentSeriesPoint? {
+        guard let selectedInvestmentDate else { return nil }
+        return nearestInvestmentPoint(to: selectedInvestmentDate)
+    }
+
+    private var highlightedInvestmentPoint: InvestmentSeriesPoint? {
+        selectedInvestmentPoint ?? latestInvestmentPoint
+    }
+
+    private var hasInvestmentTrend: Bool {
+        investmentSeries.count > 1
+    }
+
+    private var investmentChartXDomain: ClosedRange<Date> {
+        guard let first = investmentSeries.first?.date,
+              let last = investmentSeries.last?.date else {
+            let now = Date()
+            return now...now
+        }
+
+        if first == last {
+            let start = calendar.date(byAdding: .day, value: -3, to: first) ?? first
+            let end = calendar.date(byAdding: .day, value: 3, to: first) ?? first
+            return start...end
+        }
+
+        return first...last
+    }
+
+    private var investmentChartYDomain: ClosedRange<Double> {
+        let values = investmentSeries.flatMap { [decimalAsDouble($0.invested), decimalAsDouble($0.market)] }
+        guard let minValue = values.min(), let maxValue = values.max() else {
+            return 0...1
+        }
+
+        let span = maxValue - minValue
+        let minPadding = max(abs(maxValue) * 0.05, 1)
+        let padding = max(span * 0.12, minPadding)
+        let lower = max(0, minValue - padding)
+        let upper = maxValue + padding
+
+        if lower == upper {
+            return max(0, lower - 1)...(upper + 1)
+        }
+
+        return lower...upper
+    }
+
+    private var investmentAreaBaseline: Double {
+        investmentChartYDomain.lowerBound
     }
 
     private var investmentTotalInvested: Decimal {
@@ -360,6 +416,9 @@ struct MovementStatsView: View {
                 if !availableYears.contains(selectedYear), let first = availableYears.first {
                     selectedYear = first
                 }
+            }
+            .onChange(of: selectedDateFilter) { _, _ in
+                selectedInvestmentDate = nil
             }
             .sheet(isPresented: $showingCustomPeriodSheet) {
                 CustomPeriodSheet(
@@ -615,29 +674,123 @@ struct MovementStatsView: View {
 
             Chart {
                 ForEach(investmentSeries) { point in
-                    LineMark(
+                    AreaMark(
                         x: .value("Fecha", point.date),
-                        y: .value("Invertido", decimalAsDouble(point.invested))
+                        yStart: .value("Base", investmentAreaBaseline),
+                        yEnd: .value("Aportación neta", decimalAsDouble(point.invested))
                     )
-                    .foregroundStyle(.orange)
-                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [investedAreaColor.opacity(0.42), investedAreaColor.opacity(0.14)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
 
                     LineMark(
                         x: .value("Fecha", point.date),
-                        y: .value("Mercado", decimalAsDouble(point.market))
+                        y: .value("Valor de mercado", decimalAsDouble(point.market))
                     )
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(marketLineColor)
+                    .interpolationMethod(.catmullRom)
                     .lineStyle(StrokeStyle(lineWidth: 2.5))
                 }
-            }
-            .frame(height: 240)
 
-            HStack(spacing: 14) {
-                legendItem(color: .orange, title: "Invertido")
-                legendItem(color: .blue, title: "Mercado")
+                if let highlightedInvestmentPoint {
+                    RuleMark(x: .value("Selección", highlightedInvestmentPoint.date))
+                        .foregroundStyle(.secondary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+
+                    PointMark(
+                        x: .value("Fecha", highlightedInvestmentPoint.date),
+                        y: .value("Valor de mercado", decimalAsDouble(highlightedInvestmentPoint.market))
+                    )
+                    .symbolSize(70)
+                    .foregroundStyle(marketLineColor)
+                }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .frame(height: 250)
+            .chartXScale(domain: investmentChartXDomain)
+            .chartYScale(domain: investmentChartYDomain)
+            .chartPlotStyle { plot in
+                plot
+                    .clipped()
+            }
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
+                        .foregroundStyle(.secondary.opacity(0.25))
+                    AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
+                    AxisGridLine()
+                        .foregroundStyle(.secondary.opacity(0.2))
+                    AxisValueLabel {
+                        if let doubleValue = value.as(Double.self) {
+                            Text(formatAxisCurrency(doubleValue))
+                                .font(.caption2)
+                        }
+                    }
+                }
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Rectangle()
+                        .fill(.clear)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    updateInvestmentSelection(at: value.location, proxy: proxy, geometry: geometry)
+                                }
+                                .onEnded { _ in
+                                    selectedInvestmentDate = nil
+                                }
+                        )
+                }
+            }
+
+            if !hasInvestmentTrend, let onlyPoint = investmentSeries.first {
+                Label(
+                    "Solo hay un registro (\(onlyPoint.date.asSpanishShortDate())). Añade más días para ver la tendencia.",
+                    systemImage: "info.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            if let highlightedInvestmentPoint {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Datos a \(highlightedInvestmentPoint.date.asSpanishShortDate())")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        investmentSelectionRow(
+                            color: marketLineColor,
+                            title: "Valor de mercado",
+                            value: highlightedInvestmentPoint.market.asCurrency(code: appCurrencyCode)
+                        )
+                        Spacer()
+                    }
+
+                    HStack {
+                        investmentSelectionRow(
+                            color: investedAreaColor,
+                            title: "Aportación neta",
+                            value: highlightedInvestmentPoint.invested.asCurrency(code: appCurrencyCode)
+                        )
+                        Spacer()
+                    }
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.82))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+            }
         }
         .padding(16)
         .background(.regularMaterial)
@@ -695,13 +848,44 @@ struct MovementStatsView: View {
         )
     }
 
-    private func legendItem(color: Color, title: String) -> some View {
+    private func investmentSelectionRow(color: Color, title: String, value: String) -> some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(color)
-                .frame(width: 8, height: 8)
+                .frame(width: 10, height: 10)
             Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.primary)
         }
+    }
+
+    private func formatAxisCurrency(_ value: Double) -> String {
+        let absValue = abs(value)
+
+        if absValue >= 1_000_000 {
+            return "\(formatCompact(value / 1_000_000))M"
+        }
+
+        if absValue >= 1_000 {
+            return "\(formatCompact(value / 1_000))k"
+        }
+
+        return Decimal(value).asCurrency(code: appCurrencyCode)
+    }
+
+    private func formatCompact(_ value: Double) -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = Locale(identifier: "es_ES")
+        formatter.maximumFractionDigits = 1
+        formatter.minimumFractionDigits = 0
+        formatter.groupingSeparator = "."
+        formatter.decimalSeparator = ","
+        return formatter.string(from: NSNumber(value: value)) ?? "0"
     }
 
     private func formatPercent(_ value: Decimal) -> String {
@@ -718,6 +902,34 @@ struct MovementStatsView: View {
 
     private func decimalAsDouble(_ value: Decimal) -> Double {
         (value as NSDecimalNumber).doubleValue
+    }
+
+    private func nearestInvestmentPoint(to date: Date) -> InvestmentSeriesPoint? {
+        investmentSeries.min { lhs, rhs in
+            abs(lhs.date.timeIntervalSince(date)) < abs(rhs.date.timeIntervalSince(date))
+        }
+    }
+
+    private func updateInvestmentSelection(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
+        guard let plotFrameAnchor = proxy.plotFrame else {
+            selectedInvestmentDate = nil
+            return
+        }
+        let plotFrame = geometry[plotFrameAnchor]
+
+        let relativeX = location.x - plotFrame.origin.x
+
+        guard relativeX >= 0, relativeX <= plotFrame.size.width else {
+            selectedInvestmentDate = nil
+            return
+        }
+
+        guard let date: Date = proxy.value(atX: relativeX) else {
+            selectedInvestmentDate = nil
+            return
+        }
+
+        selectedInvestmentDate = date
     }
 
     private func monthInterval(for date: Date) -> DateInterval? {

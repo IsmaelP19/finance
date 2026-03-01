@@ -19,11 +19,20 @@ struct ContentView: View {
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \InvestmentSnapshot.snapshotDate, order: .reverse) private var investmentSnapshots: [InvestmentSnapshot]
+    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
 
     @State private var showingSyncImportPrompt = false
     @State private var pendingSyncExportDate: Date?
     @State private var showingSyncErrorAlert = false
     @State private var syncErrorMessage = ""
+
+    private var pendingRecurringCount: Int {
+        RecurringMovementService.pendingMovements(
+            for: recurringMovements,
+            confirmedMovements: movements,
+            horizonDays: 5
+        ).count
+    }
 
     var body: some View {
         TabView {
@@ -36,10 +45,11 @@ struct ContentView: View {
                 .tabItem {
                     Label("Movimientos", systemImage: "arrow.left.arrow.right.circle.fill")
                 }
+                .badge(pendingRecurringCount > 0 ? Text("\(pendingRecurringCount)") : nil)
 
-            MovementStatsView()
+            RecurringCalendarView()
                 .tabItem {
-                    Label("Estadísticas", systemImage: "chart.bar.xaxis")
+                    Label("Calendario", systemImage: "calendar")
                 }
 
             AccountListView()
@@ -103,7 +113,8 @@ struct ContentView: View {
                 accounts: accounts,
                 categories: categories,
                 movements: movements,
-                investmentSnapshots: investmentSnapshots
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements
             )
         } catch {
             return
@@ -137,6 +148,10 @@ struct ContentView: View {
                 modelContext.insert(snapshot)
             }
 
+            for recurring in importResult.recurringMovements {
+                modelContext.insert(recurring)
+            }
+
             ManualSyncService.markImported(exportDate: exportDate)
             pendingSyncExportDate = nil
         } catch {
@@ -153,6 +168,10 @@ struct ContentView: View {
 
             for snapshot in investmentSnapshots {
                 modelContext.delete(snapshot)
+            }
+
+            for recurring in recurringMovements {
+                modelContext.delete(recurring)
             }
 
             for category in categories {
@@ -172,5 +191,15 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-        .modelContainer(for: [Bank.self, BankAccount.self, MovementCategory.self, Movement.self, InvestmentSnapshot.self], inMemory: true)
+        .modelContainer(
+            for: [
+                Bank.self,
+                BankAccount.self,
+                MovementCategory.self,
+                Movement.self,
+                InvestmentSnapshot.self,
+                RecurringMovement.self
+            ],
+            inMemory: true
+        )
 }

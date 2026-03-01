@@ -18,6 +18,7 @@ struct SettingsView: View {
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \InvestmentSnapshot.snapshotDate, order: .reverse) private var investmentSnapshots: [InvestmentSnapshot]
+    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
 
     @AppStorage("investmentReminderEnabled") private var investmentReminderEnabled = false
     @AppStorage("investmentReminderHour") private var investmentReminderHour = 21
@@ -252,7 +253,7 @@ struct SettingsView: View {
                     deleteAllData(showSuccessAlert: true)
                 }
             } message: {
-                Text("Se eliminaran \(banks.count) banco(s), \(accounts.count) cuenta(s), \(categories.count) categoria(s), \(movements.count) movimiento(s) y \(investmentSnapshots.count) snapshot(s) de inversión. Esta accion no se puede deshacer.")
+                Text("Se eliminaran \(banks.count) banco(s), \(accounts.count) cuenta(s), \(categories.count) categoria(s), \(movements.count) movimiento(s), \(investmentSnapshots.count) snapshot(s) de inversión y \(recurringMovements.count) recurrencia(s). Esta accion no se puede deshacer.")
             }
             .alert(alertTitle, isPresented: $showingAlert) {
                 Button("Aceptar", role: .cancel) {}
@@ -295,7 +296,8 @@ struct SettingsView: View {
                 accounts: accounts,
                 categories: categories,
                 movements: movements,
-                investmentSnapshots: investmentSnapshots
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements
             )
             showingExportSheet = true
         } catch {
@@ -352,8 +354,12 @@ struct SettingsView: View {
                 modelContext.insert(snapshot)
             }
 
+            for recurring in importResult.recurringMovements {
+                modelContext.insert(recurring)
+            }
+
             alertTitle = "Importacion completada"
-            alertMessage = "Se importaron \(importResult.banks.count) banco(s), \(importResult.accounts.count) cuenta(s), \(importResult.categories.count) categoria(s), \(importResult.movements.count) movimiento(s) y \(importResult.investmentSnapshots.count) snapshot(s) de inversión."
+            alertMessage = "Se importaron \(importResult.banks.count) banco(s), \(importResult.accounts.count) cuenta(s), \(importResult.categories.count) categoria(s), \(importResult.movements.count) movimiento(s), \(importResult.investmentSnapshots.count) snapshot(s) de inversión y \(importResult.recurringMovements.count) recurrencia(s)."
             showingAlert = true
         } catch {
             showError("Error al importar: \(error.localizedDescription)")
@@ -368,6 +374,10 @@ struct SettingsView: View {
 
             for snapshot in investmentSnapshots {
                 modelContext.delete(snapshot)
+            }
+
+            for recurring in recurringMovements {
+                modelContext.delete(recurring)
             }
 
             for category in categories {
@@ -433,7 +443,8 @@ struct SettingsView: View {
                 accounts: accounts,
                 categories: categories,
                 movements: movements,
-                investmentSnapshots: investmentSnapshots
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements
             )
 
             let formatter = DateFormatter()
@@ -473,6 +484,10 @@ struct SettingsView: View {
 
             for snapshot in importResult.investmentSnapshots {
                 modelContext.insert(snapshot)
+            }
+
+            for recurring in importResult.recurringMovements {
+                modelContext.insert(recurring)
             }
 
             ManualSyncService.markImported(exportDate: exportDate)

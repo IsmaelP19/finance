@@ -8,6 +8,12 @@
 import SwiftUI
 import SwiftData
 
+private struct AccountFilterBankGroup: Identifiable {
+    let id: String
+    let bankName: String
+    let accounts: [BankAccount]
+}
+
 private enum MovementListTypeFilter: String, CaseIterable, Identifiable {
     case all
     case expense
@@ -54,6 +60,7 @@ struct MovementsView: View {
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
+    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
 
     @State private var showingAddMovement = false
     @State private var showingEditMovement = false
@@ -62,6 +69,8 @@ struct MovementsView: View {
     @State private var selectedTypeFilter: MovementListTypeFilter = .all
     @State private var selectedCategoryFilters: Set<MovementCategoryFilter> = []
     @State private var searchText = ""
+    @State private var showingPendingAlert = false
+    @State private var pendingAlertMessage = ""
 
     private var accountFilteredMovements: [Movement] {
         guard let selectedAccountFilterID else { return movements }
@@ -108,6 +117,53 @@ struct MovementsView: View {
         return options
     }
 
+    private var accountsSortedByBankThenName: [BankAccount] {
+        accounts.sorted { lhs, rhs in
+            let bankComparison = lhs.bankDisplayName.localizedCaseInsensitiveCompare(rhs.bankDisplayName)
+            if bankComparison != .orderedSame {
+                return bankComparison == .orderedAscending
+            }
+
+            let accountComparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+            if accountComparison != .orderedSame {
+                return accountComparison == .orderedAscending
+            }
+
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    private var groupedAccountsByBank: [AccountFilterBankGroup] {
+        let grouped = Dictionary(grouping: accountsSortedByBankThenName) { account in
+            account.bank?.id.uuidString ?? "no-bank"
+        }
+
+        return grouped
+            .compactMap { key, groupedAccounts in
+                guard let first = groupedAccounts.first else { return nil }
+                return AccountFilterBankGroup(id: key, bankName: first.bankDisplayName, accounts: groupedAccounts)
+            }
+            .sorted { lhs, rhs in
+                lhs.bankName.localizedCaseInsensitiveCompare(rhs.bankName) == .orderedAscending
+            }
+    }
+
+    private var pendingRecurringMovements: [PendingRecurringMovement] {
+        let allPending = RecurringMovementService.pendingMovements(
+            for: recurringMovements,
+            confirmedMovements: movements,
+            horizonDays: 5
+        )
+
+        guard let selectedAccountFilterID else {
+            return allPending
+        }
+
+        return allPending.filter { pending in
+            pending.rule.account?.id == selectedAccountFilterID
+        }
+    }
+
     private var totalIncome: Decimal {
         filteredMovements
             .filter { $0.type == .income }
@@ -143,9 +199,13 @@ struct MovementsView: View {
                                 Text("Todas las cuentas")
                                     .tag(nil as UUID?)
 
-                                ForEach(accounts, id: \.id) { account in
-                                    Text("\(account.name) · \(account.bankDisplayName)")
-                                        .tag(Optional(account.id))
+                                ForEach(groupedAccountsByBank) { bankGroup in
+                                    Section(bankGroup.bankName) {
+                                        ForEach(bankGroup.accounts, id: \.id) { account in
+                                            Text(account.name)
+                                                .tag(Optional(account.id))
+                                        }
+                                    }
                                 }
                             }
                             .pickerStyle(.menu)
@@ -165,7 +225,47 @@ struct MovementsView: View {
                         }
                     }
 
-                    if movements.isEmpty {
+                    if !pendingRecurringMovements.isEmpty {
+                        Section {
+                            ForEach(pendingRecurringMovements) { pending in
+                                PendingRecurringMovementRowView(
+                                    pending: pending,
+                                    currencyCode: appCurrencyCode
+                                )
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button {
+                                        confirmPendingRecurring(pending)
+                                    } label: {
+                                        Label("Confirmar", systemImage: "checkmark.circle.fill")
+                                    }
+                                    .tint(.green)
+                                }
+
+                                .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                    Button(role: .destructive) {
+                                        cancelPendingRecurring(pending.rule)
+                                    } label: {
+                                        Label("Cancelar", systemImage: "xmark.circle")
+                                    }
+                                }
+                            }
+                        } header: {
+                            HStack {
+                                Text("Próximos recurrentes")
+                                Spacer()
+                                Text("\(pendingRecurringMovements.count)")
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(Color.blue.opacity(0.2))
+                                    .foregroundStyle(.blue)
+                                    .clipShape(Capsule())
+                            }
+                        }
+                    }
+
+                    if movements.isEmpty && pendingRecurringMovements.isEmpty {
                         ContentUnavailableView(
                             accounts.isEmpty ? "Sin cuentas" : "Sin movimientos",
                             systemImage: accounts.isEmpty ? "building.columns" : "arrow.left.arrow.right.circle",
@@ -174,7 +274,7 @@ struct MovementsView: View {
                                               : "Pulsa + para registrar tu primer gasto, ingreso o transferencia")
                         )
                         .listRowBackground(Color.clear)
-                    } else if filteredMovements.isEmpty {
+                    } else if !movements.isEmpty && filteredMovements.isEmpty {
                         ContentUnavailableView(
                             "Sin movimientos con estos filtros",
                             systemImage: "line.3.horizontal.decrease.circle",
@@ -232,6 +332,11 @@ struct MovementsView: View {
                     AddMovementView(movementToEdit: movementToEdit)
                 }
             }
+            .alert("Acción no disponible", isPresented: $showingPendingAlert) {
+                Button("Aceptar", role: .cancel) {}
+            } message: {
+                Text(pendingAlertMessage)
+            }
         }
     }
 
@@ -258,6 +363,79 @@ struct MovementsView: View {
                 modelContext.delete(movement)
             }
         }
+    }
+
+    private func confirmPendingRecurring(_ pending: PendingRecurringMovement) {
+        guard pending.rule.type != .transfer else {
+            pendingAlertMessage = "Las transferencias no se pueden confirmar como recurrentes."
+            showingPendingAlert = true
+            return
+        }
+
+        guard let account = pending.rule.account else {
+            pendingAlertMessage = "La cuenta asociada ya no está disponible. Edita la recurrencia para continuar."
+            showingPendingAlert = true
+            return
+        }
+
+        guard !RecurringMovementService.isOccurrenceConfirmed(
+            ruleID: pending.rule.id,
+            dueDate: pending.dueDate,
+            movements: movements
+        ) else {
+            return
+        }
+
+        let resultingBalance = applyRecurringImpact(
+            type: pending.rule.type,
+            amount: pending.rule.amount,
+            account: account
+        )
+
+        let movement = Movement(
+            concept: pending.rule.concept,
+            amount: pending.rule.amount,
+            type: pending.rule.type,
+            occurredAt: pending.dueDate,
+            account: account,
+            destinationAccount: nil,
+            category: pending.rule.category,
+            notes: pending.rule.notes,
+            resultingBalance: resultingBalance,
+            recurringRuleId: pending.rule.id,
+            recurringScheduledAt: pending.dueDate
+        )
+
+        withAnimation {
+            modelContext.insert(movement)
+            pending.rule.updatedAt = Date()
+        }
+
+        HapticFeedback.success()
+    }
+
+    private func cancelPendingRecurring(_ recurring: RecurringMovement) {
+        withAnimation {
+            recurring.isActive = false
+            recurring.updatedAt = Date()
+        }
+    }
+
+    @discardableResult
+    private func applyRecurringImpact(type: MovementType, amount: Decimal, account: BankAccount) -> Decimal {
+        account.currency = appCurrencyCode
+
+        switch type {
+        case .expense:
+            account.balance -= amount
+        case .income:
+            account.balance += amount
+        case .transfer:
+            break
+        }
+
+        account.updatedAt = Date()
+        return account.balance
     }
 
     private func matchesSearch(_ movement: Movement, query: String) -> Bool {
@@ -454,18 +632,115 @@ private struct SummaryPill: View {
     }
 }
 
+private struct PendingRecurringMovementRowView: View {
+    let pending: PendingRecurringMovement
+    let currencyCode: String
+
+    private var dueDateLabel: String {
+        switch pending.status {
+        case .overdue:
+            return "Vencido · \(pending.dueDate.asSpanishShortDate())"
+        case .dueToday:
+            return "Vence hoy"
+        case .upcoming:
+            return "Vence \(pending.dueDate.asSpanishShortDate())"
+        }
+    }
+
+    private var statusColor: Color {
+        switch pending.status {
+        case .overdue:
+            return .red
+        case .dueToday:
+            return .orange
+        case .upcoming:
+            return .blue
+        }
+    }
+
+    private var amountText: String {
+        switch pending.rule.type {
+        case .expense, .income:
+            return (pending.rule.amount * pending.rule.type.signMultiplier).asCurrency(code: currencyCode)
+        case .transfer:
+            return pending.rule.amount.asCurrency(code: currencyCode)
+        }
+    }
+
+    private var accountName: String {
+        pending.rule.account?.name ?? "Cuenta no disponible"
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: pending.rule.type.icon)
+                .font(.title3)
+                .foregroundStyle(.white)
+                .frame(width: 36, height: 36)
+                .background(pending.rule.type.color)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(pending.rule.concept)
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+
+                if let category = pending.rule.category {
+                    CategoryChipView(
+                        name: category.name,
+                        iconName: category.iconName,
+                        color: category.color
+                    )
+                }
+
+                Text(accountName)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 7, height: 7)
+                    Text(dueDateLabel)
+                        .font(.caption2)
+                        .foregroundStyle(statusColor)
+                }
+            }
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(amountText)
+                    .font(.body)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(pending.rule.type == .expense ? .red : .green)
+
+                Text(pending.status.displayName)
+                    .font(.caption2)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(statusColor.opacity(0.15))
+                    .foregroundStyle(statusColor)
+                    .clipShape(Capsule())
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
 private struct MovementRowView: View {
     let movement: Movement
     let currencyCode: String
 
     private var accountAndBankText: String {
-        let accountName = movement.account?.name ?? "Sin cuenta"
-        let bankName = movement.account?.bankDisplayName ?? "Sin banco"
+        let accountText = movement.account?.name ?? "Sin cuenta"
         if movement.type == .transfer {
-            let destinationName = movement.destinationAccount?.name ?? "Sin cuenta destino"
-            return "\(accountName) -> \(destinationName)"
+            let destinationText = movement.destinationAccount?.name ?? "Sin cuenta destino"
+            return "\(accountText) -> \(destinationText)"
         }
-        return "\(accountName) · \(bankName)"
+        return accountText
     }
 
     private var balanceAfterText: String? {

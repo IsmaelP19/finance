@@ -18,6 +18,7 @@ struct FinanceApp: App {
             MovementCategory.self,
             Movement.self,
             InvestmentSnapshot.self,
+            RecurringMovement.self,
         ])
         let modelConfiguration = ModelConfiguration(
             schema: schema,

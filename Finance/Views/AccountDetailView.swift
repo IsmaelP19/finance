@@ -349,59 +349,345 @@ private struct InvestmentValueUpdateSheet: View {
     }
 }
 
+private enum InvestmentChartRange: String, CaseIterable, Identifiable {
+    case oneMonth
+    case threeMonths
+    case sixMonths
+    case oneYear
+    case all
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .oneMonth:
+            return "1M"
+        case .threeMonths:
+            return "3M"
+        case .sixMonths:
+            return "6M"
+        case .oneYear:
+            return "1A"
+        case .all:
+            return "Todo"
+        }
+    }
+
+    func startDate(relativeTo reference: Date, calendar: Calendar = .current) -> Date? {
+        switch self {
+        case .oneMonth:
+            return calendar.date(byAdding: .month, value: -1, to: reference)
+        case .threeMonths:
+            return calendar.date(byAdding: .month, value: -3, to: reference)
+        case .sixMonths:
+            return calendar.date(byAdding: .month, value: -6, to: reference)
+        case .oneYear:
+            return calendar.date(byAdding: .year, value: -1, to: reference)
+        case .all:
+            return nil
+        }
+    }
+}
+
 private struct InvestmentHistoryChartView: View {
     let snapshots: [InvestmentSnapshot]
     let currencyCode: String
 
-    var body: some View {
-        Chart {
-            ForEach(snapshots) { snapshot in
-                LineMark(
-                    x: .value("Fecha", snapshot.snapshotDate),
-                    y: .value("Invertido", snapshot.investedAmount.asDouble)
-                )
-                .foregroundStyle(.orange)
-                .lineStyle(StrokeStyle(lineWidth: 2.5))
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var selectedDate: Date?
+    @State private var selectedRange: InvestmentChartRange = .sixMonths
 
-                LineMark(
-                    x: .value("Fecha", snapshot.snapshotDate),
-                    y: .value("Mercado", snapshot.marketValue.asDouble)
-                )
-                .foregroundStyle(.blue)
-                .lineStyle(StrokeStyle(lineWidth: 2.5))
-            }
-        }
-        .frame(height: 220)
-        .chartLegend(position: .bottom) {
-            HStack(spacing: 12) {
-                legendItem(color: .orange, text: "Invertido")
-                legendItem(color: .blue, text: "Mercado")
-            }
-        }
+    private let investedColor = Color(red: 0.58, green: 0.86, blue: 0.89)
+    private let marketColor = Color(red: 0.96, green: 0.26, blue: 0.50)
 
-        if let latest = snapshots.last {
-            HStack {
-                Text("Último mercado")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text(latest.marketValue.asCurrency(code: currencyCode))
-                    .font(.caption)
-                    .fontWeight(.semibold)
-            }
-            .padding(.top, 4)
+    private var displayedSnapshots: [InvestmentSnapshot] {
+        guard let latestDate = snapshots.last?.snapshotDate else { return snapshots }
+        guard let startDate = selectedRange.startDate(relativeTo: latestDate) else { return snapshots }
+
+        let filtered = snapshots.filter { $0.snapshotDate >= startDate }
+        return filtered.isEmpty ? [snapshots.last].compactMap { $0 } : filtered
+    }
+
+    private var bestAvailableRange: InvestmentChartRange {
+        let preferredOrder: [InvestmentChartRange] = [.sixMonths, .threeMonths, .oneMonth, .oneYear, .all]
+        return preferredOrder.first(where: isRangeAvailable) ?? .all
+    }
+
+    private var hasUnavailableRanges: Bool {
+        InvestmentChartRange.allCases.contains { !isRangeAvailable($0) }
+    }
+
+    private var hasTrend: Bool {
+        displayedSnapshots.count > 1
+    }
+
+    private var highlightedSnapshot: InvestmentSnapshot? {
+        guard let selectedDate else { return displayedSnapshots.last }
+        return displayedSnapshots.min { lhs, rhs in
+            abs(lhs.snapshotDate.timeIntervalSince(selectedDate)) < abs(rhs.snapshotDate.timeIntervalSince(selectedDate))
         }
     }
 
-    private func legendItem(color: Color, text: String) -> some View {
+    private var xDomain: ClosedRange<Date> {
+        guard let first = displayedSnapshots.first?.snapshotDate,
+              let last = displayedSnapshots.last?.snapshotDate else {
+            let now = Date()
+            return now...now
+        }
+
+        if first == last {
+            let calendar = Calendar.current
+            let start = calendar.date(byAdding: .day, value: -3, to: first) ?? first
+            let end = calendar.date(byAdding: .day, value: 3, to: first) ?? first
+            return start...end
+        }
+
+        return first...last
+    }
+
+    private var yDomain: ClosedRange<Double> {
+        let values = displayedSnapshots.flatMap { [$0.investedAmount.asDouble, $0.marketValue.asDouble] }
+        guard let minValue = values.min(), let maxValue = values.max() else {
+            return 0...1
+        }
+
+        let span = maxValue - minValue
+        let minPadding = max(abs(maxValue) * 0.05, 1)
+        let padding = max(span * 0.12, minPadding)
+        let lower = max(0, minValue - padding)
+        let upper = maxValue + padding
+
+        if lower == upper {
+            return max(0, lower - 1)...(upper + 1)
+        }
+
+        return lower...upper
+    }
+
+    private var areaBaseline: Double {
+        yDomain.lowerBound
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Evolución del fondo")
+                .font(.headline)
+
+            rangeSelector
+
+            if hasUnavailableRanges {
+                Text("Los rangos se habilitan según el histórico disponible.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Chart {
+                ForEach(displayedSnapshots) { snapshot in
+                    AreaMark(
+                        x: .value("Fecha", snapshot.snapshotDate),
+                        yStart: .value("Base", areaBaseline),
+                        yEnd: .value("Aportación neta", snapshot.investedAmount.asDouble)
+                    )
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [investedColor.opacity(0.45), investedColor.opacity(0.15)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+
+                    LineMark(
+                        x: .value("Fecha", snapshot.snapshotDate),
+                        y: .value("Valor de mercado", snapshot.marketValue.asDouble)
+                    )
+                    .foregroundStyle(marketColor)
+                    .interpolationMethod(.catmullRom)
+                    .lineStyle(StrokeStyle(lineWidth: 2.5))
+                }
+
+                if let highlightedSnapshot {
+                    RuleMark(x: .value("Selección", highlightedSnapshot.snapshotDate))
+                        .foregroundStyle(.secondary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+
+                    PointMark(
+                        x: .value("Fecha", highlightedSnapshot.snapshotDate),
+                        y: .value("Mercado", highlightedSnapshot.marketValue.asDouble)
+                    )
+                    .symbolSize(70)
+                    .foregroundStyle(marketColor)
+                }
+            }
+            .frame(height: 250)
+            .chartXScale(domain: xDomain)
+            .chartYScale(domain: yDomain)
+            .chartPlotStyle { plot in
+                plot
+                    .clipped()
+            }
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
+                        .foregroundStyle(.secondary.opacity(0.25))
+                    AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
+                    AxisGridLine()
+                        .foregroundStyle(.secondary.opacity(0.2))
+                    AxisValueLabel {
+                        if let doubleValue = value.as(Double.self) {
+                            Text(Decimal(doubleValue).asCurrency(code: currencyCode))
+                                .font(.caption2)
+                        }
+                    }
+                }
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Rectangle()
+                        .fill(.clear)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onChanged { value in
+                                    updateSelection(at: value.location, proxy: proxy, geometry: geometry)
+                                }
+                                .onEnded { _ in
+                                    selectedDate = nil
+                                }
+                        )
+                }
+            }
+
+            if let highlightedSnapshot {
+                selectionCard(for: highlightedSnapshot)
+            }
+
+            if !hasTrend, let onlySnapshot = displayedSnapshots.first {
+                Label(
+                    "Solo hay un registro (\(onlySnapshot.snapshotDate.asSpanishShortDate())). Añade más días para ver la tendencia.",
+                    systemImage: "info.circle"
+                )
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .onAppear {
+            if !isRangeAvailable(selectedRange) {
+                selectedRange = bestAvailableRange
+            }
+        }
+        .onChange(of: snapshots.count) { _, _ in
+            if !isRangeAvailable(selectedRange) {
+                selectedRange = bestAvailableRange
+            }
+        }
+    }
+
+    private var rangeSelector: some View {
+        HStack(spacing: 8) {
+            ForEach(InvestmentChartRange.allCases) { range in
+                Button {
+                    guard isRangeAvailable(range) else { return }
+                    selectedRange = range
+                    selectedDate = nil
+                } label: {
+                    Text(range.title)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(selectedRange == range ? .white : (isRangeAvailable(range) ? .secondary : .secondary.opacity(0.6)))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            selectedRange == range
+                                ? Color.black
+                                : (isRangeAvailable(range) ? Color.gray.opacity(0.14) : Color.gray.opacity(0.22))
+                        )
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(!isRangeAvailable(range))
+                .opacity(isRangeAvailable(range) ? 1 : 0.55)
+            }
+        }
+    }
+
+    private func selectionCard(for snapshot: InvestmentSnapshot) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Datos a \(snapshot.snapshotDate.asSpanishShortDate())")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                legendItem(
+                    color: marketColor,
+                    text: "Valor de mercado",
+                    value: snapshot.marketValue.asCurrency(code: currencyCode)
+                )
+                Spacer()
+            }
+
+            HStack {
+                legendItem(
+                    color: investedColor,
+                    text: "Aportación neta",
+                    value: snapshot.investedAmount.asCurrency(code: currencyCode)
+                )
+                Spacer()
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(colorScheme == .dark ? Color.white.opacity(0.08) : Color.white)
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func legendItem(color: Color, text: String, value: String) -> some View {
         HStack(spacing: 6) {
             Circle()
                 .fill(color)
-                .frame(width: 8, height: 8)
+                .frame(width: 10, height: 10)
             Text(text)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Text(value)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.primary)
         }
+    }
+
+    private func isRangeAvailable(_ range: InvestmentChartRange) -> Bool {
+        guard range != .all else { return true }
+        guard let latestDate = snapshots.last?.snapshotDate else { return false }
+        guard let firstDate = snapshots.first?.snapshotDate else { return false }
+        guard let startDate = range.startDate(relativeTo: latestDate) else { return false }
+        return firstDate <= startDate
+    }
+
+    private func updateSelection(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
+        guard let plotFrame = proxy.plotFrame else {
+            selectedDate = nil
+            return
+        }
+
+        let frame = geometry[plotFrame]
+        let relativeX = location.x - frame.origin.x
+
+        guard relativeX >= 0, relativeX <= frame.size.width else {
+            selectedDate = nil
+            return
+        }
+
+        guard let date: Date = proxy.value(atX: relativeX) else {
+            selectedDate = nil
+            return
+        }
+
+        selectedDate = date
     }
 }
 

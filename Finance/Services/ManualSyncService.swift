@@ -71,7 +71,8 @@ enum ManualSyncService {
         accounts: [BankAccount],
         categories: [MovementCategory],
         movements: [Movement],
-        investmentSnapshots: [InvestmentSnapshot]
+        investmentSnapshots: [InvestmentSnapshot],
+        recurringMovements: [RecurringMovement]
     ) throws -> BackupInfo {
         try withSyncDirectoryAccess { directoryURL in
             let tempURL = try DataExportService.exportData(
@@ -79,7 +80,8 @@ enum ManualSyncService {
                 accounts: accounts,
                 categories: categories,
                 movements: movements,
-                investmentSnapshots: investmentSnapshots
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements
             )
 
             let destinationURL = directoryURL.appendingPathComponent(tempURL.lastPathComponent)
@@ -90,7 +92,7 @@ enum ManualSyncService {
 
             try pruneBackups(in: directoryURL)
 
-            let exportDate = DataExportService.readExportDate(from: destinationURL) ?? Date()
+            let exportDate = backupDate(for: destinationURL) ?? Date()
             markExported(exportDate: exportDate)
             return BackupInfo(url: destinationURL, exportDate: exportDate)
         }
@@ -123,7 +125,7 @@ enum ManualSyncService {
         UserDefaults.standard.set(exportDate, forKey: lastDismissedExportDateKey)
     }
 
-    static func shouldPromptForNewBackup() -> Bool {
+    @MainActor static func shouldPromptForNewBackup() -> Bool {
         guard let latest = try? latestBackup() else { return false }
 
         let acknowledgedDate = maxDate(lastImportedExportDate, lastDismissedExportDate)
@@ -156,12 +158,16 @@ enum ManualSyncService {
         return files
             .filter { $0.lastPathComponent.hasPrefix("Finance_backup_") && $0.pathExtension.lowercased() == "json" }
             .map { fileURL in
-                let exportDate = DataExportService.readExportDate(from: fileURL)
-                    ?? (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
-                    ?? .distantPast
+                let fileModDate = backupDate(for: fileURL)
+                let exportDate: Date = fileModDate ?? .distantPast
                 return BackupInfo(url: fileURL, exportDate: exportDate)
             }
-            .sorted { $0.exportDate > $1.exportDate }
+            .sorted { lhs, rhs in
+                if lhs.exportDate != rhs.exportDate {
+                    return lhs.exportDate > rhs.exportDate
+                }
+                return lhs.url.lastPathComponent > rhs.url.lastPathComponent
+            }
     }
 
     private static func pruneBackups(in directoryURL: URL) throws {
@@ -171,6 +177,10 @@ enum ManualSyncService {
         for backup in backups.dropFirst(maxBackupFiles) {
             try? FileManager.default.removeItem(at: backup.url)
         }
+    }
+
+    private static func backupDate(for fileURL: URL) -> Date? {
+        try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
     }
 
     private static func latestBackup(in directoryURL: URL) throws -> BackupInfo {
@@ -202,7 +212,7 @@ enum ManualSyncService {
         return resolvedURL
     }
 
-    private static func withSyncDirectoryAccess<T>(_ action: (URL) throws -> T) throws -> T {
+    static func withSyncDirectoryAccess<T>(_ action: (URL) throws -> T) throws -> T {
         let folderURL = try resolveSyncDirectory()
         let didAccess = folderURL.startAccessingSecurityScopedResource()
         defer {
@@ -216,5 +226,21 @@ enum ManualSyncService {
         }
 
         return try action(folderURL)
+    }
+
+    static func withSyncDirectoryAccessAsync<T>(_ action: (URL) async throws -> T) async throws -> T {
+        let folderURL = try resolveSyncDirectory()
+        let didAccess = folderURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                folderURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard didAccess else {
+            throw SyncError.cannotAccessFolder
+        }
+
+        return try await action(folderURL)
     }
 }
