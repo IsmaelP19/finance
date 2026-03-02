@@ -286,6 +286,7 @@ private struct InvestmentValueUpdateSheet: View {
                 Section(title) {
                     HStack {
                         TextField("0,00", text: $valueText)
+                            .keyboardType(.decimalPad)
                         Text(currencyCode)
                             .foregroundStyle(.secondary)
                     }
@@ -311,6 +312,12 @@ private struct InvestmentValueUpdateSheet: View {
             }
             .onAppear {
                 valueText = formatDecimal(initialValue)
+            }
+            .onChange(of: valueText) { _, newValue in
+                let sanitized = sanitizeDecimalInput(newValue)
+                if sanitized != newValue {
+                    valueText = sanitized
+                }
             }
             .alert("Importe inválido", isPresented: $showingAlert) {
                 Button("Aceptar", role: .cancel) {}
@@ -346,6 +353,33 @@ private struct InvestmentValueUpdateSheet: View {
         formatter.minimumFractionDigits = 0
         formatter.groupingSeparator = ""
         return formatter.string(from: value as NSDecimalNumber) ?? "\(value)"
+    }
+
+    private func sanitizeDecimalInput(_ text: String) -> String {
+        let normalized = text
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: ".", with: ",")
+
+        var output = ""
+        var hasSeparator = false
+
+        for character in normalized {
+            if character.isWholeNumber {
+                output.append(character)
+                continue
+            }
+
+            if character == ",", !hasSeparator {
+                hasSeparator = true
+                output.append(character)
+            }
+        }
+
+        if output.first == "," {
+            output = "0" + output
+        }
+
+        return output
     }
 }
 

@@ -54,67 +54,150 @@ private enum MovementCategoryFilter: Hashable {
     case category(UUID)
 }
 
+private enum MovementListDateFilter: String, CaseIterable, Identifiable {
+    case all
+    case currentMonth
+    case previousMonth
+    case last3Months
+    case currentYear
+    case previousYear
+    case customMonth
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .all:
+            return "Todo"
+        case .currentMonth:
+            return "Mes actual"
+        case .previousMonth:
+            return "Último mes"
+        case .last3Months:
+            return "Últimos 3 meses"
+        case .currentYear:
+            return "Año actual"
+        case .previousYear:
+            return "Último año"
+        case .customMonth:
+            return "Personalizado"
+        }
+    }
+}
+
+private struct MovementListSummary {
+    var totalIncome: Decimal = 0
+    var totalExpense: Decimal = 0
+    var movementCount: Int = 0
+}
+
+private struct MovementEditingSelection: Identifiable {
+    let id: UUID
+    let movement: Movement
+}
+
 /// Pantalla principal de movimientos (gastos e ingresos).
 struct MovementsView: View {
+    private static let movementPageSize = 20
+    private static let movementFetchBatchSize = 120
+
     @Environment(\.modelContext) private var modelContext
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
-    @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
+    @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
 
     @State private var showingAddMovement = false
-    @State private var showingEditMovement = false
-    @State private var movementToEdit: Movement?
+    @State private var movementToEdit: MovementEditingSelection?
     @State private var selectedAccountFilterID: UUID?
     @State private var selectedTypeFilter: MovementListTypeFilter = .all
     @State private var selectedCategoryFilters: Set<MovementCategoryFilter> = []
+    @State private var selectedDateFilter: MovementListDateFilter = .currentMonth
+    @State private var selectedMonth: Int = Calendar.current.component(.month, from: Date())
+    @State private var selectedYear: Int = Calendar.current.component(.year, from: Date())
+    @State private var showingCustomPeriodSheet = false
+    @State private var customMonthDraft: Int = Calendar.current.component(.month, from: Date())
+    @State private var customYearDraft: Int = Calendar.current.component(.year, from: Date())
     @State private var searchText = ""
     @State private var showingPendingAlert = false
     @State private var pendingAlertMessage = ""
+    @State private var loadedMovements: [Movement] = []
+    @State private var sourceFetchOffset = 0
+    @State private var hasMoreSourceMovements = true
+    @State private var isLoadingMovementPage = false
+    @State private var pendingFilteredMovements: [Movement] = []
+    @State private var hasAnyMovements = false
+    @State private var summary = MovementListSummary()
+    @State private var recurringConfirmationMovements: [Movement] = []
+    @State private var searchReloadTask: Task<Void, Never>?
+    @State private var availablePeriodYears: [Int] = [Calendar.current.component(.year, from: Date())]
 
-    private var accountFilteredMovements: [Movement] {
-        guard let selectedAccountFilterID else { return movements }
-        return movements.filter {
-            $0.account?.id == selectedAccountFilterID || $0.destinationAccount?.id == selectedAccountFilterID
+    private var calendar: Calendar { .current }
+
+    private var trimmedSearchText: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var monthOptions: [(Int, String)] {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "es_ES")
+        let symbols = formatter.monthSymbols ?? []
+        return symbols.enumerated().map { index, symbol in
+            let capitalized = symbol.prefix(1).uppercased() + symbol.dropFirst()
+            return (index + 1, capitalized)
         }
     }
 
-    private var typeFilteredMovements: [Movement] {
-        accountFilteredMovements.filter { selectedTypeFilter.matches($0.type) }
+    private var quickDateFilterChips: [MovementListDateFilter] {
+        [.all, .currentMonth, .previousMonth, .last3Months, .currentYear, .previousYear]
     }
 
-    private var filteredMovements: [Movement] {
-        let categoryFiltered: [Movement]
-        if selectedTypeFilter == .transfer {
-            categoryFiltered = typeFilteredMovements
-        } else if selectedCategoryFilters.isEmpty {
-            categoryFiltered = typeFilteredMovements
-        } else {
-            categoryFiltered = typeFilteredMovements.filter { movement in
-                guard let categoryID = movement.category?.id else { return false }
-                return selectedCategoryFilters.contains(.category(categoryID))
-            }
+    private var activeDateInterval: DateInterval? {
+        let now = Date()
+
+        switch selectedDateFilter {
+        case .all:
+            return nil
+        case .currentMonth:
+            return monthInterval(for: now)
+        case .previousMonth:
+            guard let previous = calendar.date(byAdding: .month, value: -1, to: now) else { return nil }
+            return monthInterval(for: previous)
+        case .last3Months:
+            guard let start = calendar.date(byAdding: .month, value: -3, to: now) else { return nil }
+            return DateInterval(start: start, end: now)
+        case .currentYear:
+            return yearInterval(for: calendar.component(.year, from: now))
+        case .previousYear:
+            return yearInterval(for: calendar.component(.year, from: now) - 1)
+        case .customMonth:
+            return monthInterval(month: selectedMonth, year: selectedYear)
         }
+    }
 
-        let trimmedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedQuery.isEmpty else { return categoryFiltered }
-
-        return categoryFiltered.filter { matchesSearch($0, query: trimmedQuery) }
+    private var activePeriodLabel: String {
+        switch selectedDateFilter {
+        case .all:
+            return "Todo"
+        case .currentMonth:
+            return "Mes actual"
+        case .previousMonth:
+            return "Último mes"
+        case .last3Months:
+            return "Últimos 3 meses"
+        case .currentYear:
+            return "Año actual"
+        case .previousYear:
+            return "Último año"
+        case .customMonth:
+            return "\(monthName(for: selectedMonth)) \(selectedYear)"
+        }
     }
 
     private var categoryFilterOptions: [(id: MovementCategoryFilter, title: String, color: Color)] {
-        var options: [(MovementCategoryFilter, String, Color)] = []
-
-        let grouped = Dictionary(grouping: typeFilteredMovements.compactMap { $0.category }) { $0.id }
-        let sortedCategories = grouped.values
-            .compactMap { $0.first }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-
-        options += sortedCategories.map { category in
+        categories.map { category in
             (MovementCategoryFilter.category(category.id), category.name, category.color)
         }
-
-        return options
     }
 
     private var accountsSortedByBankThenName: [BankAccount] {
@@ -151,7 +234,7 @@ struct MovementsView: View {
     private var pendingRecurringMovements: [PendingRecurringMovement] {
         let allPending = RecurringMovementService.pendingMovements(
             for: recurringMovements,
-            confirmedMovements: movements,
+            confirmedMovements: recurringConfirmationMovements,
             horizonDays: 5
         )
 
@@ -164,16 +247,20 @@ struct MovementsView: View {
         }
     }
 
+    private var shouldShowExpandedPendingRecurringSection: Bool {
+        selectedDateFilter == .currentMonth
+    }
+
+    private var shouldShowPendingRecurringHint: Bool {
+        !shouldShowExpandedPendingRecurringSection && !pendingRecurringMovements.isEmpty
+    }
+
     private var totalIncome: Decimal {
-        filteredMovements
-            .filter { $0.type == .income }
-            .reduce(Decimal(0)) { $0 + $1.amount }
+        summary.totalIncome
     }
 
     private var totalExpense: Decimal {
-        filteredMovements
-            .filter { $0.type == .expense }
-            .reduce(Decimal(0)) { $0 + $1.amount }
+        summary.totalExpense
     }
 
     private var netBalance: Decimal {
@@ -181,13 +268,17 @@ struct MovementsView: View {
     }
 
     private var movementCount: Int {
-        filteredMovements.count
+        summary.movementCount
+    }
+
+    private var visibleFilteredMovements: [Movement] {
+        loadedMovements
     }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if !movements.isEmpty {
+                if hasAnyMovements {
                     filtersHeader
                         .padding(.bottom, 8)
                 }
@@ -212,7 +303,7 @@ struct MovementsView: View {
                         }
                     }
 
-                    if !movements.isEmpty {
+                    if hasAnyMovements {
                         Section {
                             MovementSummaryView(
                                 totalIncome: totalIncome,
@@ -225,7 +316,7 @@ struct MovementsView: View {
                         }
                     }
 
-                    if !pendingRecurringMovements.isEmpty {
+                    if shouldShowExpandedPendingRecurringSection && !pendingRecurringMovements.isEmpty {
                         Section {
                             ForEach(pendingRecurringMovements) { pending in
                                 PendingRecurringMovementRowView(
@@ -265,7 +356,18 @@ struct MovementsView: View {
                         }
                     }
 
-                    if movements.isEmpty && pendingRecurringMovements.isEmpty {
+                    if shouldShowPendingRecurringHint {
+                        Section {
+                            PendingRecurringPeriodHintRow(
+                                pendingCount: pendingRecurringMovements.count,
+                                periodLabel: activePeriodLabel
+                            )
+                        } header: {
+                            Text("Próximos recurrentes")
+                        }
+                    }
+
+                    if !hasAnyMovements && pendingRecurringMovements.isEmpty {
                         ContentUnavailableView(
                             accounts.isEmpty ? "Sin cuentas" : "Sin movimientos",
                             systemImage: accounts.isEmpty ? "building.columns" : "arrow.left.arrow.right.circle",
@@ -274,7 +376,7 @@ struct MovementsView: View {
                                               : "Pulsa + para registrar tu primer gasto, ingreso o transferencia")
                         )
                         .listRowBackground(Color.clear)
-                    } else if !movements.isEmpty && filteredMovements.isEmpty {
+                    } else if hasAnyMovements && movementCount == 0 {
                         ContentUnavailableView(
                             "Sin movimientos con estos filtros",
                             systemImage: "line.3.horizontal.decrease.circle",
@@ -282,17 +384,15 @@ struct MovementsView: View {
                         )
                         .listRowBackground(Color.clear)
                     } else {
-                        ForEach(filteredMovements, id: \.id) { movement in
+                        ForEach(visibleFilteredMovements, id: \.id) { movement in
                             MovementRowView(movement: movement, currencyCode: appCurrencyCode)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    movementToEdit = movement
-                                    showingEditMovement = true
+                                    movementToEdit = MovementEditingSelection(id: movement.id, movement: movement)
                                 }
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                     Button {
-                                        movementToEdit = movement
-                                        showingEditMovement = true
+                                        movementToEdit = MovementEditingSelection(id: movement.id, movement: movement)
                                     } label: {
                                         Label("Editar", systemImage: "pencil")
                                     }
@@ -300,17 +400,49 @@ struct MovementsView: View {
                                 }
                         }
                         .onDelete(perform: deleteMovements)
+
+                        if visibleFilteredMovements.count < movementCount {
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                Spacer()
+                            }
+                            .onAppear {
+                                loadNextMovementPage()
+                            }
+                        }
                     }
                 }
             }
             .navigationTitle("Movimientos")
             .searchable(text: $searchText, prompt: "Buscar movimientos")
+            .onAppear {
+                reloadMovements()
+            }
+            .onDisappear {
+                searchReloadTask?.cancel()
+                searchReloadTask = nil
+            }
+            .onChange(of: selectedDateFilter) { _, _ in
+                reloadMovements()
+            }
             .onChange(of: selectedTypeFilter) { _, newValue in
                 if newValue == .transfer {
                     selectedCategoryFilters.removeAll()
                 } else {
                     pruneCategorySelections()
                 }
+
+                reloadMovements()
+            }
+            .onChange(of: selectedAccountFilterID) { _, _ in
+                reloadMovements()
+            }
+            .onChange(of: selectedCategoryFilters) { _, _ in
+                reloadMovements()
+            }
+            .onChange(of: searchText) { _, _ in
+                scheduleSearchReload()
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -322,15 +454,24 @@ struct MovementsView: View {
                     .disabled(accounts.isEmpty)
                 }
             }
-            .sheet(isPresented: $showingAddMovement) {
+            .sheet(isPresented: $showingAddMovement, onDismiss: {
+                reloadMovements()
+            }) {
                 AddMovementView()
             }
-            .sheet(isPresented: $showingEditMovement, onDismiss: {
-                movementToEdit = nil
-            }) {
-                if let movementToEdit {
-                    AddMovementView(movementToEdit: movementToEdit)
-                }
+            .sheet(isPresented: $showingCustomPeriodSheet) {
+                MovementCustomMonthSheet(
+                    monthOptions: monthOptions,
+                    availableYears: availablePeriodYears,
+                    selectedMonth: $customMonthDraft,
+                    selectedYear: $customYearDraft,
+                    onApply: applyCustomPeriod
+                )
+            }
+            .sheet(item: $movementToEdit, onDismiss: {
+                reloadMovements()
+            }) { selection in
+                AddMovementView(movementToEdit: selection.movement)
             }
             .alert("Acción no disponible", isPresented: $showingPendingAlert) {
                 Button("Aceptar", role: .cancel) {}
@@ -343,7 +484,7 @@ struct MovementsView: View {
     private func deleteMovements(at offsets: IndexSet) {
         withAnimation {
             for index in offsets {
-                let movement = filteredMovements[index]
+                let movement = visibleFilteredMovements[index]
                 if let account = movement.account {
                     switch movement.type {
                     case .expense:
@@ -363,6 +504,188 @@ struct MovementsView: View {
                 modelContext.delete(movement)
             }
         }
+
+        reloadMovements()
+    }
+
+    private func reloadMovements() {
+        searchReloadTask?.cancel()
+        searchReloadTask = nil
+        reloadMovementSummaryAndRecurringState()
+        resetMovementPagination()
+        loadNextMovementPage()
+    }
+
+    private func scheduleSearchReload() {
+        searchReloadTask?.cancel()
+        searchReloadTask = Task {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run {
+                reloadMovements()
+            }
+        }
+    }
+
+    private func reloadMovementSummaryAndRecurringState() {
+        var computedSummary = MovementListSummary()
+        var confirmations: [Movement] = []
+        var scannedCount = 0
+        var offset = 0
+        var discoveredYears: Set<Int> = [calendar.component(.year, from: Date()), selectedYear]
+
+        do {
+            while true {
+                let batch = try fetchMovementBatch(offset: offset, limit: Self.movementFetchBatchSize)
+                guard !batch.isEmpty else { break }
+
+                scannedCount += batch.count
+                offset += batch.count
+
+                for movement in batch {
+                    discoveredYears.insert(calendar.component(.year, from: movement.occurredAt))
+
+                    if movement.recurringRuleId != nil {
+                        confirmations.append(movement)
+                    }
+
+                    guard matchesActiveFilters(movement) else { continue }
+                    computedSummary.movementCount += 1
+
+                    switch movement.type {
+                    case .income:
+                        computedSummary.totalIncome += movement.amount
+                    case .expense:
+                        computedSummary.totalExpense += movement.amount
+                    case .transfer:
+                        break
+                    }
+                }
+
+                if batch.count < Self.movementFetchBatchSize {
+                    break
+                }
+            }
+
+            summary = computedSummary
+            recurringConfirmationMovements = confirmations
+            hasAnyMovements = scannedCount > 0
+            availablePeriodYears = discoveredYears.sorted(by: >)
+        } catch {
+            summary = MovementListSummary()
+            recurringConfirmationMovements = []
+            hasAnyMovements = false
+            availablePeriodYears = Array(Set([calendar.component(.year, from: Date()), selectedYear])).sorted(by: >)
+        }
+    }
+
+    private func resetMovementPagination() {
+        loadedMovements = []
+        sourceFetchOffset = 0
+        hasMoreSourceMovements = true
+        isLoadingMovementPage = false
+        pendingFilteredMovements = []
+    }
+
+    private func loadNextMovementPage() {
+        guard !isLoadingMovementPage else { return }
+        guard hasMoreSourceMovements || !pendingFilteredMovements.isEmpty else { return }
+
+        isLoadingMovementPage = true
+        defer { isLoadingMovementPage = false }
+
+        let targetCount = loadedMovements.count + Self.movementPageSize
+
+        while loadedMovements.count < targetCount {
+            if !pendingFilteredMovements.isEmpty {
+                let missing = targetCount - loadedMovements.count
+                let chunk = Array(pendingFilteredMovements.prefix(missing))
+                loadedMovements.append(contentsOf: chunk)
+                pendingFilteredMovements.removeFirst(chunk.count)
+                continue
+            }
+
+            guard hasMoreSourceMovements else { break }
+
+            guard let batch = try? fetchMovementBatch(offset: sourceFetchOffset, limit: Self.movementFetchBatchSize) else {
+                hasMoreSourceMovements = false
+                break
+            }
+
+            sourceFetchOffset += batch.count
+
+            if batch.count < Self.movementFetchBatchSize {
+                hasMoreSourceMovements = false
+            }
+
+            let matches = batch.filter { movement in
+                matchesActiveFilters(movement)
+            }
+
+            let missing = targetCount - loadedMovements.count
+            let visibleChunk = Array(matches.prefix(missing))
+            loadedMovements.append(contentsOf: visibleChunk)
+
+            if matches.count > missing {
+                pendingFilteredMovements.append(contentsOf: matches.dropFirst(missing))
+            }
+
+            if batch.isEmpty {
+                hasMoreSourceMovements = false
+            }
+        }
+    }
+
+    private func fetchMovementBatch(offset: Int, limit: Int) throws -> [Movement] {
+        var descriptor = FetchDescriptor<Movement>(
+            sortBy: [
+                SortDescriptor(\Movement.occurredAt, order: .reverse),
+                SortDescriptor(\Movement.createdAt, order: .reverse)
+            ]
+        )
+        descriptor.fetchOffset = offset
+        descriptor.fetchLimit = limit
+        return try modelContext.fetch(descriptor)
+    }
+
+    private func matchesActiveFilters(_ movement: Movement) -> Bool {
+        guard matchesDateFilter(movement) else { return false }
+        guard matchesAccountAndTypeFilters(movement) else { return false }
+        guard matchesCategoryFilters(movement) else { return false }
+        guard !trimmedSearchText.isEmpty else { return true }
+        return matchesSearch(movement, query: trimmedSearchText)
+    }
+
+    private func matchesDateFilter(_ movement: Movement) -> Bool {
+        guard let activeDateInterval else { return true }
+        return activeDateInterval.contains(movement.occurredAt)
+    }
+
+    private func matchesAccountAndTypeFilters(_ movement: Movement) -> Bool {
+        if let selectedAccountFilterID {
+            let belongsToSelectedAccount = movement.account?.id == selectedAccountFilterID
+                || movement.destinationAccount?.id == selectedAccountFilterID
+            guard belongsToSelectedAccount else { return false }
+        }
+
+        return selectedTypeFilter.matches(movement.type)
+    }
+
+    private func matchesCategoryFilters(_ movement: Movement) -> Bool {
+        if selectedTypeFilter == .transfer {
+            return true
+        }
+
+        guard !selectedCategoryFilters.isEmpty else {
+            return true
+        }
+
+        guard let categoryID = movement.category?.id else {
+            return false
+        }
+
+        return selectedCategoryFilters.contains(.category(categoryID))
     }
 
     private func confirmPendingRecurring(_ pending: PendingRecurringMovement) {
@@ -381,7 +704,7 @@ struct MovementsView: View {
         guard !RecurringMovementService.isOccurrenceConfirmed(
             ruleID: pending.rule.id,
             dueDate: pending.dueDate,
-            movements: movements
+            movements: recurringConfirmationMovements
         ) else {
             return
         }
@@ -412,6 +735,7 @@ struct MovementsView: View {
         }
 
         HapticFeedback.success()
+        reloadMovements()
     }
 
     private func cancelPendingRecurring(_ recurring: RecurringMovement) {
@@ -475,8 +799,108 @@ struct MovementsView: View {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private func monthName(for month: Int) -> String {
+        monthOptions.first(where: { $0.0 == month })?.1 ?? "Mes"
+    }
+
+    private func prepareCustomPeriodDrafts() {
+        customMonthDraft = selectedMonth
+        customYearDraft = selectedYear
+
+        if !availablePeriodYears.contains(customYearDraft), let fallback = availablePeriodYears.first {
+            customYearDraft = fallback
+        }
+    }
+
+    private func applyCustomPeriod() {
+        selectedMonth = customMonthDraft
+        selectedYear = customYearDraft
+
+        if selectedDateFilter == .customMonth {
+            reloadMovements()
+        } else {
+            selectedDateFilter = .customMonth
+        }
+    }
+
+    private func monthInterval(for date: Date) -> DateInterval? {
+        let start = calendar.date(from: calendar.dateComponents([.year, .month], from: date))
+        guard let start else { return nil }
+        guard let end = calendar.date(byAdding: .month, value: 1, to: start) else { return nil }
+        return DateInterval(start: start, end: end)
+    }
+
+    private func monthInterval(month: Int, year: Int) -> DateInterval? {
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = 1
+
+        guard let start = calendar.date(from: components) else { return nil }
+        guard let end = calendar.date(byAdding: .month, value: 1, to: start) else { return nil }
+        return DateInterval(start: start, end: end)
+    }
+
+    private func yearInterval(for year: Int) -> DateInterval? {
+        var components = DateComponents()
+        components.year = year
+        components.month = 1
+        components.day = 1
+
+        guard let start = calendar.date(from: components) else { return nil }
+        guard let end = calendar.date(byAdding: .year, value: 1, to: start) else { return nil }
+        return DateInterval(start: start, end: end)
+    }
+
     private var filtersHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(quickDateFilterChips, id: \.id) { filter in
+                        MovementFilterChip(
+                            title: filter.displayName,
+                            color: .indigo,
+                            isSelected: selectedDateFilter == filter,
+                            action: { selectedDateFilter = filter }
+                        )
+                    }
+
+                    MovementFilterChip(
+                        title: MovementListDateFilter.customMonth.displayName,
+                        color: .indigo,
+                        isSelected: selectedDateFilter == .customMonth,
+                        action: {
+                            prepareCustomPeriodDrafts()
+                            showingCustomPeriodSheet = true
+                        }
+                    )
+                }
+                .padding(.leading, 16)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 8) {
+                Image(systemName: "calendar")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text(activePeriodLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+
+                Spacer()
+
+                if selectedDateFilter == .customMonth {
+                    Button("Editar") {
+                        prepareCustomPeriodDrafts()
+                        showingCustomPeriodSheet = true
+                    }
+                    .font(.caption)
+                }
+            }
+            .padding(.horizontal, 16)
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(MovementListTypeFilter.allCases) { filter in
@@ -560,6 +984,82 @@ private struct MovementFilterChip: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct MovementCustomMonthSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let monthOptions: [(Int, String)]
+    let availableYears: [Int]
+    @Binding var selectedMonth: Int
+    @Binding var selectedYear: Int
+    var onApply: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Mes") {
+                    Picker("Mes", selection: $selectedMonth) {
+                        ForEach(monthOptions, id: \.0) { month, name in
+                            Text(name).tag(month)
+                        }
+                    }
+                }
+
+                Section("Año") {
+                    Picker("Año", selection: $selectedYear) {
+                        ForEach(availableYears, id: \.self) { year in
+                            Text(verbatim: String(year)).tag(year)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Periodo personalizado")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancelar") {
+                        dismiss()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Aplicar") {
+                        onApply()
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+}
+
+private struct PendingRecurringPeriodHintRow: View {
+    let pendingCount: Int
+    let periodLabel: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "calendar.badge.exclamationmark")
+                .font(.subheadline)
+                .foregroundStyle(.blue)
+                .padding(.top, 2)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(pendingCount) recurrentes próximos")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+
+                Text("Con el periodo \"\(periodLabel)\" no se muestran en detalle. Cambia a \"Mes actual\" o revisa la pestaña Calendario.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
     }
 }
 
