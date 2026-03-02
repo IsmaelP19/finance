@@ -555,9 +555,9 @@ struct MovementsView: View {
 
                     switch movement.type {
                     case .income:
-                        computedSummary.totalIncome += movement.amount
+                        computedSummary.totalIncome += movement.statsIncomeAmount
                     case .expense:
-                        computedSummary.totalExpense += movement.amount
+                        computedSummary.totalExpense += movement.statsExpenseAmount
                     case .transfer:
                         break
                     }
@@ -1263,24 +1263,49 @@ private struct MovementRowView: View {
                     .fontWeight(.medium)
                     .lineLimit(1)
 
-                if movement.type == .transfer {
-                    CategoryChipView(
-                        name: "Transferencia",
-                        iconName: "arrow.left.arrow.right",
-                        color: .blue
-                    )
-                } else {
-                    CategoryChipView(
-                        name: movement.category?.name ?? "Sin categoría",
-                        iconName: movement.category?.iconName ?? "tag",
-                        color: movement.category?.color ?? .secondary
-                    )
+                HStack(spacing: 6) {
+                    if movement.type == .transfer {
+                        CategoryChipView(
+                            name: "Transferencia",
+                            iconName: "arrow.left.arrow.right",
+                            color: .blue
+                        )
+                    } else {
+                        CategoryChipView(
+                            name: movement.category?.name ?? "Sin categoría",
+                            iconName: movement.category?.iconName ?? "tag",
+                            color: movement.category?.color ?? .secondary
+                        )
+
+                        if movement.isReimbursementIncome {
+                            CategoryChipView(
+                                name: "Reembolso",
+                                iconName: "arrow.uturn.left.circle",
+                                color: .blue
+                            )
+                        }
+
+                        if movement.isSharedExpense {
+                            CategoryChipView(
+                                name: "Compartido",
+                                iconName: "person.2.fill",
+                                color: .orange
+                            )
+                        }
+                    }
                 }
 
                 Text(accountAndBankText)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+
+                if let statsDetailText {
+                    Text(statsDetailText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
 
                 if let balanceAfterText {
                     Text(balanceAfterText)
@@ -1297,6 +1322,12 @@ private struct MovementRowView: View {
                     .font(.body)
                     .fontWeight(.semibold)
                     .foregroundStyle(displayAmountColor)
+
+                if let personalAmountText {
+                    Text(personalAmountText)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
 
                 Text(movement.occurredAt.asSpanishShortDate())
                     .font(.caption)
@@ -1324,5 +1355,24 @@ private struct MovementRowView: View {
         case .transfer:
             return .blue
         }
+    }
+
+    private var personalAmountText: String? {
+        guard movement.type == .expense, movement.isSharedExpense else { return nil }
+        let signedPersonal = movement.statsExpenseAmount * movement.type.signMultiplier
+        return "Mi parte: \(signedPersonal.asCurrency(code: currencyCode))"
+    }
+
+    private var statsDetailText: String? {
+        if movement.isReimbursementIncome {
+            return "No cuenta como ingreso en estadísticas"
+        }
+
+        if movement.isSharedExpense {
+            let expected = max(movement.amount - movement.statsExpenseAmount, 0)
+            return "Reembolso esperado: \(expected.asCurrency(code: currencyCode))"
+        }
+
+        return nil
     }
 }

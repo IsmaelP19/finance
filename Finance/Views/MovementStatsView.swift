@@ -351,13 +351,13 @@ struct MovementStatsView: View {
     private var incomeTotal: Decimal {
         filteredMovements
             .filter { $0.type == .income }
-            .reduce(Decimal(0)) { $0 + $1.amount }
+            .reduce(Decimal(0)) { $0 + $1.statsIncomeAmount }
     }
 
     private var expenseTotal: Decimal {
         filteredMovements
             .filter { $0.type == .expense }
-            .reduce(Decimal(0)) { $0 + $1.amount }
+            .reduce(Decimal(0)) { $0 + $1.statsExpenseAmount }
     }
 
     private var netTotal: Decimal {
@@ -962,14 +962,25 @@ struct MovementStatsView: View {
     }
 
     private func categoryData(for type: MovementType) -> [CategoryAmountDatum] {
-        let selectedMovements = filteredMovements.filter { $0.type == type }
+        let selectedMovements = filteredMovements.filter { movement in
+            movement.type == type && (type != .income || !movement.isReimbursementIncome)
+        }
         let grouped = Dictionary(grouping: selectedMovements) { movement in
             movement.category?.id.uuidString ?? "no-category"
         }
 
         return grouped.compactMap { key, groupedMovements in
             guard let first = groupedMovements.first else { return nil }
-            let total = groupedMovements.reduce(Decimal(0)) { $0 + $1.amount }
+            let total = groupedMovements.reduce(Decimal(0)) { partial, movement in
+                switch type {
+                case .expense:
+                    return partial + movement.statsExpenseAmount
+                case .income:
+                    return partial + movement.statsIncomeAmount
+                case .transfer:
+                    return partial
+                }
+            }
             return CategoryAmountDatum(
                 id: key,
                 name: first.category?.name ?? "Sin categoría",

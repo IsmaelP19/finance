@@ -23,6 +23,7 @@ struct AddMovementView: View {
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
+    @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
 
     @State private var selectedAccount: BankAccount?
     @State private var selectedDestinationAccount: BankAccount?
@@ -40,19 +41,38 @@ struct AddMovementView: View {
     @State private var recurringStartDate: Date = Date()
     @State private var recurringHasEndDate = false
     @State private var recurringEndDate: Date = Date()
+    @State private var isSharedExpense = false
+    @State private var personalAmountText: String = ""
+    @State private var isReimbursementIncome = false
+    @State private var selectedReimbursementExpense: Movement?
+    @State private var showingQuickReimbursementSheet = false
 
     @State private var showingValidationAlert = false
     @State private var validationMessage = ""
     @State private var didLoadExistingData = false
 
     private let movementToEdit: Movement?
+    private let preselectedType: MovementType?
+    private let preselectedAccountID: UUID?
+    private let prefilledConcept: String?
+    private let linkedReimbursementExpenseID: UUID?
 
     private var isEditing: Bool {
         movementToEdit != nil
     }
 
-    init(movementToEdit: Movement? = nil) {
+    init(
+        movementToEdit: Movement? = nil,
+        preselectedType: MovementType? = nil,
+        preselectedAccountID: UUID? = nil,
+        prefilledConcept: String? = nil,
+        linkedReimbursementExpenseID: UUID? = nil
+    ) {
         self.movementToEdit = movementToEdit
+        self.preselectedType = preselectedType
+        self.preselectedAccountID = preselectedAccountID
+        self.prefilledConcept = prefilledConcept
+        self.linkedReimbursementExpenseID = linkedReimbursementExpenseID
     }
 
     private var filteredCategories: [MovementCategory] {
@@ -97,6 +117,55 @@ struct AddMovementView: View {
         let trimmed = categorySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
         return !categories.contains { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }
+    }
+
+    private var canConfigureOwnershipFields: Bool {
+        !isRecurring || isEditing
+    }
+
+    private var allowsReimbursementLinkingInThisContext: Bool {
+        linkedReimbursementExpenseID != nil || movementToEdit?.reimbursementForId != nil
+    }
+
+    private var linkedReimbursementsForEditedExpense: [Movement] {
+        guard let movementToEdit, movementToEdit.type == .expense else { return [] }
+        return movements
+            .filter { $0.type == .income && $0.reimbursementForId == movementToEdit.id }
+            .sorted { $0.occurredAt > $1.occurredAt }
+    }
+
+    private var expectedReimbursementForDraftExpense: Decimal {
+        guard movementType == .expense, isSharedExpense else { return 0 }
+        let total = parseAmount(from: amountText)
+        let personal = parseAmount(from: personalAmountText)
+        guard total > 0 else { return 0 }
+        return max(total - personal, 0)
+    }
+
+    private var recoveredAmountForEditedExpense: Decimal {
+        linkedReimbursementsForEditedExpense.reduce(Decimal(0)) { $0 + $1.amount }
+    }
+
+    private var draftSharedExpenseTotal: Decimal {
+        parseAmount(from: amountText)
+    }
+
+    private var draftSharedExpensePersonalAmount: Decimal {
+        parseAmount(from: personalAmountText)
+    }
+
+    private var isReimbursementFullyRecovered: Bool {
+        guard expectedReimbursementForDraftExpense > 0 else { return false }
+        return recoveredAmountForEditedExpense >= expectedReimbursementForDraftExpense
+    }
+
+    private var willUnlinkReimbursementsOnSave: Bool {
+        guard isEditing, movementType == .expense else { return false }
+        guard !linkedReimbursementsForEditedExpense.isEmpty else { return false }
+        return normalizedPersonalAmountForExpense(
+            totalAmount: draftSharedExpenseTotal,
+            rawPersonalAmount: isSharedExpense ? draftSharedExpensePersonalAmount : nil
+        ) == nil
     }
 
     var body: some View {
@@ -156,6 +225,123 @@ struct AddMovementView: View {
 
                         Text(appCurrencyCode)
                             .foregroundStyle(.secondary)
+                    }
+                }
+
+                if movementType == .expense && canConfigureOwnershipFields {
+                    Section("Gasto compartido") {
+                        Toggle("Definir mi gasto", isOn: $isSharedExpense)
+
+                        if isSharedExpense {
+                            HStack {
+                                TextField("Mi parte", text: $personalAmountText)
+                                    .keyboardType(.decimalPad)
+
+                                Text(appCurrencyCode)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if draftSharedExpenseTotal > 0 {
+                                Text("Total: \(draftSharedExpenseTotal.asCurrency(code: appCurrencyCode)) · Mi parte: \(draftSharedExpensePersonalAmount.asCurrency(code: appCurrencyCode))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if willUnlinkReimbursementsOnSave {
+                                Text("Al guardar, \(linkedReimbursementsForEditedExpense.count) \(linkedReimbursementsForEditedExpense.count == 1 ? "reembolso" : "reembolsos") dejarán de estar vinculados y pasarán a ingresos normales.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
+
+                            if isEditing {
+                                if expectedReimbursementForDraftExpense > 0 {
+                                    ProgressView(
+                                        value: min((recoveredAmountForEditedExpense as NSDecimalNumber).doubleValue, (expectedReimbursementForDraftExpense as NSDecimalNumber).doubleValue),
+                                        total: max((expectedReimbursementForDraftExpense as NSDecimalNumber).doubleValue, 0.0001)
+                                    )
+                                    .tint(isReimbursementFullyRecovered ? .green : .blue)
+
+                                    Text("Recuperado: \(recoveredAmountForEditedExpense.asCurrency(code: appCurrencyCode)) de \(expectedReimbursementForDraftExpense.asCurrency(code: appCurrencyCode))")
+                                        .font(.caption)
+                                        .foregroundStyle(isReimbursementFullyRecovered ? .green : .secondary)
+
+                                    if !isReimbursementFullyRecovered {
+                                        Button {
+                                            showingQuickReimbursementSheet = true
+                                        } label: {
+                                            Label("Registrar reembolso", systemImage: "plus.circle")
+                                        }
+                                    }
+                                }
+
+                                if !linkedReimbursementsForEditedExpense.isEmpty {
+                                    ForEach(linkedReimbursementsForEditedExpense.prefix(5), id: \.id) { reimbursement in
+                                        HStack {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(reimbursement.concept)
+                                                    .font(.subheadline)
+                                                    .lineLimit(1)
+                                                Text(reimbursement.occurredAt.asSpanishShortDate())
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
+
+                                            Spacer()
+
+                                            Text(reimbursement.amount.asCurrency(code: appCurrencyCode))
+                                                .font(.caption)
+                                                .fontWeight(.semibold)
+                                                .foregroundStyle(.green)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !isSharedExpense, isEditing, !linkedReimbursementsForEditedExpense.isEmpty {
+                            Text("Al guardar, \(linkedReimbursementsForEditedExpense.count) \(linkedReimbursementsForEditedExpense.count == 1 ? "reembolso" : "reembolsos") dejarán de estar vinculados y pasarán a ingresos normales.")
+                                .font(.caption2)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+
+                if movementType == .income && canConfigureOwnershipFields && isReimbursementIncome {
+                    Section("Reembolso") {
+                        if let selectedReimbursementExpense {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Gasto vinculado")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(selectedReimbursementExpense.concept)
+                                            .font(.subheadline)
+                                            .fontWeight(.medium)
+                                        Text(selectedReimbursementExpense.occurredAt.asSpanishShortDate())
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    Text(selectedReimbursementExpense.amount.asCurrency(code: appCurrencyCode))
+                                        .font(.caption)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(.red)
+                                }
+                            }
+                            .padding(.vertical, 4)
+
+                            Text("Este vínculo se define desde el gasto con \"Registrar reembolso\".")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("Este reembolso está vinculado a un gasto que ya no se encuentra.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
@@ -280,9 +466,39 @@ struct AddMovementView: View {
                     selectedCategory = nil
                     categorySearchText = ""
                     isRecurring = false
+                    isSharedExpense = false
+                    personalAmountText = ""
+                    if !allowsReimbursementLinkingInThisContext {
+                        isReimbursementIncome = false
+                        selectedReimbursementExpense = nil
+                    }
                     ensureTransferAccountsAreDifferent()
-                } else if selectedCategory == nil {
-                    selectedCategory = categories.first
+                } else {
+                    if selectedCategory == nil {
+                        selectedCategory = categories.first
+                    }
+
+                    if newValue != .expense {
+                        isSharedExpense = false
+                        personalAmountText = ""
+                    }
+
+                    if newValue != .income {
+                        if !allowsReimbursementLinkingInThisContext {
+                            isReimbursementIncome = false
+                            selectedReimbursementExpense = nil
+                        }
+                    } else if allowsReimbursementLinkingInThisContext,
+                              selectedReimbursementExpense != nil {
+                        isReimbursementIncome = true
+                    }
+                }
+            }
+            .onChange(of: isSharedExpense) { _, enabled in
+                if !enabled {
+                    personalAmountText = ""
+                } else if personalAmountText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    personalAmountText = amountText
                 }
             }
             .onChange(of: selectedAccount?.id) { _, _ in
@@ -294,6 +510,16 @@ struct AddMovementView: View {
                 CreateMovementCategorySheet(categoryName: $newCategoryName) { category in
                     selectedCategory = category
                     categorySearchText = ""
+                }
+            }
+            .sheet(isPresented: $showingQuickReimbursementSheet) {
+                if let movementToEdit {
+                    AddMovementView(
+                        preselectedType: .income,
+                        preselectedAccountID: selectedAccount?.id ?? movementToEdit.account?.id,
+                        prefilledConcept: "Reembolso: \(movementToEdit.concept)",
+                        linkedReimbursementExpenseID: movementToEdit.id
+                    )
                 }
             }
             .alert("Campos requeridos", isPresented: $showingValidationAlert) {
@@ -314,6 +540,28 @@ struct AddMovementView: View {
             selectedCategory = movementToEdit.category
             occurredAt = movementToEdit.occurredAt
             notes = movementToEdit.notes
+
+            if movementToEdit.type == .expense,
+               let personalAmount = movementToEdit.personalAmount,
+               personalAmount >= 0,
+               personalAmount <= movementToEdit.amount {
+                isSharedExpense = personalAmount < movementToEdit.amount
+                if isSharedExpense {
+                    personalAmountText = formatAmountForEditing(personalAmount)
+                }
+            } else {
+                isSharedExpense = false
+                personalAmountText = ""
+            }
+
+            if movementToEdit.type == .income,
+               let reimbursementForId = movementToEdit.reimbursementForId {
+                isReimbursementIncome = true
+                selectedReimbursementExpense = movements.first(where: { $0.id == reimbursementForId && $0.type == .expense })
+            } else {
+                isReimbursementIncome = false
+                selectedReimbursementExpense = nil
+            }
 
             if let recurring = linkedRecurringRule(for: movementToEdit) {
                 isRecurring = recurring.isActive
@@ -338,6 +586,35 @@ struct AddMovementView: View {
             return
         }
 
+        if let preselectedType {
+            movementType = preselectedType
+        }
+
+        if concept.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let prefilledConcept,
+           !prefilledConcept.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            concept = prefilledConcept
+        }
+
+        if let preselectedAccountID,
+           let matchingAccount = accountsSortedByBankThenName.first(where: { $0.id == preselectedAccountID }) {
+            selectedAccount = matchingAccount
+        }
+
+        if let linkedReimbursementExpenseID,
+           let linkedExpense = movements.first(where: { $0.id == linkedReimbursementExpenseID && $0.type == .expense }) {
+            selectedReimbursementExpense = linkedExpense
+            isReimbursementIncome = true
+
+            if selectedAccount == nil {
+                selectedAccount = linkedExpense.account
+            }
+
+            if concept.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                concept = "Reembolso: \(linkedExpense.concept)"
+            }
+        }
+
         if selectedAccount == nil {
             selectedAccount = accountsSortedByBankThenName.first
         }
@@ -355,15 +632,25 @@ struct AddMovementView: View {
         ensureTransferAccountsAreDifferent()
     }
 
-    private func parseAmount() -> Decimal {
-        let cleaned = amountText
+    private func parseAmount(from text: String) -> Decimal {
+        let cleaned = text
             .replacingOccurrences(of: " ", with: "")
             .replacingOccurrences(of: ",", with: ".")
         return Decimal(string: cleaned) ?? 0
     }
 
+    private func parseAmount() -> Decimal {
+        parseAmount(from: amountText)
+    }
+
     private func formatAmountForEditing(_ amount: Decimal) -> String {
         NSDecimalNumber(decimal: amount).stringValue.replacingOccurrences(of: ".", with: ",")
+    }
+
+    private func normalizedPersonalAmountForExpense(totalAmount: Decimal, rawPersonalAmount: Decimal?) -> Decimal? {
+        guard let rawPersonalAmount else { return nil }
+        guard rawPersonalAmount < totalAmount else { return nil }
+        return max(rawPersonalAmount, 0)
     }
 
     private func saveMovement() {
@@ -393,6 +680,60 @@ struct AddMovementView: View {
             validationMessage = "El importe debe ser mayor que cero."
             showingValidationAlert = true
             return
+        }
+
+        let personalAmountForStats: Decimal?
+        if movementType == .expense && isSharedExpense && canConfigureOwnershipFields {
+            let personalAmount = parseAmount(from: personalAmountText)
+
+            guard personalAmount >= 0 else {
+                validationMessage = "Tu parte no puede ser negativa."
+                showingValidationAlert = true
+                return
+            }
+
+            guard personalAmount <= amount else {
+                validationMessage = "Tu parte no puede superar el importe total del gasto."
+                showingValidationAlert = true
+                return
+            }
+
+            personalAmountForStats = personalAmount
+        } else {
+            personalAmountForStats = nil
+        }
+
+        let normalizedPersonalAmountForStats = movementType == .expense
+            ? normalizedPersonalAmountForExpense(totalAmount: amount, rawPersonalAmount: personalAmountForStats)
+            : nil
+
+        let linkedReimbursementsTotalForEditedExpense = linkedReimbursementsForEditedExpense
+            .reduce(Decimal(0)) { partial, movement in
+                partial + movement.amount
+            }
+
+        if movementType == .expense,
+           let normalizedPersonalAmountForStats,
+           linkedReimbursementsTotalForEditedExpense > 0,
+           normalizedPersonalAmountForStats + linkedReimbursementsTotalForEditedExpense > amount {
+            validationMessage = "No se puede guardar: tu gasto (\(normalizedPersonalAmountForStats.asCurrency(code: appCurrencyCode))) más reembolsos vinculados (\(linkedReimbursementsTotalForEditedExpense.asCurrency(code: appCurrencyCode))) supera el total del movimiento (\(amount.asCurrency(code: appCurrencyCode)))."
+            showingValidationAlert = true
+            return
+        }
+
+        let reimbursementForID: UUID?
+        if movementType == .income && isReimbursementIncome && canConfigureOwnershipFields {
+            if let linkedExpense = selectedReimbursementExpense {
+                reimbursementForID = linkedExpense.id
+            } else if let existingReimbursementForID = movementToEdit?.reimbursementForId {
+                reimbursementForID = existingReimbursementForID
+            } else {
+                validationMessage = "No se pudo resolver el gasto vinculado para este reembolso."
+                showingValidationAlert = true
+                return
+            }
+        } else {
+            reimbursementForID = nil
         }
 
         if movementType == .transfer {
@@ -472,6 +813,13 @@ struct AddMovementView: View {
             movementToEdit.category = movementType == .transfer ? nil : selectedCategory
             movementToEdit.notes = notes
             movementToEdit.resultingBalance = resultingBalance
+            movementToEdit.personalAmount = normalizedPersonalAmountForStats
+            movementToEdit.reimbursementForId = movementType == .income ? reimbursementForID : nil
+
+            let shouldUnlinkExistingReimbursements = movementType != .expense || normalizedPersonalAmountForStats == nil
+            if shouldUnlinkExistingReimbursements {
+                unlinkReimbursementsLinkedToExpense(expenseID: movementToEdit.id)
+            }
 
             if isRecurring {
                 guard let recurringConfiguration else { return }
@@ -536,7 +884,9 @@ struct AddMovementView: View {
                 destinationAccount: movementType == .transfer ? selectedDestinationAccount : nil,
                 category: movementType == .transfer ? nil : selectedCategory,
                 notes: notes,
-                resultingBalance: resultingBalance
+                resultingBalance: resultingBalance,
+                personalAmount: normalizedPersonalAmountForStats,
+                reimbursementForId: movementType == .income ? reimbursementForID : nil
             )
 
             modelContext.insert(movement)
@@ -595,6 +945,13 @@ struct AddMovementView: View {
         guard let selectedAccount else { return }
         if selectedDestinationAccount?.id == selectedAccount.id {
             selectedDestinationAccount = accountsSortedByBankThenName.first(where: { $0.id != selectedAccount.id })
+        }
+    }
+
+    private func unlinkReimbursementsLinkedToExpense(expenseID: UUID) {
+        for movement in movements where movement.type == .income && movement.reimbursementForId == expenseID {
+            movement.reimbursementForId = nil
+            movement.updatedAt = Date()
         }
     }
 

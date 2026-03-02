@@ -20,6 +20,8 @@ final class Movement {
     var resultingBalance: Decimal?
     var recurringRuleId: UUID?
     var recurringScheduledAt: Date?
+    var personalAmount: Decimal?
+    var reimbursementForId: UUID?
     var createdAt: Date
     var updatedAt: Date
 
@@ -42,6 +44,32 @@ final class Movement {
         amount * type.signMultiplier
     }
 
+    var normalizedPersonalAmount: Decimal? {
+        guard type == .expense, let personalAmount else { return nil }
+        if personalAmount < 0 { return 0 }
+        if personalAmount > amount { return amount }
+        return personalAmount
+    }
+
+    var isSharedExpense: Bool {
+        guard let normalizedPersonalAmount else { return false }
+        return normalizedPersonalAmount < amount
+    }
+
+    var isReimbursementIncome: Bool {
+        type == .income && reimbursementForId != nil
+    }
+
+    var statsExpenseAmount: Decimal {
+        guard type == .expense else { return 0 }
+        return normalizedPersonalAmount ?? amount
+    }
+
+    var statsIncomeAmount: Decimal {
+        guard type == .income else { return 0 }
+        return isReimbursementIncome ? 0 : amount
+    }
+
     init(
         concept: String,
         amount: Decimal,
@@ -53,7 +81,9 @@ final class Movement {
         notes: String = "",
         resultingBalance: Decimal? = nil,
         recurringRuleId: UUID? = nil,
-        recurringScheduledAt: Date? = nil
+        recurringScheduledAt: Date? = nil,
+        personalAmount: Decimal? = nil,
+        reimbursementForId: UUID? = nil
     ) {
         self.id = UUID()
         self.concept = concept
@@ -67,6 +97,8 @@ final class Movement {
         self.resultingBalance = resultingBalance
         self.recurringRuleId = recurringRuleId
         self.recurringScheduledAt = recurringScheduledAt
+        self.personalAmount = personalAmount
+        self.reimbursementForId = reimbursementForId
         self.createdAt = Date()
         self.updatedAt = Date()
     }
@@ -84,6 +116,8 @@ struct MovementDTO: Codable {
     let resultingBalance: Decimal?
     let recurringRuleId: UUID?
     let recurringScheduledAt: Date?
+    let personalAmount: Decimal?
+    let reimbursementForId: UUID?
     let createdAt: Date
     let updatedAt: Date
     let accountId: UUID?
@@ -100,6 +134,8 @@ struct MovementDTO: Codable {
         case resultingBalance
         case recurringRuleId
         case recurringScheduledAt
+        case personalAmount
+        case reimbursementForId
         case createdAt
         case updatedAt
         case accountId
@@ -117,6 +153,8 @@ struct MovementDTO: Codable {
         self.resultingBalance = movement.resultingBalance
         self.recurringRuleId = movement.recurringRuleId
         self.recurringScheduledAt = movement.recurringScheduledAt
+        self.personalAmount = movement.personalAmount
+        self.reimbursementForId = movement.reimbursementForId
         self.createdAt = movement.createdAt
         self.updatedAt = movement.updatedAt
         self.accountId = movement.account?.id
@@ -135,6 +173,8 @@ struct MovementDTO: Codable {
         resultingBalance = try container.decodeIfPresent(Decimal.self, forKey: .resultingBalance)
         recurringRuleId = try container.decodeIfPresent(UUID.self, forKey: .recurringRuleId)
         recurringScheduledAt = try container.decodeIfPresent(Date.self, forKey: .recurringScheduledAt)
+        personalAmount = try container.decodeIfPresent(Decimal.self, forKey: .personalAmount)
+        reimbursementForId = try container.decodeIfPresent(UUID.self, forKey: .reimbursementForId)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         accountId = try container.decodeIfPresent(UUID.self, forKey: .accountId)
@@ -154,7 +194,9 @@ struct MovementDTO: Codable {
             notes: notes,
             resultingBalance: resultingBalance,
             recurringRuleId: recurringRuleId,
-            recurringScheduledAt: recurringScheduledAt
+            recurringScheduledAt: recurringScheduledAt,
+            personalAmount: personalAmount,
+            reimbursementForId: reimbursementForId
         )
         movement.id = id
         movement.createdAt = createdAt
