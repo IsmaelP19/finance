@@ -58,6 +58,53 @@ private struct InvestmentAccountPerformance: Identifiable {
     }
 }
 
+private struct MovementPeriodTotals {
+    var income: Decimal = 0
+    var expense: Decimal = 0
+    var movementCount: Int = 0
+
+    var net: Decimal {
+        income - expense
+    }
+
+    var savingsRate: Decimal? {
+        guard income > 0 else { return nil }
+        return (net / income) * 100
+    }
+}
+
+private struct MonthlyBalancePoint: Identifiable {
+    let monthStart: Date
+    let income: Decimal
+    let expense: Decimal
+
+    var id: Date { monthStart }
+
+    var net: Decimal {
+        income - expense
+    }
+}
+
+private struct PatrimonySeriesPoint: Identifiable {
+    let date: Date
+    let total: Decimal
+
+    var id: Date { date }
+}
+
+private struct ComparisonVariation {
+    let trend: ComparisonTrend
+    let value: String?
+    let color: Color
+}
+
+private enum ComparisonTrend {
+    case up
+    case down
+    case neutral
+    case unknown
+}
+
 private enum MovementDateFilter: String, CaseIterable, Identifiable {
     case all
     case currentMonth
@@ -108,6 +155,7 @@ struct MovementStatsView: View {
     @State private var customMonthDraft: Int = Calendar.current.component(.month, from: Date())
     @State private var customYearDraft: Int = Calendar.current.component(.year, from: Date())
     @State private var selectedInvestmentDate: Date?
+    @State private var selectedPatrimonyDate: Date?
 
     private let investedAreaColor = Color(red: 0.58, green: 0.86, blue: 0.89)
     private let marketLineColor = Color(red: 0.96, green: 0.26, blue: 0.50)
@@ -348,20 +396,209 @@ struct MovementStatsView: View {
         return []
     }
 
+    private var currentPeriodTotals: MovementPeriodTotals {
+        movementTotals(for: filteredMovements)
+    }
+
     private var incomeTotal: Decimal {
-        filteredMovements
-            .filter { $0.type == .income }
-            .reduce(Decimal(0)) { $0 + $1.statsIncomeAmount }
+        currentPeriodTotals.income
     }
 
     private var expenseTotal: Decimal {
-        filteredMovements
-            .filter { $0.type == .expense }
-            .reduce(Decimal(0)) { $0 + $1.statsExpenseAmount }
+        currentPeriodTotals.expense
     }
 
     private var netTotal: Decimal {
-        incomeTotal - expenseTotal
+        currentPeriodTotals.net
+    }
+
+    private var movementCount: Int {
+        currentPeriodTotals.movementCount
+    }
+
+    private var savingsRate: Decimal? {
+        currentPeriodTotals.savingsRate
+    }
+
+    private var comparisonInterval: DateInterval? {
+        guard let activeInterval else { return nil }
+
+        switch selectedDateFilter {
+        case .all:
+            return nil
+        case .currentMonth, .previousMonth, .specificMonth:
+            guard let previousMonthDate = calendar.date(byAdding: .month, value: -1, to: activeInterval.start) else { return nil }
+            return monthInterval(for: previousMonthDate)
+        case .last3Months:
+            guard let start = calendar.date(byAdding: .month, value: -3, to: activeInterval.start) else { return nil }
+            return DateInterval(start: start, end: activeInterval.start)
+        case .currentYear, .previousYear, .specificYear:
+            let comparisonYear = calendar.component(.year, from: activeInterval.start) - 1
+            return yearInterval(for: comparisonYear)
+        }
+    }
+
+    private var comparisonPeriodMovements: [Movement] {
+        guard let comparisonInterval else { return [] }
+        return movements.filter { comparisonInterval.contains($0.occurredAt) }
+    }
+
+    private var comparisonPeriodTotals: MovementPeriodTotals {
+        movementTotals(for: comparisonPeriodMovements)
+    }
+
+    private var comparisonPeriodLabel: String {
+        switch selectedDateFilter {
+        case .all:
+            return "Sin comparación"
+        case .currentMonth, .specificMonth:
+            return "Mes anterior"
+        case .previousMonth:
+            return "Mes previo"
+        case .last3Months:
+            return "3 meses previos"
+        case .currentYear, .specificYear:
+            return "Año anterior"
+        case .previousYear:
+            return "Año previo"
+        }
+    }
+
+    private var savingsRateDelta: Decimal? {
+        guard let current = savingsRate, let previous = comparisonPeriodTotals.savingsRate else {
+            return nil
+        }
+
+        return current - previous
+    }
+
+    private var monthlyAnalysisInterval: DateInterval {
+        if let activeInterval {
+            let now = Date()
+            let end = activeInterval.end < now ? activeInterval.end : now
+            return DateInterval(start: activeInterval.start, end: end)
+        }
+
+        let now = Date()
+        let startOfCurrentMonth = startOfMonth(for: now)
+        let start = calendar.date(byAdding: .month, value: -11, to: startOfCurrentMonth) ?? startOfCurrentMonth
+        return DateInterval(start: start, end: now)
+    }
+
+    private var monthlyAnalysisLabel: String {
+        selectedDateFilter == .all ? "Últimos 12 meses" : activePeriodLabel
+    }
+
+    private var monthlyBalancePoints: [MonthlyBalancePoint] {
+        let interval = monthlyAnalysisInterval
+        let movementsInWindow = movements.filter { interval.contains($0.occurredAt) }
+
+        var groupedTotals: [Date: (income: Decimal, expense: Decimal)] = [:]
+
+        for movement in movementsInWindow {
+            let monthStart = startOfMonth(for: movement.occurredAt)
+            var bucket = groupedTotals[monthStart] ?? (0, 0)
+
+            switch movement.type {
+            case .expense:
+                bucket.expense += movement.statsExpenseAmount
+            case .income:
+                bucket.income += movement.statsIncomeAmount
+            case .transfer:
+                continue
+            }
+
+            groupedTotals[monthStart] = bucket
+        }
+
+        return monthStarts(in: interval).map { monthStart in
+            let bucket = groupedTotals[monthStart] ?? (0, 0)
+            return MonthlyBalancePoint(
+                monthStart: monthStart,
+                income: bucket.income,
+                expense: bucket.expense
+            )
+        }
+    }
+
+    private var patrimonyEvolutionPoints: [PatrimonySeriesPoint] {
+        guard !accounts.isEmpty else { return [] }
+
+        let interval = monthlyAnalysisInterval
+        var pointDates = monthStarts(in: interval)
+
+        let now = Date()
+        let intervalEnd = interval.end < now ? interval.end : now
+
+        if pointDates.isEmpty {
+            pointDates = [intervalEnd]
+        } else if !calendar.isDate(pointDates.last ?? intervalEnd, inSameDayAs: intervalEnd) {
+            pointDates.append(intervalEnd)
+        }
+
+        return pointDates.map { date in
+            PatrimonySeriesPoint(date: date, total: patrimonyTotal(at: date))
+        }
+    }
+
+    private var selectedPatrimonyPoint: PatrimonySeriesPoint? {
+        guard let selectedPatrimonyDate else { return nil }
+        return nearestPatrimonyPoint(to: selectedPatrimonyDate)
+    }
+
+    private var highlightedPatrimonyPoint: PatrimonySeriesPoint? {
+        selectedPatrimonyPoint ?? patrimonyEvolutionPoints.last
+    }
+
+    private var patrimonyDelta: Decimal {
+        guard let first = patrimonyEvolutionPoints.first,
+              let last = patrimonyEvolutionPoints.last else {
+            return 0
+        }
+        return last.total - first.total
+    }
+
+    private var hasPatrimonyTrend: Bool {
+        patrimonyEvolutionPoints.count > 1
+    }
+
+    private var patrimonyChartXDomain: ClosedRange<Date> {
+        guard let first = patrimonyEvolutionPoints.first?.date,
+              let last = patrimonyEvolutionPoints.last?.date else {
+            let now = Date()
+            return now...now
+        }
+
+        if first == last {
+            let start = calendar.date(byAdding: .day, value: -3, to: first) ?? first
+            let end = calendar.date(byAdding: .day, value: 3, to: first) ?? first
+            return start...end
+        }
+
+        return first...last
+    }
+
+    private var patrimonyChartYDomain: ClosedRange<Double> {
+        let values = patrimonyEvolutionPoints.map { decimalAsDouble($0.total) }
+        guard let minValue = values.min(), let maxValue = values.max() else {
+            return 0...1
+        }
+
+        let span = maxValue - minValue
+        let minPadding = max(abs(maxValue) * 0.05, 1)
+        let padding = max(span * 0.12, minPadding)
+        let lower = minValue - padding
+        let upper = maxValue + padding
+
+        if lower == upper {
+            return (lower - 1)...(upper + 1)
+        }
+
+        return lower...upper
+    }
+
+    private var patrimonyAreaBaseline: Double {
+        patrimonyChartYDomain.lowerBound
     }
 
     private var expenseByCategory: [CategoryAmountDatum] {
@@ -419,6 +656,7 @@ struct MovementStatsView: View {
             }
             .onChange(of: selectedDateFilter) { _, _ in
                 selectedInvestmentDate = nil
+                selectedPatrimonyDate = nil
             }
             .sheet(isPresented: $showingCustomPeriodSheet) {
                 CustomPeriodSheet(
@@ -456,6 +694,12 @@ struct MovementStatsView: View {
             .padding(.top, 36)
         } else {
             summaryCard
+
+            comparisonCard
+
+            monthlyBalanceCard
+
+            patrimonyEvolutionCard
 
             CategoryPieChart(
                 title: "Gastos por categoría",
@@ -630,7 +874,321 @@ struct MovementStatsView: View {
                 StatTile(title: "Ingresos", value: incomeTotal.asCurrency(code: appCurrencyCode), tint: .green)
                 StatTile(title: "Gastos", value: expenseTotal.asCurrency(code: appCurrencyCode), tint: .red)
                 StatTile(title: "Balance", value: netTotal.asCurrency(code: appCurrencyCode), tint: netTotal >= 0 ? .green : .red)
-                StatTile(title: "Movimientos", value: "\(filteredMovements.count)", tint: .blue)
+                StatTile(title: "Tasa de ahorro", value: savingsRate.map(formatPercent) ?? "-", tint: (savingsRate ?? 0).isNegative ? .red : .green)
+                StatTile(title: "Movimientos", value: "\(movementCount)", tint: .blue)
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var comparisonCard: some View {
+        if selectedDateFilter == .all || comparisonInterval == nil {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Comparativa entre periodos", systemImage: "rectangle.split.2x1")
+                    .font(.headline)
+
+                Text("Selecciona un periodo concreto para comparar contra su equivalente anterior.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(16)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
+            )
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                Label("Comparativa entre periodos", systemImage: "rectangle.split.2x1")
+                    .font(.headline)
+
+                Text("\(activePeriodLabel) vs \(comparisonPeriodLabel)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    ComparisonMetricCard(
+                        title: "Ingresos",
+                        currentValue: incomeTotal.asCurrency(code: appCurrencyCode),
+                        previousValue: comparisonPeriodTotals.income.asCurrency(code: appCurrencyCode),
+                        variation: comparisonVariation(
+                            delta: incomeTotal - comparisonPeriodTotals.income,
+                            positiveIsGood: true,
+                            formattedValue: formatSignedCurrency(incomeTotal - comparisonPeriodTotals.income)
+                        )
+                    )
+
+                    ComparisonMetricCard(
+                        title: "Gastos",
+                        currentValue: expenseTotal.asCurrency(code: appCurrencyCode),
+                        previousValue: comparisonPeriodTotals.expense.asCurrency(code: appCurrencyCode),
+                        variation: comparisonVariation(
+                            delta: expenseTotal - comparisonPeriodTotals.expense,
+                            positiveIsGood: false,
+                            formattedValue: formatSignedCurrency(expenseTotal - comparisonPeriodTotals.expense)
+                        )
+                    )
+
+                    ComparisonMetricCard(
+                        title: "Balance",
+                        currentValue: netTotal.asCurrency(code: appCurrencyCode),
+                        previousValue: comparisonPeriodTotals.net.asCurrency(code: appCurrencyCode),
+                        variation: comparisonVariation(
+                            delta: netTotal - comparisonPeriodTotals.net,
+                            positiveIsGood: true,
+                            formattedValue: formatSignedCurrency(netTotal - comparisonPeriodTotals.net)
+                        )
+                    )
+
+                    ComparisonMetricCard(
+                        title: "Tasa ahorro",
+                        currentValue: savingsRate.map(formatPercent) ?? "-",
+                        previousValue: comparisonPeriodTotals.savingsRate.map(formatPercent) ?? "-",
+                        variation: comparisonVariation(
+                            delta: savingsRateDelta,
+                            positiveIsGood: true,
+                            formattedValue: savingsRateDelta.map(formatSignedPercent)
+                        )
+                    )
+                }
+            }
+            .padding(16)
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
+            )
+        }
+    }
+
+    private var monthlyBalanceCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Balance mensual", systemImage: "chart.bar.xaxis")
+                .font(.headline)
+
+            Text("Periodo: \(monthlyAnalysisLabel)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if monthlyBalancePoints.allSatisfy({ $0.income == 0 && $0.expense == 0 }) {
+                ContentUnavailableView(
+                    "Sin datos para este periodo",
+                    systemImage: "chart.bar.doc.horizontal",
+                    description: Text("Registra ingresos o gastos para visualizar el balance mensual.")
+                )
+            } else {
+                Chart {
+                    ForEach(monthlyBalancePoints) { point in
+                        BarMark(
+                            x: .value("Mes", point.monthStart, unit: .month),
+                            y: .value("Importe", decimalAsDouble(point.income))
+                        )
+                        .position(by: .value("Serie", "Ingresos"))
+                        .foregroundStyle(by: .value("Serie", "Ingresos"))
+
+                        BarMark(
+                            x: .value("Mes", point.monthStart, unit: .month),
+                            y: .value("Importe", decimalAsDouble(point.expense))
+                        )
+                        .position(by: .value("Serie", "Gastos"))
+                        .foregroundStyle(by: .value("Serie", "Gastos"))
+
+                        LineMark(
+                            x: .value("Mes", point.monthStart, unit: .month),
+                            y: .value("Balance", decimalAsDouble(point.net))
+                        )
+                        .foregroundStyle(Color.blue)
+                        .interpolationMethod(.catmullRom)
+                        .lineStyle(StrokeStyle(lineWidth: 2.2))
+                    }
+                }
+                .frame(height: 240)
+                .chartForegroundStyleScale([
+                    "Ingresos": Color.green,
+                    "Gastos": Color.red
+                ])
+                .chartLegend(position: .bottom, alignment: .leading)
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 5)) { _ in
+                        AxisValueLabel(format: .dateTime.month(.abbreviated))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
+                        AxisGridLine()
+                            .foregroundStyle(.secondary.opacity(0.2))
+                        AxisValueLabel {
+                            if let amount = value.as(Double.self) {
+                                Text(formatAxisCurrency(amount))
+                                    .font(.caption2)
+                            }
+                        }
+                    }
+                }
+
+                HStack {
+                    Text("Balance del periodo")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(netTotal.asCurrency(code: appCurrencyCode))
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(netTotal.isNegative ? .red : .green)
+                }
+            }
+        }
+        .padding(16)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
+        )
+    }
+
+    private var patrimonyEvolutionCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Evolución de patrimonio", systemImage: "chart.xyaxis.line")
+                .font(.headline)
+
+            Text("Periodo: \(monthlyAnalysisLabel)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if patrimonyEvolutionPoints.isEmpty {
+                ContentUnavailableView(
+                    "Sin patrimonio para mostrar",
+                    systemImage: "chart.line.uptrend.xyaxis",
+                    description: Text("Crea al menos una cuenta para calcular la evolución del patrimonio.")
+                )
+            } else {
+                Chart {
+                    ForEach(patrimonyEvolutionPoints) { point in
+                        AreaMark(
+                            x: .value("Fecha", point.date),
+                            yStart: .value("Base", patrimonyAreaBaseline),
+                            yEnd: .value("Patrimonio", decimalAsDouble(point.total))
+                        )
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [Color.blue.opacity(0.24), Color.blue.opacity(0.05)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+
+                        LineMark(
+                            x: .value("Fecha", point.date),
+                            y: .value("Patrimonio", decimalAsDouble(point.total))
+                        )
+                        .foregroundStyle(Color.blue)
+                        .interpolationMethod(.catmullRom)
+                        .lineStyle(StrokeStyle(lineWidth: 2.4))
+                    }
+
+                    if let highlightedPatrimonyPoint {
+                        RuleMark(x: .value("Selección", highlightedPatrimonyPoint.date))
+                            .foregroundStyle(.secondary.opacity(0.35))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+
+                        PointMark(
+                            x: .value("Fecha", highlightedPatrimonyPoint.date),
+                            y: .value("Patrimonio", decimalAsDouble(highlightedPatrimonyPoint.total))
+                        )
+                        .symbolSize(70)
+                        .foregroundStyle(Color.blue)
+                    }
+                }
+                .frame(height: 250)
+                .chartXScale(domain: patrimonyChartXDomain)
+                .chartYScale(domain: patrimonyChartYDomain)
+                .chartPlotStyle { plot in
+                    plot
+                        .clipped()
+                }
+                .chartXAxis {
+                    AxisMarks(values: .automatic(desiredCount: 5)) { _ in
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 0.8, dash: [3, 3]))
+                            .foregroundStyle(.secondary.opacity(0.25))
+                        AxisValueLabel(format: .dateTime.month(.abbreviated).year(.twoDigits))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
+                        AxisGridLine()
+                            .foregroundStyle(.secondary.opacity(0.2))
+                        AxisValueLabel {
+                            if let amount = value.as(Double.self) {
+                                Text(formatAxisCurrency(amount))
+                                    .font(.caption2)
+                            }
+                        }
+                    }
+                }
+                .chartOverlay { proxy in
+                    GeometryReader { geometry in
+                        Rectangle()
+                            .fill(.clear)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 0)
+                                    .onChanged { value in
+                                        updatePatrimonySelection(at: value.location, proxy: proxy, geometry: geometry)
+                                    }
+                                    .onEnded { _ in
+                                        selectedPatrimonyDate = nil
+                                    }
+                            )
+                    }
+                }
+
+                if let highlightedPatrimonyPoint {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Patrimonio a \(highlightedPatrimonyPoint.date.asSpanishShortDate())")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text(highlightedPatrimonyPoint.total.asCurrency(code: appCurrencyCode))
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+
+                        HStack {
+                            Text("Cambio en el periodo")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(formatSignedCurrency(patrimonyDelta))
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(patrimonyDelta.isNegative ? .red : .green)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.82))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+
+                if !hasPatrimonyTrend, let firstPoint = patrimonyEvolutionPoints.first {
+                    Label(
+                        "Solo hay un registro (\(firstPoint.date.asSpanishShortDate())). Añade más histórico para ver tendencia.",
+                        systemImage: "info.circle"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(16)
@@ -932,6 +1490,190 @@ struct MovementStatsView: View {
         selectedInvestmentDate = date
     }
 
+    private func nearestPatrimonyPoint(to date: Date) -> PatrimonySeriesPoint? {
+        patrimonyEvolutionPoints.min { lhs, rhs in
+            abs(lhs.date.timeIntervalSince(date)) < abs(rhs.date.timeIntervalSince(date))
+        }
+    }
+
+    private func updatePatrimonySelection(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
+        guard let plotFrameAnchor = proxy.plotFrame else {
+            selectedPatrimonyDate = nil
+            return
+        }
+        let plotFrame = geometry[plotFrameAnchor]
+
+        let relativeX = location.x - plotFrame.origin.x
+
+        guard relativeX >= 0, relativeX <= plotFrame.size.width else {
+            selectedPatrimonyDate = nil
+            return
+        }
+
+        guard let date: Date = proxy.value(atX: relativeX) else {
+            selectedPatrimonyDate = nil
+            return
+        }
+
+        selectedPatrimonyDate = date
+    }
+
+    private func movementTotals(for movements: [Movement]) -> MovementPeriodTotals {
+        var totals = MovementPeriodTotals()
+
+        for movement in movements {
+            switch movement.type {
+            case .expense:
+                totals.expense += movement.statsExpenseAmount
+                totals.movementCount += 1
+            case .income:
+                totals.income += movement.statsIncomeAmount
+                totals.movementCount += 1
+            case .transfer:
+                totals.movementCount += 1
+            }
+        }
+
+        return totals
+    }
+
+    private func startOfMonth(for date: Date) -> Date {
+        calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? calendar.startOfDay(for: date)
+    }
+
+    private func monthStarts(in interval: DateInterval) -> [Date] {
+        var months: [Date] = []
+        var cursor = startOfMonth(for: interval.start)
+
+        while cursor < interval.end {
+            months.append(cursor)
+            guard let next = calendar.date(byAdding: .month, value: 1, to: cursor) else {
+                break
+            }
+            cursor = next
+        }
+
+        return months
+    }
+
+    private func patrimonyTotal(at date: Date) -> Decimal {
+        accounts.reduce(Decimal(0)) { partial, account in
+            partial + historicalBalance(of: account, at: date)
+        }
+    }
+
+    private func historicalBalance(of account: BankAccount, at date: Date) -> Decimal {
+        guard date >= account.createdAt else {
+            return 0
+        }
+
+        if account.isInvestmentAccount {
+            if let snapshotMarketValue = latestSnapshotMarketValue(for: account.id, at: date) {
+                return snapshotMarketValue
+            }
+
+            if let earliestSnapshotMarketValue = earliestSnapshotMarketValue(for: account.id) {
+                return earliestSnapshotMarketValue
+            }
+        }
+
+        var balance = account.balance
+
+        for movement in movements where movement.occurredAt > date {
+            let impact = movementImpact(of: movement, for: account.id)
+            if impact != 0 {
+                balance -= impact
+            }
+        }
+
+        return balance
+    }
+
+    private func latestSnapshotMarketValue(for accountID: UUID, at date: Date) -> Decimal? {
+        snapshots
+            .filter { snapshot in
+                snapshot.account?.id == accountID && snapshot.snapshotDate <= date
+            }
+            .max { lhs, rhs in
+                lhs.snapshotDate < rhs.snapshotDate
+            }?
+            .marketValue
+    }
+
+    private func earliestSnapshotMarketValue(for accountID: UUID) -> Decimal? {
+        snapshots
+            .filter { snapshot in
+                snapshot.account?.id == accountID
+            }
+            .min { lhs, rhs in
+                lhs.snapshotDate < rhs.snapshotDate
+            }?
+            .marketValue
+    }
+
+    private func movementImpact(of movement: Movement, for accountID: UUID) -> Decimal {
+        switch movement.type {
+        case .expense:
+            return movement.account?.id == accountID ? -movement.amount : 0
+        case .income:
+            return movement.account?.id == accountID ? movement.amount : 0
+        case .transfer:
+            var impact: Decimal = 0
+            if movement.account?.id == accountID {
+                impact -= movement.amount
+            }
+            if movement.destinationAccount?.id == accountID {
+                impact += movement.amount
+            }
+            return impact
+        }
+    }
+
+    private func formatSignedCurrency(_ value: Decimal) -> String {
+        if value > 0 {
+            return "+\(value.asCurrency(code: appCurrencyCode))"
+        }
+        return value.asCurrency(code: appCurrencyCode)
+    }
+
+    private func formatSignedPercent(_ value: Decimal) -> String {
+        if value > 0 {
+            return "+\(formatPercent(value))"
+        }
+        return formatPercent(value)
+    }
+
+    private func comparisonVariation(
+        delta: Decimal?,
+        positiveIsGood: Bool,
+        formattedValue: String?
+    ) -> ComparisonVariation {
+        guard let delta else {
+            return ComparisonVariation(
+                trend: .unknown,
+                value: nil,
+                color: .secondary
+            )
+        }
+
+        if delta == 0 {
+            return ComparisonVariation(
+                trend: .neutral,
+                value: nil,
+                color: .secondary
+            )
+        }
+
+        let isPositive = delta > 0
+        let isGood = positiveIsGood ? isPositive : !isPositive
+
+        return ComparisonVariation(
+            trend: isPositive ? .up : .down,
+            value: formattedValue,
+            color: isGood ? .green : .red
+        )
+    }
+
     private func monthInterval(for date: Date) -> DateInterval? {
         let start = calendar.date(from: calendar.dateComponents([.year, .month], from: date))
         guard let start else { return nil }
@@ -1065,6 +1807,92 @@ private struct CustomPeriodSheet: View {
                     .fontWeight(.semibold)
                 }
             }
+        }
+    }
+}
+
+private struct ComparisonMetricCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let title: String
+    let currentValue: String
+    let previousValue: String
+    let variation: ComparisonVariation
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(colorScheme == .dark ? .white.opacity(0.7) : .secondary)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Actual: \(currentValue)")
+                    .font(.caption2)
+                    .foregroundStyle(.primary)
+                Text("Anterior: \(previousValue)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 6) {
+                variationTrendView
+                if let variationValue = variation.value {
+                    Text(variationValue)
+                        .fontWeight(.semibold)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(variation.color)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(cardBackgroundColor)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(cardBorderColor, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private var variationTrendView: some View {
+        switch variation.trend {
+        case .up:
+            Image(systemName: "arrowtriangle.up.fill")
+        case .down:
+            Image(systemName: "arrowtriangle.down.fill")
+        case .neutral:
+            Text("=")
+                .fontWeight(.bold)
+        case .unknown:
+            Image(systemName: "questionmark.circle")
+        }
+    }
+
+    private var cardAccentColor: Color {
+        switch variation.trend {
+        case .up, .down:
+            return variation.color
+        case .neutral, .unknown:
+            return .gray
+        }
+    }
+
+    private var cardBackgroundColor: Color {
+        switch variation.trend {
+        case .up, .down:
+            return cardAccentColor.opacity(colorScheme == .dark ? 0.16 : 0.12)
+        case .neutral, .unknown:
+            return colorScheme == .dark ? Color.white.opacity(0.08) : Color.gray.opacity(0.10)
+        }
+    }
+
+    private var cardBorderColor: Color {
+        switch variation.trend {
+        case .up, .down:
+            return cardAccentColor.opacity(colorScheme == .dark ? 0.55 : 0.42)
+        case .neutral, .unknown:
+            return colorScheme == .dark ? Color.white.opacity(0.10) : Color.gray.opacity(0.25)
         }
     }
 }
