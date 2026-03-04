@@ -911,9 +911,15 @@ struct AddMovementView: View {
             sourceAccount.balance += amount
         case .transfer:
             sourceAccount.balance -= amount
+            if sourceAccount.isInvestmentAccount {
+                sourceAccount.investedAmount = max(0, sourceAccount.effectiveInvestedAmount - amount)
+            }
             if let destinationAccount {
                 destinationAccount.currency = appCurrencyCode
                 destinationAccount.balance += amount
+                if destinationAccount.isInvestmentAccount {
+                    destinationAccount.investedAmount = destinationAccount.effectiveInvestedAmount + amount
+                }
                 destinationAccount.updatedAt = Date()
             }
         }
@@ -932,8 +938,14 @@ struct AddMovementView: View {
             sourceAccount.balance -= movement.amount
         case .transfer:
             sourceAccount.balance += movement.amount
+            if sourceAccount.isInvestmentAccount {
+                sourceAccount.investedAmount = sourceAccount.effectiveInvestedAmount + movement.amount
+            }
             if let destination = movement.destinationAccount {
                 destination.balance -= movement.amount
+                if destination.isInvestmentAccount {
+                    destination.investedAmount = max(0, destination.effectiveInvestedAmount - movement.amount)
+                }
                 destination.updatedAt = Date()
             }
         }

@@ -372,7 +372,7 @@ struct MovementsView: View {
                             accounts.isEmpty ? "Sin cuentas" : "Sin movimientos",
                             systemImage: accounts.isEmpty ? "building.columns" : "arrow.left.arrow.right.circle",
                             description: Text(accounts.isEmpty
-                                              ? "Crea al menos una cuenta en Inicio para registrar movimientos"
+                                              ? "Crea al menos una cuenta en Cuentas para registrar movimientos"
                                               : "Pulsa + para registrar tu primer gasto, ingreso o transferencia")
                         )
                         .listRowBackground(Color.clear)
@@ -493,8 +493,14 @@ struct MovementsView: View {
                         account.balance -= movement.amount
                     case .transfer:
                         account.balance += movement.amount
+                        if account.isInvestmentAccount {
+                            account.investedAmount = account.effectiveInvestedAmount + movement.amount
+                        }
                         if let destination = movement.destinationAccount {
                             destination.balance -= movement.amount
+                            if destination.isInvestmentAccount {
+                                destination.investedAmount = max(0, destination.effectiveInvestedAmount - movement.amount)
+                            }
                             destination.updatedAt = Date()
                         }
                     }

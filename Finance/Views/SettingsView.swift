@@ -81,10 +81,8 @@ struct SettingsView: View {
                         Label("Exportar datos", systemImage: "square.and.arrow.up")
                     }
 
-                    Button {
-                        showingImportPicker = true
-                    } label: {
-                        Label("Importar datos", systemImage: "square.and.arrow.down")
+                    ImportDataButton(showingImportPicker: $showingImportPicker) { result in
+                        handleImportSelection(result: result)
                     }
 
                     Button(role: .destructive) {
@@ -100,6 +98,13 @@ struct SettingsView: View {
                         showingSyncFolderPicker = true
                     } label: {
                         Label("Configurar carpeta iCloud Drive", systemImage: "folder.badge.plus")
+                    }
+                    .fileImporter(
+                        isPresented: $showingSyncFolderPicker,
+                        allowedContentTypes: [.folder],
+                        allowsMultipleSelection: false
+                    ) { result in
+                        handleSyncFolderSelection(result: result)
                     }
 
                     HStack {
@@ -201,20 +206,6 @@ struct SettingsView: View {
                 if let url = DataExportService.getExportFileURL() {
                     ShareSheet(activityItems: [url])
                 }
-            }
-            .fileImporter(
-                isPresented: $showingImportPicker,
-                allowedContentTypes: [.json],
-                allowsMultipleSelection: false
-            ) { result in
-                handleImportSelection(result: result)
-            }
-            .fileImporter(
-                isPresented: $showingSyncFolderPicker,
-                allowedContentTypes: [.folder],
-                allowsMultipleSelection: false
-            ) { result in
-                handleSyncFolderSelection(result: result)
             }
             .confirmationDialog(
                 "Importar desde iCloud Drive",
@@ -525,5 +516,30 @@ struct SettingsView: View {
             hour: autoBackupHour,
             minute: autoBackupMinute
         )
+    }
+}
+
+// MARK: - Import Data Button
+
+/// Vista independiente que encapsula el botón de importar datos y su `.fileImporter`.
+/// Al ser una vista separada, el `.fileImporter` no compite con otros modifiers de
+/// presentación en la vista padre.
+private struct ImportDataButton: View {
+    @Binding var showingImportPicker: Bool
+    var onResult: (Result<[URL], Error>) -> Void
+
+    var body: some View {
+        Button {
+            showingImportPicker = true
+        } label: {
+            Label("Importar datos", systemImage: "square.and.arrow.down")
+        }
+        .fileImporter(
+            isPresented: $showingImportPicker,
+            allowedContentTypes: [.json],
+            allowsMultipleSelection: false
+        ) { result in
+            onResult(result)
+        }
     }
 }
