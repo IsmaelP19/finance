@@ -9,6 +9,7 @@ import SwiftUI
 import Foundation
 
 struct InvestmentPerformanceCard: View {
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
     let totalInvested: Decimal
     let totalMarketValue: Decimal
     let currencyCode: String
@@ -29,8 +30,8 @@ struct InvestmentPerformanceCard: View {
                 .foregroundStyle(.white.opacity(0.85))
 
             HStack {
-                MetricItem(title: "Invertido", value: totalInvested.asCurrency(code: currencyCode))
-                MetricItem(title: "Mercado", value: totalMarketValue.asCurrency(code: currencyCode))
+                MetricItem(title: "Invertido", value: totalInvested.masked(hideBalances, code: currencyCode))
+                MetricItem(title: "Mercado", value: totalMarketValue.masked(hideBalances, code: currencyCode))
             }
 
             HStack {
@@ -40,7 +41,7 @@ struct InvestmentPerformanceCard: View {
 
                 Spacer()
 
-                Text(profit.asCurrency(code: currencyCode))
+                Text(profit.masked(hideBalances, code: currencyCode))
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(profit.isNegative ? .red : .green)

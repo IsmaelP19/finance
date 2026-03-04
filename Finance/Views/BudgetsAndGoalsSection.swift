@@ -135,6 +135,7 @@ struct BudgetsSection: View {
 
 private struct BudgetSummaryCard: View {
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
 
     let budget: Budget
     let movements: [Movement]
@@ -170,7 +171,7 @@ private struct BudgetSummaryCard: View {
                     Text("Gastado este mes")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(spent.asCurrency(code: currencyCode))
+                    Text(spent.masked(hideBalances, code: currencyCode))
                         .font(.title3)
                         .fontWeight(.bold)
                         .foregroundStyle(progress >= 1 ? .red : .primary)
@@ -182,7 +183,7 @@ private struct BudgetSummaryCard: View {
                     Text("Total")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Text(budget.totalAmount.asCurrency(code: currencyCode))
+                    Text(budget.totalAmount.masked(hideBalances, code: currencyCode))
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundStyle(.secondary)
@@ -209,11 +210,11 @@ private struct BudgetSummaryCard: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if remaining > 0 {
-                    Text("Quedan \(remaining.asCurrency(code: currencyCode))")
+                    Text("Quedan \(remaining.masked(hideBalances, code: currencyCode))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else if remaining < 0 {
-                    Text("Superado \((-remaining).asCurrency(code: currencyCode))")
+                    Text("Superado \((-remaining).masked(hideBalances, code: currencyCode))")
                         .font(.caption2)
                         .foregroundStyle(.red)
                 } else {
@@ -248,7 +249,7 @@ private struct BudgetSummaryCard: View {
 /// Vista de detalle del presupuesto: barra global + desglose por categoría.
 struct BudgetDetailView: View {
     @Environment(\.colorScheme) private var colorScheme
-    @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
 
     let budget: Budget
     let movements: [Movement]
@@ -285,6 +286,16 @@ struct BudgetDetailView: View {
             }
             .navigationTitle("Presupuesto mensual")
             .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        hideBalances.toggle()
+                    } label: {
+                        Image(systemName: hideBalances ? "eye.slash" : "eye")
+                    }
+                    .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
+                }
+            }
         }
     }
 
@@ -297,7 +308,7 @@ struct BudgetDetailView: View {
                     Text("Gastado")
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.82))
-                    Text(totalSpent.asCurrency(code: currencyCode))
+                    Text(totalSpent.masked(hideBalances, code: currencyCode))
                         .font(.system(size: 30, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                 }
@@ -306,7 +317,7 @@ struct BudgetDetailView: View {
                     Text("Total")
                         .font(.subheadline)
                         .foregroundStyle(.white.opacity(0.82))
-                    Text(budget.totalAmount.asCurrency(code: currencyCode))
+                    Text(budget.totalAmount.masked(hideBalances, code: currencyCode))
                         .font(.title2)
                         .fontWeight(.semibold)
                         .foregroundStyle(.white.opacity(0.9))
@@ -331,12 +342,12 @@ struct BudgetDetailView: View {
                     .foregroundStyle(.white.opacity(0.85))
                 Spacer()
                 if remaining > 0 {
-                    Text("Quedan \(remaining.asCurrency(code: currencyCode))")
+                    Text("Quedan \(remaining.masked(hideBalances, code: currencyCode))")
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(.white)
                 } else if remaining < 0 {
-                    Text("Superado \((-remaining).asCurrency(code: currencyCode))")
+                    Text("Superado \((-remaining).masked(hideBalances, code: currencyCode))")
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundStyle(.white)
@@ -395,6 +406,7 @@ struct BudgetDetailView: View {
 
 private struct BudgetItemRow: View {
     @Environment(\.colorScheme) private var colorScheme
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
 
     let item: BudgetItem
     let movements: [Movement]
@@ -440,12 +452,12 @@ private struct BudgetItemRow: View {
 
                 Spacer()
 
-                Text(spent.asCurrency(code: currencyCode))
+                Text(spent.masked(hideBalances, code: currencyCode))
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(progress >= 1 ? .red : .primary)
 
-                Text("/ \(item.allocatedAmount.asCurrency(code: currencyCode))")
+                Text("/ \(item.allocatedAmount.masked(hideBalances, code: currencyCode))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -468,11 +480,11 @@ private struct BudgetItemRow: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 if remaining > 0 {
-                    Text("Quedan \(remaining.asCurrency(code: currencyCode))")
+                    Text("Quedan \(remaining.masked(hideBalances, code: currencyCode))")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 } else if remaining < 0 {
-                    Text("Superado \((-remaining).asCurrency(code: currencyCode))")
+                    Text("Superado \((-remaining).masked(hideBalances, code: currencyCode))")
                         .font(.caption2)
                         .foregroundStyle(.red)
                 } else {

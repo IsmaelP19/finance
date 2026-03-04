@@ -15,6 +15,7 @@ struct AccountDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \InvestmentSnapshot.snapshotDate, order: .forward) private var snapshots: [InvestmentSnapshot]
 
     @Bindable var account: BankAccount
@@ -50,7 +51,7 @@ struct AccountDetailView: View {
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
-                    Text(account.balance.asCurrency())
+                    Text(account.balance.masked(hideBalances, code: appCurrencyCode))
                         .font(.system(size: 36, weight: .bold, design: .rounded))
                         .foregroundStyle(account.balance.isNegative ? .red : .primary)
                         .padding(.top, 4)
@@ -92,12 +93,12 @@ struct AccountDetailView: View {
                 }
 
                 Section("Inversión") {
-                    DetailRow(label: "Cantidad invertida", value: account.effectiveInvestedAmount.asCurrency(code: appCurrencyCode))
-                    DetailRow(label: "Valor de mercado", value: account.effectiveMarketValue.asCurrency(code: appCurrencyCode))
+                    DetailRow(label: "Cantidad invertida", value: account.effectiveInvestedAmount.masked(hideBalances, code: appCurrencyCode))
+                    DetailRow(label: "Valor de mercado", value: account.effectiveMarketValue.masked(hideBalances, code: appCurrencyCode))
 
                     DetailRow(
                         label: "Rentabilidad",
-                        value: account.investmentProfit.asCurrency(code: appCurrencyCode),
+                        value: account.investmentProfit.masked(hideBalances, code: appCurrencyCode),
                         valueColor: account.investmentProfit.isNegative ? .red : .green
                     )
 
@@ -156,6 +157,16 @@ struct AccountDetailView: View {
         }
         .navigationTitle("Detalle")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    hideBalances.toggle()
+                } label: {
+                    Image(systemName: hideBalances ? "eye.slash" : "eye")
+                }
+                .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
+            }
+        }
         .sheet(isPresented: $showingEditSheet) {
             AddAccountView(existingAccount: account)
         }

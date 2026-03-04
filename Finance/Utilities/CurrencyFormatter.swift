@@ -41,13 +41,32 @@ private enum AppNumberFormatter {
     }
 }
 
+// MARK: - Hide balances
+
+/// Clave compartida de AppStorage para ocultar saldos.
+enum HideBalances {
+    static let storageKey = "hideBalances"
+    /// Texto de sustitución cuando los saldos están ocultos.
+    static let mask = "••••••"
+}
+
+// MARK: - Decimal extensions
+
 /// Extensión para formatear valores Decimal como moneda.
 extension Decimal {
     /// Formatea el valor como moneda (por defecto la moneda global de la app).
     /// Ejemplo: 1234.56 -> "1.234,56 €"
     func asCurrency(code: String = AppCurrency.currentCode()) -> String {
+        if UserDefaults.standard.bool(forKey: HideBalances.storageKey) {
+            return HideBalances.mask
+        }
         let amount = AppNumberFormatter.decimal.string(from: self as NSDecimalNumber) ?? "0,00"
         return "\(amount) \(AppNumberFormatter.currencySymbol(for: code))"
+    }
+
+    /// Devuelve `HideBalances.mask` si `hidden` es true, o el importe formateado si es false.
+    func masked(_ hidden: Bool, code: String = AppCurrency.currentCode()) -> String {
+        hidden ? HideBalances.mask : asCurrency(code: code)
     }
 
     /// Devuelve true si el valor es negativo.

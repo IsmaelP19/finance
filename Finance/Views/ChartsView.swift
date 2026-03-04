@@ -36,6 +36,7 @@ struct BankBalanceDatum: Identifiable {
 struct ChartsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
     @Query(sort: \Budget.createdAt) private var budgets: [Budget]
@@ -160,6 +161,15 @@ struct ChartsView: View {
             )
             .navigationTitle("Finance")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        hideBalances.toggle()
+                    } label: {
+                        Image(systemName: hideBalances ? "eye.slash" : "eye")
+                    }
+                    .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingWrappedHistory = true
@@ -267,7 +277,7 @@ struct ChartsView: View {
                     .foregroundStyle(.white)
             }
 
-            Text(totalBalance.asCurrency(code: appCurrencyCode))
+            Text(totalBalance.masked(hideBalances, code: appCurrencyCode))
                 .font(.system(size: 34, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
 
@@ -312,12 +322,12 @@ struct ChartsView: View {
                 .foregroundStyle(.primary)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                SummaryMetricCard(title: "Patrimonio total", value: totalBalance.asCurrency(code: appCurrencyCode), icon: "creditcard")
+                SummaryMetricCard(title: "Patrimonio total", value: totalBalance.masked(hideBalances, code: appCurrencyCode), icon: "creditcard")
                 SummaryMetricCard(title: "Cuentas", value: "\(accounts.count)", icon: "building.columns")
                 SummaryMetricCard(title: "Bancos", value: "\(bankBalances.count)", icon: "building.2")
                 SummaryMetricCard(
                     title: "Saldo medio/cuenta",
-                    value: accounts.isEmpty ? Decimal(0).asCurrency(code: appCurrencyCode) : (totalBalance / Decimal(accounts.count)).asCurrency(code: appCurrencyCode),
+                    value: accounts.isEmpty ? Decimal(0).masked(hideBalances, code: appCurrencyCode) : (totalBalance / Decimal(accounts.count)).masked(hideBalances, code: appCurrencyCode),
                     icon: "divide.circle"
                 )
                 SummaryMetricCard(

@@ -13,6 +13,7 @@ import SwiftData
 struct AccountListView: View {
     @Environment(\.modelContext) private var modelContext
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
 
     @State private var showingAddAccount = false
@@ -117,6 +118,15 @@ struct AccountListView: View {
             }
             .navigationTitle("Cuentas")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        hideBalances.toggle()
+                    } label: {
+                        Image(systemName: hideBalances ? "eye.slash" : "eye")
+                    }
+                    .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddAccount = true

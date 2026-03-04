@@ -103,6 +103,7 @@ struct MovementsView: View {
 
     @Environment(\.modelContext) private var modelContext
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
@@ -310,7 +311,8 @@ struct MovementsView: View {
                                 totalExpense: totalExpense,
                                 netBalance: netBalance,
                                 movementCount: movementCount,
-                                currencyCode: appCurrencyCode
+                                currencyCode: appCurrencyCode,
+                                hideBalances: hideBalances
                             )
                             .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
                         }
@@ -321,7 +323,8 @@ struct MovementsView: View {
                             ForEach(pendingRecurringMovements) { pending in
                                 PendingRecurringMovementRowView(
                                     pending: pending,
-                                    currencyCode: appCurrencyCode
+                                    currencyCode: appCurrencyCode,
+                                    hideBalances: hideBalances
                                 )
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button {
@@ -385,7 +388,11 @@ struct MovementsView: View {
                         .listRowBackground(Color.clear)
                     } else {
                         ForEach(visibleFilteredMovements, id: \.id) { movement in
-                            MovementRowView(movement: movement, currencyCode: appCurrencyCode)
+                            MovementRowView(
+                                movement: movement,
+                                currencyCode: appCurrencyCode,
+                                hideBalances: hideBalances
+                            )
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     movementToEdit = MovementEditingSelection(id: movement.id, movement: movement)
@@ -445,6 +452,15 @@ struct MovementsView: View {
                 scheduleSearchReload()
             }
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        hideBalances.toggle()
+                    } label: {
+                        Image(systemName: hideBalances ? "eye.slash" : "eye")
+                    }
+                    .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
+                }
+
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddMovement = true
@@ -1075,12 +1091,13 @@ private struct MovementSummaryView: View {
     let netBalance: Decimal
     let movementCount: Int
     let currencyCode: String
+    let hideBalances: Bool
 
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 10) {
-                SummaryPill(title: "Ingresos", value: totalIncome.asCurrency(code: currencyCode), color: .green)
-                SummaryPill(title: "Gastos", value: totalExpense.asCurrency(code: currencyCode), color: .red)
+                SummaryPill(title: "Ingresos", value: totalIncome.masked(hideBalances, code: currencyCode), color: .green)
+                SummaryPill(title: "Gastos", value: totalExpense.masked(hideBalances, code: currencyCode), color: .red)
             }
 
             HStack {
@@ -1090,7 +1107,7 @@ private struct MovementSummaryView: View {
 
                 Spacer()
 
-                Text(netBalance.asCurrency(code: currencyCode))
+                Text(netBalance.masked(hideBalances, code: currencyCode))
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(netBalance >= 0 ? .green : .red)
@@ -1141,6 +1158,7 @@ private struct SummaryPill: View {
 private struct PendingRecurringMovementRowView: View {
     let pending: PendingRecurringMovement
     let currencyCode: String
+    let hideBalances: Bool
 
     private var dueDateLabel: String {
         switch pending.status {
@@ -1167,9 +1185,9 @@ private struct PendingRecurringMovementRowView: View {
     private var amountText: String {
         switch pending.rule.type {
         case .expense, .income:
-            return (pending.rule.amount * pending.rule.type.signMultiplier).asCurrency(code: currencyCode)
+            return (pending.rule.amount * pending.rule.type.signMultiplier).masked(hideBalances, code: currencyCode)
         case .transfer:
-            return pending.rule.amount.asCurrency(code: currencyCode)
+            return pending.rule.amount.masked(hideBalances, code: currencyCode)
         }
     }
 
@@ -1239,6 +1257,7 @@ private struct PendingRecurringMovementRowView: View {
 private struct MovementRowView: View {
     let movement: Movement
     let currencyCode: String
+    let hideBalances: Bool
 
     private var accountAndBankText: String {
         let accountText = movement.account?.name ?? "Sin cuenta"
@@ -1251,7 +1270,7 @@ private struct MovementRowView: View {
 
     private var balanceAfterText: String? {
         guard let resultingBalance = movement.resultingBalance else { return nil }
-        return "Saldo: \(resultingBalance.asCurrency(code: currencyCode))"
+        return "Saldo: \(resultingBalance.masked(hideBalances, code: currencyCode))"
     }
 
     var body: some View {
@@ -1346,9 +1365,9 @@ private struct MovementRowView: View {
     private var displayAmount: String {
         switch movement.type {
         case .expense, .income:
-            return movement.signedAmount.asCurrency(code: currencyCode)
+            return movement.signedAmount.masked(hideBalances, code: currencyCode)
         case .transfer:
-            return movement.amount.asCurrency(code: currencyCode)
+            return movement.amount.masked(hideBalances, code: currencyCode)
         }
     }
 
@@ -1366,7 +1385,7 @@ private struct MovementRowView: View {
     private var personalAmountText: String? {
         guard movement.type == .expense, movement.isSharedExpense else { return nil }
         let signedPersonal = movement.statsExpenseAmount * movement.type.signMultiplier
-        return "Mi parte: \(signedPersonal.asCurrency(code: currencyCode))"
+        return "Mi parte: \(signedPersonal.masked(hideBalances, code: currencyCode))"
     }
 
     private var statsDetailText: String? {
@@ -1376,7 +1395,7 @@ private struct MovementRowView: View {
 
         if movement.isSharedExpense {
             let expected = max(movement.amount - movement.statsExpenseAmount, 0)
-            return "Reembolso esperado: \(expected.asCurrency(code: currencyCode))"
+            return "Reembolso esperado: \(expected.masked(hideBalances, code: currencyCode))"
         }
 
         return nil

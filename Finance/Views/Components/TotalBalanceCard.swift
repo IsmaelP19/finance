@@ -9,6 +9,7 @@ import SwiftUI
 
 /// Tarjeta que muestra el patrimonio total (suma de todos los saldos).
 struct TotalBalanceCard: View {
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
     let totalBalance: Decimal
     let accountCount: Int
     let currencyCode: String
@@ -19,7 +20,7 @@ struct TotalBalanceCard: View {
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.85))
 
-            Text(totalBalance.asCurrency(code: currencyCode))
+            Text(totalBalance.masked(hideBalances, code: currencyCode))
                 .font(.system(size: 32, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
 

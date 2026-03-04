@@ -10,6 +10,7 @@ import SwiftUI
 /// Fila que muestra un resumen de una cuenta bancaria en la lista principal.
 /// El icono y color se toman del tipo de cuenta (corriente, ahorro, inversión, etc.).
 struct AccountRowView: View {
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
     let account: BankAccount
 
     var body: some View {
@@ -37,7 +38,7 @@ struct AccountRowView: View {
             Spacer()
 
             // Saldo
-            Text(account.balance.asCurrency())
+            Text(account.balance.masked(hideBalances))
                 .font(.body)
                 .fontWeight(.semibold)
                 .foregroundStyle(account.balance.isNegative ? .red : .primary)

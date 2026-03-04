@@ -10,6 +10,7 @@ import SwiftUI
 /// Tarjeta que muestra el desglose del patrimonio por tipo de cuenta.
 /// Solo muestra los tipos que tienen al menos una cuenta asociada.
 struct BalanceByTypeCard: View {
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
     let balancesByType: [(AccountType, Decimal, Int)]
     let currencyCode: String
 
@@ -45,7 +46,7 @@ struct BalanceByTypeCard: View {
 
                             Spacer()
 
-                            Text(balance.asCurrency(code: currencyCode))
+                            Text(balance.masked(hideBalances, code: currencyCode))
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .foregroundStyle(.white)

@@ -89,6 +89,7 @@ private struct RecurringCalendarOccurrence: Identifiable {
 struct RecurringCalendarView: View {
     @Environment(\.modelContext) private var modelContext
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
 
@@ -191,6 +192,7 @@ struct RecurringCalendarView: View {
                             RecurringCalendarRow(
                                 occurrence: occurrence,
                                 currencyCode: appCurrencyCode,
+                                hideBalances: hideBalances,
                                 status: status(for: occurrence)
                             )
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -225,6 +227,7 @@ struct RecurringCalendarView: View {
                             RecurringCalendarRow(
                                 occurrence: occurrence,
                                 currencyCode: appCurrencyCode,
+                                hideBalances: hideBalances,
                                 status: status(for: occurrence)
                             )
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -248,6 +251,16 @@ struct RecurringCalendarView: View {
                 }
             }
             .navigationTitle("Calendario")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        hideBalances.toggle()
+                    } label: {
+                        Image(systemName: hideBalances ? "eye.slash" : "eye")
+                    }
+                    .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
+                }
+            }
             .alert("Acción no disponible", isPresented: $showingActionAlert) {
                 Button("Aceptar", role: .cancel) {}
             } message: {
@@ -508,14 +521,15 @@ private struct DecoratedRecurringCalendarView: View {
 private struct RecurringCalendarRow: View {
     let occurrence: RecurringCalendarOccurrence
     let currencyCode: String
+    let hideBalances: Bool
     let status: RecurringCalendarStatus
 
     private var amountText: String {
         switch occurrence.rule.type {
         case .expense, .income:
-            return (occurrence.rule.amount * occurrence.rule.type.signMultiplier).asCurrency(code: currencyCode)
+            return (occurrence.rule.amount * occurrence.rule.type.signMultiplier).masked(hideBalances, code: currencyCode)
         case .transfer:
-            return occurrence.rule.amount.asCurrency(code: currencyCode)
+            return occurrence.rule.amount.masked(hideBalances, code: currencyCode)
         }
     }
 
