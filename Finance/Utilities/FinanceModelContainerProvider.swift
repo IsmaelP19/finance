@@ -21,7 +21,6 @@ enum FinanceModelContainerProvider {
             RecurringMovement.self,
             Budget.self,
             BudgetItem.self,
-            SavingsGoal.self,
         ])
         let modelConfiguration = ModelConfiguration(
             schema: schema,
