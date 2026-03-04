@@ -445,16 +445,18 @@ struct MonthlyWrappedStoriesView: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let compactStoryLayout = geometry.size.height < 760
+
             ZStack {
                 storyBackground
                     .ignoresSafeArea()
 
                 ambientShapes(size: geometry.size)
 
-                currentStoryView
-                    .padding(.top, geometry.safeAreaInsets.top + 76)
+                currentStoryView(compactLayout: compactStoryLayout)
+                    .padding(.top, geometry.safeAreaInsets.top + (compactStoryLayout ? 66 : 76))
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 24)
+                    .padding(.bottom, compactStoryLayout ? 14 : 24)
             }
             .overlay(alignment: .top) {
                 topOverlay(safeTop: geometry.safeAreaInsets.top)
@@ -587,13 +589,13 @@ struct MonthlyWrappedStoriesView: View {
     }
 
     @ViewBuilder
-    private var currentStoryView: some View {
+    private func currentStoryView(compactLayout: Bool) -> some View {
         switch currentStory {
         case .overview:
             overviewStory
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
         case .categories:
-            categoriesStory
+            categoriesStory(compactLayout: compactLayout)
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
         case .highlights:
             highlightsStory
@@ -672,7 +674,7 @@ struct MonthlyWrappedStoriesView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var categoriesStory: some View {
+    private func categoriesStory(compactLayout: Bool) -> some View {
         ZStack(alignment: .topTrailing) {
             Image(systemName: summary.topExpenseCategories.first?.iconName ?? "chart.bar")
                 .font(.system(size: 180, weight: .black))
@@ -680,12 +682,12 @@ struct MonthlyWrappedStoriesView: View {
                 .offset(x: 44, y: 10)
                 .allowsHitTesting(false)
 
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: compactLayout ? 10 : 14) {
                 wrappedBadge(title: "Dónde fue tu dinero", icon: "chart.bar.doc.horizontal")
                     .wrappedReveal(step: 1, current: revealStep)
 
                 Text("Tus 5 categorías top")
-                    .font(.system(size: 34, weight: .black, design: .rounded))
+                    .font(.system(size: compactLayout ? 30 : 34, weight: .black, design: .rounded))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
@@ -705,9 +707,9 @@ struct MonthlyWrappedStoriesView: View {
 
                     Spacer(minLength: 8)
                 } else {
-                    VStack(spacing: 10) {
+                    VStack(spacing: compactLayout ? 8 : 10) {
                         ForEach(Array(summary.topExpenseCategories.enumerated()), id: \.element.id) { index, category in
-                            categoryRow(index: index + 1, category: category)
+                            categoryRow(index: index + 1, category: category, compactLayout: compactLayout)
                         }
                     }
                     .wrappedReveal(step: 3, current: revealStep)
@@ -1150,23 +1152,25 @@ struct MonthlyWrappedStoriesView: View {
         }
     }
 
-    private func categoryRow(index: Int, category: WrappedCategoryStat) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+    private func categoryRow(index: Int, category: WrappedCategoryStat, compactLayout: Bool) -> some View {
+        VStack(alignment: .leading, spacing: compactLayout ? 6 : 8) {
             HStack(spacing: 10) {
                 Text("\(index)")
-                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .font(.system(size: compactLayout ? 22 : 24, weight: .black, design: .rounded))
                     .foregroundStyle(.white.opacity(0.92))
                     .frame(width: 28, alignment: .leading)
 
                 Label(category.name, systemImage: category.iconName)
-                    .font(.subheadline)
+                    .font(compactLayout ? .callout : .subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
 
                 Spacer()
 
                 Text(category.amount.asCurrency(code: appCurrencyCode))
-                    .font(.subheadline)
+                    .font(compactLayout ? .callout : .subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
             }
@@ -1180,14 +1184,14 @@ struct MonthlyWrappedStoriesView: View {
                             .frame(width: max(8, geometry.size.width * categoryRatio(for: category)))
                     }
             }
-            .frame(height: 8)
+            .frame(height: compactLayout ? 7 : 8)
 
             Text("\(category.movementCount) movimientos")
                 .font(.caption2)
                 .foregroundStyle(.white.opacity(0.78))
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 11)
+        .padding(.vertical, compactLayout ? 9 : 11)
         .background(Color.white.opacity(0.10))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay {
