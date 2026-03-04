@@ -8,39 +8,36 @@
 import Foundation
 import SwiftData
 
-/// Presupuesto mensual de gasto asociado a una categoría.
-/// El progreso se calcula comparando el gasto real del mes en curso
-/// contra `limitAmount` mediante `BudgetService`.
+/// Presupuesto mensual global único.
+/// Contiene un importe total y una lista de ítems por categoría
+/// que deben sumar exactamente el total.
 @Model
 final class Budget {
     var id: UUID
-    /// Límite de gasto mensual.
-    var limitAmount: Decimal
+    /// Importe total del presupuesto mensual.
+    var totalAmount: Decimal
     /// Si false, el presupuesto existe pero no se muestra ni evalúa.
     var isActive: Bool
-    /// Enviar push cuando el gasto alcanza el 80 % del límite.
+    /// Enviar push cuando el gasto de una categoría alcanza el 80 % de su asignación.
     var notifyAt80Percent: Bool
-    /// Enviar push cuando el gasto alcanza o supera el 100 % del límite.
+    /// Enviar push cuando el gasto de una categoría alcanza o supera el 100 % de su asignación.
     var notifyAt100Percent: Bool
     var createdAt: Date
     var updatedAt: Date
 
-    /// Categoría a la que aplica este presupuesto.
-    /// Si se elimina la categoría, el presupuesto queda huérfano (nullify)
-    /// pero no se borra: el usuario puede reasignar o eliminar el presupuesto.
-    @Relationship(deleteRule: .nullify)
-    var category: MovementCategory?
+    /// Distribución del presupuesto por categoría.
+    /// Al eliminar el presupuesto, se eliminan en cascada todos sus ítems.
+    @Relationship(deleteRule: .cascade, inverse: \BudgetItem.budget)
+    var items: [BudgetItem] = []
 
     init(
-        limitAmount: Decimal,
-        category: MovementCategory? = nil,
+        totalAmount: Decimal,
         isActive: Bool = true,
         notifyAt80Percent: Bool = true,
         notifyAt100Percent: Bool = true
     ) {
         self.id = UUID()
-        self.limitAmount = limitAmount
-        self.category = category
+        self.totalAmount = totalAmount
         self.isActive = isActive
         self.notifyAt80Percent = notifyAt80Percent
         self.notifyAt100Percent = notifyAt100Percent

@@ -62,6 +62,7 @@ private actor ModelContainerProvider {
             InvestmentSnapshot.self,
             RecurringMovement.self,
             Budget.self,
+            BudgetItem.self,
             SavingsGoal.self,
         ])
         let modelConfiguration = ModelConfiguration(

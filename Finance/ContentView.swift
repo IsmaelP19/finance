@@ -38,7 +38,8 @@ struct ContentView: View {
     }
 
     private var alertingBudgetsCount: Int {
-        BudgetService.alertingBudgetsCount(budgets: budgets, movements: movements)
+        guard let budget = budgets.first else { return 0 }
+        return BudgetService.isAlerting(budget: budget, movements: movements) ? 1 : 0
     }
 
     var body: some View {

@@ -869,8 +869,8 @@ struct AddMovementView: View {
 
             movementToEdit.updatedAt = Date()
 
-            if movementType == .expense {
-                BudgetService.evaluateAndNotify(budgets: budgets, movements: movements)
+            if movementType == .expense, let activeBudget = budgets.first {
+                BudgetService.evaluateAndNotify(budget: activeBudget, movements: movements)
             }
         } else {
             let resultingBalance = applyMovementImpact(
@@ -896,8 +896,8 @@ struct AddMovementView: View {
 
             modelContext.insert(movement)
 
-            if movementType == .expense {
-                BudgetService.evaluateAndNotify(budgets: budgets, movements: movements)
+            if movementType == .expense, let activeBudget = budgets.first {
+                BudgetService.evaluateAndNotify(budget: activeBudget, movements: movements)
             }
         }
 
