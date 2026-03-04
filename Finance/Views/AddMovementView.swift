@@ -868,6 +868,10 @@ struct AddMovementView: View {
             }
 
             movementToEdit.updatedAt = Date()
+
+            if movementType == .expense {
+                BudgetService.evaluateAndNotify(budgets: budgets, movements: movements)
+            }
         } else {
             let resultingBalance = applyMovementImpact(
                 type: movementType,
