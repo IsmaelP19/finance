@@ -24,6 +24,7 @@ struct AddMovementView: View {
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
+    @Query(sort: \Budget.createdAt) private var budgets: [Budget]
 
     @State private var selectedAccount: BankAccount?
     @State private var selectedDestinationAccount: BankAccount?
@@ -890,6 +891,10 @@ struct AddMovementView: View {
             )
 
             modelContext.insert(movement)
+
+            if movementType == .expense {
+                BudgetService.evaluateAndNotify(budgets: budgets, movements: movements)
+            }
         }
 
         dismiss()

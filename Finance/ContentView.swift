@@ -21,6 +21,7 @@ struct ContentView: View {
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \InvestmentSnapshot.snapshotDate, order: .reverse) private var investmentSnapshots: [InvestmentSnapshot]
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
+    @Query(sort: \Budget.createdAt) private var budgets: [Budget]
 
     @State private var showingSyncImportPrompt = false
     @State private var pendingSyncExportDate: Date?
@@ -36,12 +37,17 @@ struct ContentView: View {
         ).count
     }
 
+    private var alertingBudgetsCount: Int {
+        BudgetService.alertingBudgetsCount(budgets: budgets, movements: movements)
+    }
+
     var body: some View {
         TabView {
             ChartsView()
                 .tabItem {
                     Label("Inicio", systemImage: "house.fill")
                 }
+                .badge(alertingBudgetsCount > 0 ? Text("\(alertingBudgetsCount)") : nil)
 
             MovementsView()
                 .tabItem {

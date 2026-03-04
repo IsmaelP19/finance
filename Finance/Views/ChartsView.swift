@@ -38,6 +38,8 @@ struct ChartsView: View {
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
+    @Query(sort: \Budget.createdAt) private var budgets: [Budget]
+    @Query(sort: \SavingsGoal.createdAt) private var savingsGoals: [SavingsGoal]
     @State private var showingDetailedStats = false
     @State private var showingWrappedHistory = false
 
@@ -143,6 +145,17 @@ struct ChartsView: View {
                         BalanceByBankBarChart(data: bankBalances, currencyCode: appCurrencyCode)
 
                         summarySection
+
+                        BudgetsSection(
+                            budgets: budgets,
+                            movements: movements,
+                            currencyCode: appCurrencyCode
+                        )
+
+                        SavingsGoalsSection(
+                            goals: savingsGoals,
+                            currencyCode: appCurrencyCode
+                        )
                     }
                 }
                 .padding()
