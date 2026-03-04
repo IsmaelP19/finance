@@ -78,6 +78,7 @@ private actor ModelContainerProvider {
 struct FinanceApp: App {
     @State private var sharedModelContainer: ModelContainer?
     @State private var modelContainerError: String?
+    @State private var deepLinkRouter = DeepLinkRouter()
 
     var body: some Scene {
         WindowGroup {
@@ -85,6 +86,7 @@ struct FinanceApp: App {
                 if let sharedModelContainer {
                     ContentView()
                         .modelContainer(sharedModelContainer)
+                        .environment(deepLinkRouter)
                 } else if let modelContainerError {
                     ContentUnavailableView(
                         "No se pudo iniciar la base de datos",
@@ -97,6 +99,9 @@ struct FinanceApp: App {
             }
             .task {
                 await ensureModelContainerLoaded()
+            }
+            .onOpenURL { url in
+                deepLinkRouter.handle(url: url)
             }
         }
         .backgroundTask(.appRefresh(AutoBackupService.taskIdentifier)) {

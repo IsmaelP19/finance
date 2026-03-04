@@ -12,6 +12,7 @@ import SwiftData
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
@@ -25,6 +26,7 @@ struct ContentView: View {
     @State private var pendingSyncExportDate: Date?
     @State private var showingSyncErrorAlert = false
     @State private var syncErrorMessage = ""
+    @State private var showingQuickAddExpense = false
 
     private var pendingRecurringCount: Int {
         RecurringMovementService.pendingMovements(
@@ -64,10 +66,12 @@ struct ContentView: View {
         }
         .task {
             refreshSyncState()
+            MonthlyWrappedService.configureMonthlyReminder()
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 refreshSyncState()
+                MonthlyWrappedService.configureMonthlyReminder()
             }
         }
         .alert("Backup más reciente disponible", isPresented: $showingSyncImportPrompt) {
@@ -87,6 +91,15 @@ struct ContentView: View {
             Button("Aceptar", role: .cancel) {}
         } message: {
             Text(syncErrorMessage)
+        }
+        .sheet(isPresented: $showingQuickAddExpense) {
+            AddMovementView(preselectedType: .expense)
+        }
+        .onChange(of: deepLinkRouter.pendingAddExpense) { _, shouldOpen in
+            if shouldOpen {
+                deepLinkRouter.pendingAddExpense = false
+                showingQuickAddExpense = true
+            }
         }
     }
 
@@ -202,4 +215,5 @@ struct ContentView: View {
             ],
             inMemory: true
         )
+        .environment(DeepLinkRouter())
 }
