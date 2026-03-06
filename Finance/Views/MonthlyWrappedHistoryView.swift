@@ -532,8 +532,7 @@ struct MonthlyWrappedStoriesView: View {
                     dismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.caption)
-                        .fontWeight(.bold)
+                        .font(.system(size: 17, weight: .semibold))
                         .foregroundStyle(.white)
                         .padding(10)
                         .background(Color.white.opacity(0.20))

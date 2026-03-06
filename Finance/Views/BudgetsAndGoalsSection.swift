@@ -50,7 +50,7 @@ struct BudgetsSection: View {
                         }
                     } label: {
                         Image(systemName: "ellipsis.circle")
-                            .font(.title3)
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(.tint)
                     }
                     .accessibilityLabel("Opciones del presupuesto")
@@ -60,7 +60,7 @@ struct BudgetsSection: View {
                         showingAddBudget = true
                     } label: {
                         Image(systemName: "plus.circle.fill")
-                            .font(.title3)
+                            .font(.system(size: 17, weight: .semibold))
                             .foregroundStyle(.tint)
                     }
                     .accessibilityLabel("Crear presupuesto mensual")
@@ -292,6 +292,7 @@ struct BudgetDetailView: View {
                         hideBalances.toggle()
                     } label: {
                         Image(systemName: hideBalances ? "eye.slash" : "eye")
+                            .font(.system(size: 17, weight: .semibold))
                     }
                     .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
                 }

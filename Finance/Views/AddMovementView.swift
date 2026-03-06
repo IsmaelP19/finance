@@ -606,6 +606,7 @@ struct AddMovementView: View {
            let linkedExpense = movements.first(where: { $0.id == linkedReimbursementExpenseID && $0.type == .expense }) {
             selectedReimbursementExpense = linkedExpense
             isReimbursementIncome = true
+            selectedCategory = linkedExpense.category
 
             if selectedAccount == nil {
                 selectedAccount = linkedExpense.account
@@ -1011,7 +1012,7 @@ private struct CreateMovementCategorySheet: View {
                                 selectedIcon = icon
                             } label: {
                                 Image(systemName: icon.systemName)
-                                    .font(.title3)
+                                    .font(.system(size: 17, weight: .semibold))
                                     .frame(width: 38, height: 38)
                                     .foregroundStyle(selectedIcon == icon ? .white : .primary)
                                     .background(selectedIcon == icon ? selectedColor.color : Color.clear)

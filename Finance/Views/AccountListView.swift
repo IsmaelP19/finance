@@ -123,6 +123,7 @@ struct AccountListView: View {
                         hideBalances.toggle()
                     } label: {
                         Image(systemName: hideBalances ? "eye.slash" : "eye")
+                            .font(.system(size: 17, weight: .semibold))
                     }
                     .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
                 }
@@ -132,6 +133,7 @@ struct AccountListView: View {
                         showingAddAccount = true
                     } label: {
                         Image(systemName: "plus")
+                            .font(.system(size: 17, weight: .semibold))
                     }
                 }
             }

@@ -86,6 +86,7 @@ struct CategoryManagementView: View {
                         showingCreateCategory = true
                     } label: {
                         Image(systemName: "plus")
+                            .font(.system(size: 17, weight: .semibold))
                     }
                 }
             }
@@ -147,7 +148,7 @@ struct CategoryEditorSheet: View {
                                 selectedIcon = icon
                             } label: {
                                 Image(systemName: icon.systemName)
-                                    .font(.title2)
+                                    .font(.system(size: 17, weight: .semibold))
                                     .frame(width: 44, height: 44)
                                     .foregroundStyle(selectedIcon == icon ? .white : .primary)
                                     .background(selectedIcon == icon ? selectedColor.color : Color.clear)

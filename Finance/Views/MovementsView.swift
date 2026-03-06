@@ -96,6 +96,11 @@ private struct MovementEditingSelection: Identifiable {
     let movement: Movement
 }
 
+private struct MovementDetailSelection: Identifiable {
+    let id: UUID
+    let movement: Movement
+}
+
 /// Pantalla principal de movimientos (gastos e ingresos).
 struct MovementsView: View {
     private static let movementPageSize = 20
@@ -109,6 +114,7 @@ struct MovementsView: View {
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
 
     @State private var showingAddMovement = false
+    @State private var movementToView: MovementDetailSelection?
     @State private var movementToEdit: MovementEditingSelection?
     @State private var selectedAccountFilterID: UUID?
     @State private var selectedTypeFilter: MovementListTypeFilter = .all
@@ -395,7 +401,7 @@ struct MovementsView: View {
                             )
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    movementToEdit = MovementEditingSelection(id: movement.id, movement: movement)
+                                    movementToView = MovementDetailSelection(id: movement.id, movement: movement)
                                 }
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                     Button {
@@ -457,6 +463,7 @@ struct MovementsView: View {
                         hideBalances.toggle()
                     } label: {
                         Image(systemName: hideBalances ? "eye.slash" : "eye")
+                            .font(.system(size: 17, weight: .semibold))
                     }
                     .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
                 }
@@ -466,6 +473,7 @@ struct MovementsView: View {
                         showingAddMovement = true
                     } label: {
                         Image(systemName: "plus")
+                            .font(.system(size: 17, weight: .semibold))
                     }
                     .disabled(accounts.isEmpty)
                 }
@@ -482,6 +490,14 @@ struct MovementsView: View {
                     selectedMonth: $customMonthDraft,
                     selectedYear: $customYearDraft,
                     onApply: applyCustomPeriod
+                )
+            }
+            .sheet(item: $movementToView, onDismiss: {
+                reloadMovements()
+            }) { selection in
+                MovementDetailView(
+                    movement: selection.movement,
+                    currencyCode: appCurrencyCode
                 )
             }
             .sheet(item: $movementToEdit, onDismiss: {
@@ -1208,7 +1224,7 @@ private struct PendingRecurringMovementRowView: View {
                 Text(pending.rule.concept)
                     .font(.body)
                     .fontWeight(.medium)
-                    .lineLimit(1)
+                    .lineLimit(2)
 
                 if let category = pending.rule.category {
                     CategoryChipView(
@@ -1286,7 +1302,7 @@ private struct MovementRowView: View {
                 Text(movement.concept)
                     .font(.body)
                     .fontWeight(.medium)
-                    .lineLimit(1)
+                    .lineLimit(2)
 
                 HStack(spacing: 6) {
                     if movement.type == .transfer {
