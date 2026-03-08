@@ -101,6 +101,14 @@ private struct MovementDetailSelection: Identifiable {
     let movement: Movement
 }
 
+private struct MovementListScrollOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 /// Pantalla principal de movimientos (gastos e ingresos).
 struct MovementsView: View {
     private static let movementPageSize = 20
@@ -138,6 +146,9 @@ struct MovementsView: View {
     @State private var recurringConfirmationMovements: [Movement] = []
     @State private var searchReloadTask: Task<Void, Never>?
     @State private var availablePeriodYears: [Int] = [Calendar.current.component(.year, from: Date())]
+    @State private var lastFiltersMinY: CGFloat = 0
+    @State private var hasInitializedFiltersMinY = false
+    @State private var isFloatingFiltersVisible = false
 
     private var calendar: Calendar { .current }
 
@@ -284,54 +295,67 @@ struct MovementsView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
+            List {
                 if hasAnyMovements {
                     filtersHeader
                         .padding(.bottom, 8)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .background(
+                            GeometryReader { geometry in
+                                Color.clear
+                                    .preference(
+                                        key: MovementListScrollOffsetKey.self,
+                                        value: geometry.frame(in: .named("movementsListScroll")).minY
+                                    )
+                            }
+                        )
                 }
 
-                List {
-                    if !accounts.isEmpty {
-                        Section {
-                            Picker("Cuenta", selection: $selectedAccountFilterID) {
-                                Text("Todas las cuentas")
-                                    .tag(nil as UUID?)
+                if !accounts.isEmpty {
+                    Section {
+                        Picker("Cuenta", selection: $selectedAccountFilterID) {
+                            Text("Todas las cuentas")
+                                .tag(nil as UUID?)
 
-                                ForEach(groupedAccountsByBank) { bankGroup in
-                                    Section(bankGroup.bankName) {
-                                        ForEach(bankGroup.accounts, id: \.id) { account in
-                                            Text(account.name)
-                                                .tag(Optional(account.id))
-                                        }
+                            ForEach(groupedAccountsByBank) { bankGroup in
+                                Section(bankGroup.bankName) {
+                                    ForEach(bankGroup.accounts, id: \.id) { account in
+                                        Text(account.name)
+                                            .tag(Optional(account.id))
                                     }
                                 }
                             }
-                            .pickerStyle(.menu)
                         }
+                        .pickerStyle(.menu)
                     }
+                }
 
-                    if hasAnyMovements {
-                        Section {
-                            MovementSummaryView(
-                                totalIncome: totalIncome,
-                                totalExpense: totalExpense,
-                                netBalance: netBalance,
-                                movementCount: movementCount,
+                if hasAnyMovements {
+                    Section {
+                        MovementSummaryView(
+                            totalIncome: totalIncome,
+                            totalExpense: totalExpense,
+                            netBalance: netBalance,
+                            movementCount: movementCount,
+                            currencyCode: appCurrencyCode,
+                            hideBalances: hideBalances
+                        )
+                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    }
+                }
+
+                if shouldShowExpandedPendingRecurringSection && !pendingRecurringMovements.isEmpty {
+                    Section {
+                        ForEach(pendingRecurringMovements) { pending in
+                            PendingRecurringMovementRowView(
+                                pending: pending,
                                 currencyCode: appCurrencyCode,
                                 hideBalances: hideBalances
                             )
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        }
-                    }
-
-                    if shouldShowExpandedPendingRecurringSection && !pendingRecurringMovements.isEmpty {
-                        Section {
-                            ForEach(pendingRecurringMovements) { pending in
-                                PendingRecurringMovementRowView(
-                                    pending: pending,
-                                    currencyCode: appCurrencyCode,
-                                    hideBalances: hideBalances
-                                )
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button {
                                         confirmPendingRecurring(pending)
@@ -348,57 +372,60 @@ struct MovementsView: View {
                                         Label("Cancelar", systemImage: "xmark.circle")
                                     }
                                 }
-                            }
-                        } header: {
-                            HStack {
-                                Text("Próximos recurrentes")
-                                Spacer()
-                                Text("\(pendingRecurringMovements.count)")
-                                    .font(.caption2)
-                                    .fontWeight(.semibold)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
-                                    .background(Color.blue.opacity(0.2))
-                                    .foregroundStyle(.blue)
-                                    .clipShape(Capsule())
-                            }
                         }
-                    }
-
-                    if shouldShowPendingRecurringHint {
-                        Section {
-                            PendingRecurringPeriodHintRow(
-                                pendingCount: pendingRecurringMovements.count,
-                                periodLabel: activePeriodLabel
-                            )
-                        } header: {
+                    } header: {
+                        HStack {
                             Text("Próximos recurrentes")
+                            Spacer()
+                            Text("\(pendingRecurringMovements.count)")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(Color.blue.opacity(0.2))
+                                .foregroundStyle(.blue)
+                                .clipShape(Capsule())
                         }
                     }
+                }
 
-                    if !hasAnyMovements && pendingRecurringMovements.isEmpty {
-                        ContentUnavailableView(
-                            accounts.isEmpty ? "Sin cuentas" : "Sin movimientos",
-                            systemImage: accounts.isEmpty ? "building.columns" : "arrow.left.arrow.right.circle",
-                            description: Text(accounts.isEmpty
-                                              ? "Crea al menos una cuenta en Cuentas para registrar movimientos"
-                                              : "Pulsa + para registrar tu primer gasto, ingreso o transferencia")
+                if shouldShowPendingRecurringHint {
+                    Section {
+                        PendingRecurringPeriodHintRow(
+                            pendingCount: pendingRecurringMovements.count,
+                            periodLabel: activePeriodLabel
                         )
-                        .listRowBackground(Color.clear)
-                    } else if hasAnyMovements && movementCount == 0 {
-                        ContentUnavailableView(
-                            "Sin movimientos con estos filtros",
-                            systemImage: "line.3.horizontal.decrease.circle",
-                            description: Text("Ajusta cuenta, tipo o búsqueda para ver más resultados")
-                        )
-                        .listRowBackground(Color.clear)
-                    } else {
+                    } header: {
+                        Text("Próximos recurrentes")
+                    }
+                }
+
+                if !hasAnyMovements && pendingRecurringMovements.isEmpty {
+                    ContentUnavailableView(
+                        accounts.isEmpty ? "Sin cuentas" : "Sin movimientos",
+                        systemImage: accounts.isEmpty ? "building.columns" : "arrow.left.arrow.right.circle",
+                        description: Text(accounts.isEmpty
+                                          ? "Crea al menos una cuenta en Cuentas para registrar movimientos"
+                                          : "Pulsa + para registrar tu primer gasto, ingreso o transferencia")
+                    )
+                    .listRowBackground(Color.clear)
+                } else if hasAnyMovements && movementCount == 0 {
+                    ContentUnavailableView(
+                        "Sin movimientos con estos filtros",
+                        systemImage: "line.3.horizontal.decrease.circle",
+                        description: Text("Ajusta cuenta, tipo o búsqueda para ver más resultados")
+                    )
+                    .listRowBackground(Color.clear)
+                } else {
+                    Section {
                         ForEach(visibleFilteredMovements, id: \.id) { movement in
                             MovementRowView(
                                 movement: movement,
                                 currencyCode: appCurrencyCode,
                                 hideBalances: hideBalances
                             )
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
                                     movementToView = MovementDetailSelection(id: movement.id, movement: movement)
@@ -424,9 +451,66 @@ struct MovementsView: View {
                                 loadNextMovementPage()
                             }
                         }
+                    } header: {
+                        if shouldShowExpandedPendingRecurringSection && !pendingRecurringMovements.isEmpty {
+                            HStack {
+                                Text("Movimientos")
+                                Spacer()
+                            }
+                        }
                     }
                 }
+
             }
+            .coordinateSpace(name: "movementsListScroll")
+            .onPreferenceChange(MovementListScrollOffsetKey.self) { offset in
+                guard hasAnyMovements else {
+                    isFloatingFiltersVisible = false
+                    hasInitializedFiltersMinY = false
+                    lastFiltersMinY = offset
+                    return
+                }
+
+                guard hasInitializedFiltersMinY else {
+                    hasInitializedFiltersMinY = true
+                    lastFiltersMinY = offset
+                    return
+                }
+
+                let delta = offset - lastFiltersMinY
+                let isNearTop = offset > -8
+                let isFiltersOffscreen = offset < -26
+                let threshold: CGFloat = 0.8
+
+                if isNearTop {
+                    if isFloatingFiltersVisible {
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            isFloatingFiltersVisible = false
+                        }
+                    }
+                } else if delta > threshold && isFiltersOffscreen {
+                    if !isFloatingFiltersVisible {
+                        withAnimation(.spring(response: 0.24, dampingFraction: 0.88)) {
+                            isFloatingFiltersVisible = true
+                        }
+                    }
+                } else if delta < -threshold {
+                    if isFloatingFiltersVisible {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            isFloatingFiltersVisible = false
+                        }
+                    }
+                }
+
+                lastFiltersMinY = offset
+            }
+            .overlay(alignment: .top) {
+                if isFloatingFiltersVisible && hasAnyMovements {
+                    floatingFiltersHeader
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .financeGlassListContainer()
             .navigationTitle("Movimientos")
             .searchable(text: $searchText, prompt: "Buscar movimientos")
             .onAppear {
@@ -463,7 +547,7 @@ struct MovementsView: View {
                         hideBalances.toggle()
                     } label: {
                         Image(systemName: hideBalances ? "eye.slash" : "eye")
-                            .font(.system(size: 17, weight: .semibold))
+                            .financeToolbarIconStyle()
                     }
                     .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
                 }
@@ -473,7 +557,7 @@ struct MovementsView: View {
                         showingAddMovement = true
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .semibold))
+                            .financeToolbarIconStyle()
                     }
                     .disabled(accounts.isEmpty)
                 }
@@ -982,6 +1066,20 @@ struct MovementsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var floatingFiltersHeader: some View {
+        filtersHeader
+            .padding(.top, 6)
+            .padding(.bottom, 10)
+            .background(
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .overlay(alignment: .bottom) {
+                        Divider()
+                            .opacity(0.35)
+                    }
+            )
+    }
+
     private func toggleCategoryFilter(_ filter: MovementCategoryFilter) {
         if selectedCategoryFilters.contains(filter) {
             selectedCategoryFilters.remove(filter)
@@ -1053,6 +1151,7 @@ private struct MovementCustomMonthSheet: View {
                     }
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle("Periodo personalizado")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1097,7 +1196,8 @@ private struct PendingRecurringPeriodHintRow: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
+        .financeInsetCard(cornerRadius: 16)
+        .padding(.vertical, 2)
     }
 }
 
@@ -1142,8 +1242,6 @@ private struct MovementSummaryView: View {
             }
         }
         .padding(12)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
 
@@ -1156,18 +1254,32 @@ private struct SummaryPill: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.white.opacity(0.75))
 
             Text(value)
                 .font(.subheadline)
                 .fontWeight(.semibold)
-                .foregroundStyle(color)
+                .foregroundStyle(.white)
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(color.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            LinearGradient(
+                colors: [
+                    color.opacity(0.28),
+                    color.opacity(0.20)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(color.opacity(0.35), lineWidth: 1)
+        )
     }
 }
 
@@ -1175,17 +1287,6 @@ private struct PendingRecurringMovementRowView: View {
     let pending: PendingRecurringMovement
     let currencyCode: String
     let hideBalances: Bool
-
-    private var dueDateLabel: String {
-        switch pending.status {
-        case .overdue:
-            return "Vencido · \(pending.dueDate.asSpanishShortDate())"
-        case .dueToday:
-            return "Vence hoy"
-        case .upcoming:
-            return "Vence \(pending.dueDate.asSpanishShortDate())"
-        }
-    }
 
     private var statusColor: Color {
         switch pending.status {
@@ -1211,62 +1312,30 @@ private struct PendingRecurringMovementRowView: View {
         pending.rule.account?.name ?? "Cuenta no disponible"
     }
 
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: pending.rule.type.icon)
-                .font(.title3)
-                .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(pending.rule.type.color)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(pending.rule.concept)
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .lineLimit(2)
-
-                if let category = pending.rule.category {
-                    CategoryChipView(
-                        name: category.name,
-                        iconName: category.iconName,
-                        color: category.color
-                    )
-                }
-
-                Text(accountName)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 7, height: 7)
-                    Text(dueDateLabel)
-                        .font(.caption2)
-                        .foregroundStyle(statusColor)
-                }
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(amountText)
-                    .font(.body)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(pending.rule.type == .expense ? .red : .green)
-
-                Text(pending.status.displayName)
-                    .font(.caption2)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(statusColor.opacity(0.15))
-                    .foregroundStyle(statusColor)
-                    .clipShape(Capsule())
-            }
+    private var statusTitle: String {
+        switch pending.status {
+        case .overdue:
+            return "Vencido"
+        case .dueToday:
+            return "Hoy"
+        case .upcoming:
+            return "Pendiente"
         }
-        .padding(.vertical, 4)
+    }
+
+    var body: some View {
+        RecurringMovementRowContent(
+            type: pending.rule.type,
+            concept: pending.rule.concept,
+            categoryName: pending.rule.category?.name,
+            categoryIconName: pending.rule.category?.iconName,
+            categoryColor: pending.rule.category?.color,
+            accountName: accountName,
+            amountText: amountText,
+            statusTitle: statusTitle,
+            statusColor: statusColor,
+            dueDateText: pending.dueDate.asSpanishShortDate()
+        )
     }
 }
 

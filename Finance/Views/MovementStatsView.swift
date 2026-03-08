@@ -657,7 +657,7 @@ struct MovementStatsView: View {
                 .padding()
                 .padding(.bottom, 24)
             }
-            .background(pageBackground)
+            .financeGlassPageBackground()
             .navigationTitle("Estadísticas")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -667,7 +667,7 @@ struct MovementStatsView: View {
                         Label("Wrapped", systemImage: "sparkles.rectangle.stack")
                     }
                     .disabled(latestWrappedMonth == nil)
-                    .accessibilityLabel("Abrir wrapped mensual")
+                    .accessibilityLabel("Abrir resumen mensual")
                 }
             }
             .onAppear {
@@ -748,62 +748,13 @@ struct MovementStatsView: View {
     @ViewBuilder
     private var wrappedBannerCard: some View {
         if let latestWrappedMonth {
-            Button {
+            WrappedAccessBannerCard(
+                title: hasPendingWrapped ? "Tu resumen de \(latestWrappedMonth.longLabel) está listo" : "Explora tus resúmenes",
+                subtitle: hasPendingWrapped ? "Abre el resumen del mes y consulta sus estadísticas" : "Consulta meses anteriores cuando quieras",
+                hasPendingWrapped: hasPendingWrapped
+            ) {
                 showingWrappedHistory = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "sparkles.rectangle.stack.fill")
-                        .foregroundStyle(.white)
-                        .padding(10)
-                        .background(Color.white.opacity(0.20))
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(hasPendingWrapped ? "Wrapped disponible: \(latestWrappedMonth.longLabel)" : "Historial de wrapped mensual")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.white)
-
-                        Text(hasPendingWrapped ? "Abre el resumen del mes y consulta sus highlights." : "Consulta cualquier mes cerrado cuando quieras.")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.82))
-                    }
-
-                    Spacer()
-
-                    if hasPendingWrapped {
-                        Text("NUEVO")
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.orange.opacity(0.92))
-                            .foregroundStyle(.white)
-                            .clipShape(Capsule())
-                    } else {
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.75))
-                    }
-                }
-                .padding(14)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    LinearGradient(
-                        colors: hasPendingWrapped
-                            ? [Color(red: 0.93, green: 0.49, blue: 0.24), Color(red: 0.23, green: 0.39, blue: 0.89)]
-                            : [Color(red: 0.18, green: 0.34, blue: 0.80), Color(red: 0.22, green: 0.53, blue: 0.90)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.20), lineWidth: 1)
-                )
             }
-            .buttonStyle(.plain)
         }
     }
 
@@ -1878,6 +1829,7 @@ private struct CustomPeriodSheet: View {
                     }
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle("Periodo personalizado")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

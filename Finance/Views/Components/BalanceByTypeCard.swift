@@ -10,6 +10,7 @@ import SwiftUI
 /// Tarjeta que muestra el desglose del patrimonio por tipo de cuenta.
 /// Solo muestra los tipos que tienen al menos una cuenta asociada.
 struct BalanceByTypeCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
     let balancesByType: [(AccountType, Decimal, Int)]
     let currencyCode: String
@@ -18,13 +19,13 @@ struct BalanceByTypeCard: View {
         VStack(spacing: 12) {
             Text("Patrimonio por tipo")
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(.secondary)
                 .padding(.bottom, 2)
 
             if balancesByType.isEmpty {
                 Text("Sin cuentas")
                     .font(.caption)
-                    .foregroundStyle(.white.opacity(0.6))
+                    .foregroundStyle(.secondary)
             } else {
                 VStack(spacing: 8) {
                     ForEach(balancesByType, id: \.0) { type, balance, count in
@@ -38,10 +39,10 @@ struct BalanceByTypeCard: View {
                                 Text(type.displayName)
                                     .font(.caption)
                                     .fontWeight(.medium)
-                                    .foregroundStyle(.white)
+                                    .foregroundStyle(.primary)
                                 Text("\(count) \(count == 1 ? "cuenta" : "cuentas")")
                                     .font(.caption2)
-                                    .foregroundStyle(.white.opacity(0.6))
+                                    .foregroundStyle(.secondary)
                             }
 
                             Spacer()
@@ -49,7 +50,7 @@ struct BalanceByTypeCard: View {
                             Text(balance.masked(hideBalances, code: currencyCode))
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.primary)
                         }
                     }
                 }
@@ -58,17 +59,17 @@ struct BalanceByTypeCard: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.vertical, 16)
         .padding(.horizontal, 16)
-        .background(
-            LinearGradient(
+        .financeGlassColorCard(
+            gradient: LinearGradient(
                 colors: [
-                    Color(red: 0.15, green: 0.15, blue: 0.25),
-                    Color(red: 0.1, green: 0.1, blue: 0.2)
+                    Color.indigo.opacity(colorScheme == .dark ? 0.22 : 0.15),
+                    Color.blue.opacity(colorScheme == .dark ? 0.14 : 0.10)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
-            )
+            ),
+            cornerRadius: 20
         )
-        .clipShape(RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal)
     }
 }

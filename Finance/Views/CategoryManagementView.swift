@@ -12,6 +12,7 @@ import SwiftData
 struct CategoryManagementView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
 
@@ -58,8 +59,17 @@ struct CategoryManagementView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                            .padding(10)
+                            .background(colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.9))
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.45), lineWidth: 1)
+                            )
                         }
                         .buttonStyle(.plain)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
                                 editingCategory = category
@@ -72,6 +82,7 @@ struct CategoryManagementView: View {
                     .onDelete(perform: deleteCategories)
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle("Categorías")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -86,7 +97,7 @@ struct CategoryManagementView: View {
                         showingCreateCategory = true
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .semibold))
+                            .financeToolbarIconStyle()
                     }
                 }
             }
@@ -201,6 +212,7 @@ struct CategoryEditorSheet: View {
                     }
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle(isEditing ? "Editar categoría" : "Nueva categoría")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -87,7 +87,8 @@ struct AccountDetailView: View {
                     } else {
                         InvestmentHistoryChartView(
                             snapshots: accountSnapshots,
-                            currencyCode: appCurrencyCode
+                            currencyCode: appCurrencyCode,
+                            hideBalances: hideBalances
                         )
                     }
                 }
@@ -155,6 +156,7 @@ struct AccountDetailView: View {
                 }
             }
         }
+        .financeGlassListContainer()
         .navigationTitle("Detalle")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -163,7 +165,7 @@ struct AccountDetailView: View {
                     hideBalances.toggle()
                 } label: {
                     Image(systemName: hideBalances ? "eye.slash" : "eye")
-                        .font(.system(size: 17, weight: .semibold))
+                        .financeToolbarIconStyle()
                 }
                 .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
             }
@@ -438,6 +440,7 @@ private enum InvestmentChartRange: String, CaseIterable, Identifiable {
 private struct InvestmentHistoryChartView: View {
     let snapshots: [InvestmentSnapshot]
     let currencyCode: String
+    let hideBalances: Bool
 
     @Environment(\.colorScheme) private var colorScheme
     @State private var selectedDate: Date?
@@ -564,6 +567,7 @@ private struct InvestmentHistoryChartView: View {
                     .foregroundStyle(marketColor)
                 }
             }
+            .id(hideBalances)
             .frame(height: 250)
             .chartXScale(domain: xDomain)
             .chartYScale(domain: yDomain)
@@ -631,6 +635,9 @@ private struct InvestmentHistoryChartView: View {
                 selectedRange = bestAvailableRange
             }
         }
+        .onChange(of: hideBalances) { _, _ in
+            selectedDate = nil
+        }
     }
 
     private var rangeSelector: some View {
@@ -671,7 +678,7 @@ private struct InvestmentHistoryChartView: View {
                 legendItem(
                     color: marketColor,
                     text: "Valor de mercado",
-                    value: snapshot.marketValue.asCurrency(code: currencyCode)
+                    value: snapshot.marketValue.masked(hideBalances, code: currencyCode)
                 )
                 Spacer()
             }
@@ -680,7 +687,7 @@ private struct InvestmentHistoryChartView: View {
                 legendItem(
                     color: investedColor,
                     text: "Aportación neta",
-                    value: snapshot.investedAmount.asCurrency(code: currencyCode)
+                    value: snapshot.investedAmount.masked(hideBalances, code: currencyCode)
                 )
                 Spacer()
             }

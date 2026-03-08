@@ -173,6 +173,7 @@ struct RecurringCalendarView: View {
                         decorations: decoratedDates
                     )
                     .frame(minHeight: 340)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
 #else
                     DatePicker(
                         "Fecha",
@@ -195,6 +196,8 @@ struct RecurringCalendarView: View {
                                 hideBalances: hideBalances,
                                 status: status(for: occurrence)
                             )
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 if !occurrence.isConfirmed {
                                     Button {
@@ -230,6 +233,8 @@ struct RecurringCalendarView: View {
                                 hideBalances: hideBalances,
                                 status: status(for: occurrence)
                             )
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button {
                                     confirmOccurrence(occurrence)
@@ -250,6 +255,7 @@ struct RecurringCalendarView: View {
                     }
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle("Calendario")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -257,7 +263,7 @@ struct RecurringCalendarView: View {
                         hideBalances.toggle()
                     } label: {
                         Image(systemName: hideBalances ? "eye.slash" : "eye")
-                            .font(.system(size: 17, weight: .semibold))
+                            .financeToolbarIconStyle()
                     }
                     .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
                 }
@@ -399,8 +405,12 @@ private struct DecoratedRecurringCalendarView: UIViewRepresentable {
     @Binding var selectedDate: Date
     let decorations: [Date: RecurringCalendarStatus]
 
-    func makeUIView(context: Context) -> UICalendarView {
+    func makeUIView(context: Context) -> UIView {
+        let containerView = UIView()
+        containerView.backgroundColor = .clear
+
         let calendarView = UICalendarView()
+        calendarView.translatesAutoresizingMaskIntoConstraints = false
         calendarView.locale = Locale(identifier: "es_ES")
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "es_ES")
@@ -411,17 +421,26 @@ private struct DecoratedRecurringCalendarView: UIViewRepresentable {
         let selection = UICalendarSelectionSingleDate(delegate: context.coordinator)
         calendarView.selectionBehavior = selection
 
+        containerView.addSubview(calendarView)
+        NSLayoutConstraint.activate([
+            calendarView.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 6),
+            calendarView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 12),
+            calendarView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -12),
+            calendarView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor, constant: -6)
+        ])
+
         context.coordinator.calendarView = calendarView
         context.coordinator.calendar = calendarView.calendar
         context.coordinator.updateDecorations(decorations)
         context.coordinator.selectDate(selectedDate, animated: false)
 
-        return calendarView
+        return containerView
     }
 
-    func updateUIView(_ uiView: UICalendarView, context: Context) {
+    func updateUIView(_ uiView: UIView, context: Context) {
         context.coordinator.parent = self
-        context.coordinator.calendar = uiView.calendar
+        guard let calendarView = context.coordinator.calendarView else { return }
+        context.coordinator.calendar = calendarView.calendar
         context.coordinator.updateDecorations(decorations)
         context.coordinator.selectDate(selectedDate, animated: false)
     }
@@ -539,55 +558,18 @@ private struct RecurringCalendarRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: occurrence.rule.type.icon)
-                .font(.title3)
-                .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(occurrence.rule.type.color)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(occurrence.rule.concept)
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-
-                if let category = occurrence.rule.category {
-                    CategoryChipView(
-                        name: category.name,
-                        iconName: category.iconName,
-                        color: category.color
-                    )
-                }
-
-                Text(accountText)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-
-                Text(occurrence.dueDate.asSpanishShortDate())
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(amountText)
-                    .font(.body)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(occurrence.rule.type == .expense ? .red : .green)
-
-                Text(status.title)
-                    .font(.caption2)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(status.color.opacity(0.15))
-                    .foregroundStyle(status.color)
-                    .clipShape(Capsule())
-            }
-        }
-        .padding(.vertical, 4)
+        RecurringMovementRowContent(
+            type: occurrence.rule.type,
+            concept: occurrence.rule.concept,
+            categoryName: occurrence.rule.category?.name,
+            categoryIconName: occurrence.rule.category?.iconName,
+            categoryColor: occurrence.rule.category?.color,
+            accountName: accountText,
+            amountText: amountText,
+            statusTitle: status.title,
+            statusColor: status.color,
+            dueDateText: occurrence.dueDate.asSpanishShortDate()
+        )
     }
 }
 

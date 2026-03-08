@@ -172,6 +172,7 @@ struct AddAccountView: View {
                         .lineLimit(3...6)
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle(navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -439,6 +440,7 @@ struct CreateBankSheet: View {
                     }
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle("Nuevo banco")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

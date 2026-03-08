@@ -444,6 +444,7 @@ struct AddMovementView: View {
                         .lineLimit(2...5)
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle(isEditing ? "Editar movimiento" : "Nuevo movimiento")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1051,6 +1052,7 @@ private struct CreateMovementCategorySheet: View {
                     .padding(.vertical, 4)
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle("Nueva categoría")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

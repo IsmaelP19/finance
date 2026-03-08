@@ -12,6 +12,7 @@ import SwiftData
 struct BankManagementView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     @Query(sort: \Bank.name) private var banks: [Bank]
 
@@ -58,8 +59,17 @@ struct BankManagementView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                            .padding(10)
+                            .background(colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.9))
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14)
+                                    .stroke(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.45), lineWidth: 1)
+                            )
                         }
                         .buttonStyle(.plain)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                         .swipeActions(edge: .leading, allowsFullSwipe: false) {
                             Button {
                                 editingBank = bank
@@ -72,6 +82,7 @@ struct BankManagementView: View {
                     .onDelete(perform: deleteBanks)
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle("Bancos")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -86,7 +97,7 @@ struct BankManagementView: View {
                         showingCreateBank = true
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .semibold))
+                            .financeToolbarIconStyle()
                     }
                 }
             }
@@ -198,6 +209,7 @@ struct BankEditorSheet: View {
                     }
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle(isEditing ? "Editar banco" : "Nuevo banco")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

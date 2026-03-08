@@ -9,6 +9,7 @@ import SwiftUI
 import Foundation
 
 struct InvestmentPerformanceCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
     let totalInvested: Decimal
     let totalMarketValue: Decimal
@@ -27,7 +28,7 @@ struct InvestmentPerformanceCard: View {
         VStack(spacing: 10) {
             Text("Rentabilidad global")
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(.secondary)
 
             HStack {
                 MetricItem(title: "Invertido", value: totalInvested.masked(hideBalances, code: currencyCode))
@@ -37,7 +38,7 @@ struct InvestmentPerformanceCard: View {
             HStack {
                 Text("Resultado")
                     .font(.caption)
-                    .foregroundStyle(.white.opacity(0.7))
+                    .foregroundStyle(.secondary)
 
                 Spacer()
 
@@ -51,7 +52,7 @@ struct InvestmentPerformanceCard: View {
                 HStack {
                     Text("Rentabilidad")
                         .font(.caption)
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(.secondary)
 
                     Spacer()
 
@@ -65,17 +66,17 @@ struct InvestmentPerformanceCard: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.vertical, 16)
         .padding(.horizontal, 16)
-        .background(
-            LinearGradient(
+        .financeGlassColorCard(
+            gradient: LinearGradient(
                 colors: [
-                    Color(red: 0.09, green: 0.25, blue: 0.17),
-                    Color(red: 0.06, green: 0.20, blue: 0.14)
+                    Color.green.opacity(colorScheme == .dark ? 0.19 : 0.13),
+                    Color.teal.opacity(colorScheme == .dark ? 0.15 : 0.10)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
-            )
+            ),
+            cornerRadius: 20
         )
-        .clipShape(RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal)
     }
 }
@@ -88,12 +89,12 @@ private struct MetricItem: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title)
                 .font(.caption2)
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(.secondary)
 
             Text(value)
                 .font(.subheadline)
                 .fontWeight(.semibold)
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
         }

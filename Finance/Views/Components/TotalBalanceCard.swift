@@ -9,6 +9,7 @@ import SwiftUI
 
 /// Tarjeta que muestra el patrimonio total (suma de todos los saldos).
 struct TotalBalanceCard: View {
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
     let totalBalance: Decimal
     let accountCount: Int
@@ -18,27 +19,30 @@ struct TotalBalanceCard: View {
         VStack(spacing: 8) {
             Text("Patrimonio total")
                 .font(.subheadline)
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(.secondary)
 
             Text(totalBalance.masked(hideBalances, code: currencyCode))
                 .font(.system(size: 32, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
 
             Text("\(accountCount) \(accountCount == 1 ? "cuenta" : "cuentas")")
                 .font(.caption)
-                .foregroundStyle(.white.opacity(0.7))
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(.vertical, 24)
         .padding(.horizontal, 16)
-        .background(
-            LinearGradient(
-                colors: [.blue, .blue.opacity(0.8)],
+        .financeGlassColorCard(
+            gradient: LinearGradient(
+                colors: [
+                    Color.blue.opacity(colorScheme == .dark ? 0.28 : 0.18),
+                    Color.indigo.opacity(colorScheme == .dark ? 0.20 : 0.12)
+                ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
-            )
+            ),
+            cornerRadius: 20
         )
-        .clipShape(RoundedRectangle(cornerRadius: 16))
         .padding(.horizontal)
     }
 }

@@ -195,6 +195,7 @@ struct SettingsView: View {
                 .listRowBackground(Color.clear)
 
             }
+            .financeGlassListContainer()
             .navigationTitle("Ajustes")
             .sheet(isPresented: $showingBankManagement) {
                 BankManagementView()

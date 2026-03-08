@@ -100,6 +100,8 @@ struct AccountListView: View {
                                 NavigationLink(destination: AccountDetailView(account: account)) {
                                     AccountRowView(account: account)
                                 }
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                     Button {
                                         editingAccount = account
@@ -116,6 +118,7 @@ struct AccountListView: View {
                     }
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle("Cuentas")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -123,7 +126,7 @@ struct AccountListView: View {
                         hideBalances.toggle()
                     } label: {
                         Image(systemName: hideBalances ? "eye.slash" : "eye")
-                            .font(.system(size: 17, weight: .semibold))
+                            .financeToolbarIconStyle()
                     }
                     .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
                 }
@@ -133,7 +136,7 @@ struct AccountListView: View {
                         showingAddAccount = true
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 17, weight: .semibold))
+                            .financeToolbarIconStyle()
                     }
                 }
             }

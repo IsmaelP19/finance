@@ -43,6 +43,7 @@ struct AccountRowView: View {
                 .fontWeight(.semibold)
                 .foregroundStyle(account.balance.isNegative ? .red : .primary)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
     }
 }

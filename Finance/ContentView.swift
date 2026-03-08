@@ -15,6 +15,7 @@ struct ContentView: View {
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
 
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
+    @AppStorage(AppLaunchUX.hasAccountsSnapshotKey) private var hasAccountsSnapshot = false
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
     @Query(sort: \Bank.name) private var banks: [Bank]
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
@@ -71,6 +72,9 @@ struct ContentView: View {
                     Label("Ajustes", systemImage: "gearshape.fill")
                 }
         }
+        .toolbarBackground(.ultraThinMaterial, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
+        .background(FinanceGlassBackground().ignoresSafeArea())
         .task {
             refreshSyncState()
             MonthlyWrappedService.configureMonthlyReminder()
@@ -107,6 +111,12 @@ struct ContentView: View {
                 deepLinkRouter.pendingAddExpense = false
                 showingQuickAddExpense = true
             }
+        }
+        .onAppear {
+            hasAccountsSnapshot = !accounts.isEmpty
+        }
+        .onChange(of: accounts.count) { _, newCount in
+            hasAccountsSnapshot = newCount > 0
         }
     }
 

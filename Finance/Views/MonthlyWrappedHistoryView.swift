@@ -17,7 +17,6 @@ struct MonthlyWrappedHistoryView: View {
     let initialMonth: WrappedMonth?
 
     @State private var selectedMonthForStories: WrappedMonth?
-    @State private var didAutoOpenInitialMonth = false
 
     private var availableMonths: [WrappedMonth] {
         MonthlyWrappedService.closedMonths(from: movements)
@@ -114,14 +113,6 @@ struct MonthlyWrappedHistoryView: View {
         .sheet(item: $selectedMonthForStories) { month in
             MonthlyWrappedStoriesView(month: month, movements: movements)
         }
-        .onAppear {
-            guard !didAutoOpenInitialMonth else { return }
-            didAutoOpenInitialMonth = true
-            guard let initialMonth else { return }
-            guard availableMonths.contains(initialMonth) else { return }
-
-            selectedMonthForStories = initialMonth
-        }
     }
 
     private func openWrappedStories(for month: WrappedMonth) {
@@ -150,15 +141,19 @@ private struct WrappedLatestCard: View {
 
                 Spacer()
 
-                if highlighted {
-                    Text("NUEVO")
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.orange.opacity(0.85))
-                        .foregroundStyle(.white)
-                        .clipShape(Capsule())
+                HStack(spacing: 8) {
+                    if highlighted {
+                        Text("NUEVO")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.orange.opacity(0.85))
+                            .foregroundStyle(.white)
+                            .clipShape(Capsule())
+                    }
+
+                    wrappedViewBadge
                 }
             }
 
@@ -189,7 +184,7 @@ private struct WrappedLatestCard: View {
         .background(
             LinearGradient(
                 colors: highlighted
-                    ? [Color.orange.opacity(0.34), Color.blue.opacity(0.30)]
+                    ? [Color.orange.opacity(0.34), Color.orange.opacity(0.18)]
                     : [Color.blue.opacity(0.24), Color.indigo.opacity(0.20)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -198,8 +193,26 @@ private struct WrappedLatestCard: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(highlighted ? Color.orange.opacity(0.85) : (colorScheme == .dark ? Color.white.opacity(0.16) : Color.blue.opacity(0.20)), lineWidth: 1.2)
+                .strokeBorder(
+                    highlighted ? Color.orange.opacity(0.95) : (colorScheme == .dark ? Color.white.opacity(0.16) : Color.blue.opacity(0.20)),
+                    lineWidth: 1.3
+                )
         )
+    }
+
+    private var wrappedViewBadge: some View {
+        HStack(spacing: 6) {
+            Text("Ver")
+            Image(systemName: "chevron.right")
+                .font(.caption2)
+        }
+        .font(.caption)
+        .fontWeight(.semibold)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color.white.opacity(0.14))
+        .foregroundStyle(.white)
+        .clipShape(Capsule())
     }
 }
 
@@ -219,15 +232,26 @@ private struct WrappedHistoryRow: View {
 
                 Spacer()
 
-                if showPendingBadge {
-                    Text("Nuevo")
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(Color.orange.opacity(0.22))
-                        .foregroundStyle(.orange)
-                        .clipShape(Capsule())
+                HStack(spacing: 8) {
+                    if showPendingBadge {
+                        Text("Nuevo")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.orange.opacity(0.22))
+                            .foregroundStyle(.orange)
+                            .clipShape(Capsule())
+                    }
+
+                    HStack(spacing: 6) {
+                        Text("Ver")
+                        Image(systemName: "chevron.right")
+                            .font(.caption2)
+                    }
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.secondary)
                 }
             }
 
@@ -300,11 +324,15 @@ struct MonthlyWrappedStoriesView: View {
     private let storyTick: Double = 0.05
     private let storyTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
     private let tapAsHoldThreshold: TimeInterval = 0.22
+    private let holdActivationDelay: TimeInterval = 0.14
+    private let dismissSwipeThreshold: CGFloat = 110
 
     @State private var currentStoryIndex = 0
     @State private var currentStoryProgress: Double = 0
     @State private var isHoldingTouch = false
     @State private var touchStartedAt: Date?
+    @State private var holdActivationTask: DispatchWorkItem?
+    @State private var didActivateHoldDuringTouch = false
     @State private var revealStep = 0
     @State private var revealSequenceID = UUID()
 
@@ -464,6 +492,7 @@ struct MonthlyWrappedStoriesView: View {
             .overlay {
                 tapZonesOverlay(safeTop: geometry.safeAreaInsets.top)
             }
+            .simultaneousGesture(dismissGesture)
             .onReceive(storyTimer) { _ in
                 handleStoryTick()
             }
@@ -715,7 +744,7 @@ struct MonthlyWrappedStoriesView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(.horizontal, 22)
+            .padding(.horizontal, 22)   
             .padding(.top, 22)
             .padding(.bottom, 20)
         }
@@ -735,7 +764,7 @@ struct MonthlyWrappedStoriesView: View {
                 wrappedBadge(title: "Momentos clave", icon: "sparkle.magnifyingglass")
                     .wrappedReveal(step: 1, current: revealStep)
 
-                Text("Tus highlights")
+                Text("Tus estadísticas")
                     .font(.system(size: 34, weight: .black, design: .rounded))
                     .foregroundStyle(.white)
                     .lineLimit(1)
@@ -1458,15 +1487,19 @@ struct MonthlyWrappedStoriesView: View {
             .onChanged { _ in
                 if touchStartedAt == nil {
                     touchStartedAt = Date()
+                    scheduleHoldActivation()
                 }
-                isHoldingTouch = true
             }
             .onEnded { _ in
                 let duration = Date().timeIntervalSince(touchStartedAt ?? Date())
+                let didHold = didActivateHoldDuringTouch
+
+                cancelHoldActivation()
                 isHoldingTouch = false
                 touchStartedAt = nil
+                didActivateHoldDuringTouch = false
 
-                guard duration <= tapAsHoldThreshold else { return }
+                guard !didHold, duration <= tapAsHoldThreshold else { return }
 
                 switch action {
                 case .previous:
@@ -1475,6 +1508,38 @@ struct MonthlyWrappedStoriesView: View {
                     goToNextStory()
                 }
             }
+    }
+
+    private var dismissGesture: some Gesture {
+        DragGesture(minimumDistance: 18)
+            .onEnded { value in
+                guard value.translation.height > dismissSwipeThreshold else { return }
+                guard abs(value.translation.width) < value.translation.height else { return }
+
+                cancelHoldActivation()
+                isHoldingTouch = false
+                touchStartedAt = nil
+                didActivateHoldDuringTouch = false
+                dismiss()
+            }
+    }
+
+    private func scheduleHoldActivation() {
+        cancelHoldActivation()
+
+        let task = DispatchWorkItem {
+            guard touchStartedAt != nil else { return }
+            isHoldingTouch = true
+            didActivateHoldDuringTouch = true
+        }
+
+        holdActivationTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + holdActivationDelay, execute: task)
+    }
+
+    private func cancelHoldActivation() {
+        holdActivationTask?.cancel()
+        holdActivationTask = nil
     }
 }
 

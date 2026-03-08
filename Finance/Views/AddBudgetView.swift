@@ -96,6 +96,7 @@ struct AddBudgetView: View {
                 notificationsSection
                 statusSection
             }
+            .financeGlassListContainer()
             .navigationTitle(isEditing ? "Editar presupuesto" : "Presupuesto mensual")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -280,6 +281,7 @@ struct AddBudgetView: View {
                         .foregroundStyle(.primary)
                 }
             }
+            .financeGlassListContainer()
             .navigationTitle("Seleccionar categoría")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

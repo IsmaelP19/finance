@@ -156,9 +156,7 @@ struct ChartsView: View {
                 .padding()
                 .padding(.bottom, 24)
             }
-            .background(
-                pageBackground
-            )
+            .financeGlassPageBackground()
             .navigationTitle("Finance")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -166,7 +164,7 @@ struct ChartsView: View {
                         hideBalances.toggle()
                     } label: {
                         Image(systemName: hideBalances ? "eye.slash" : "eye")
-                            .font(.system(size: 17, weight: .semibold))
+                            .financeToolbarIconStyle()
                     }
                     .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
                 }
@@ -201,64 +199,13 @@ struct ChartsView: View {
     @ViewBuilder
     private var wrappedAccessCard: some View {
         if let latestWrappedMonth {
-            Button {
+            WrappedAccessBannerCard(
+                title: hasPendingWrapped ? "Tu resumen de \(latestWrappedMonth.longLabel) está listo" : "Explora tus resúmenes",
+                subtitle: hasPendingWrapped ? "Abre el resumen del mes y consulta sus estadísticas" : "Consulta meses anteriores cuando quieras",
+                hasPendingWrapped: hasPendingWrapped
+            ) {
                 showingWrappedHistory = true
-            } label: {
-                HStack(spacing: 14) {
-                    Image(systemName: "sparkles.rectangle.stack.fill")
-                        .font(.system(size: 24))
-                        .foregroundStyle(.white)
-                        .padding(10)
-                        .background(Color.white.opacity(0.18))
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(hasPendingWrapped ? "Tu wrapped de \(latestWrappedMonth.longLabel) está listo" : "Explora tu historial de wrapped")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.white)
-                            .multilineTextAlignment(.leading)
-
-                        Text(hasPendingWrapped ? "Abre el resumen del mes cerrado y compáralo con el anterior." : "Consulta meses anteriores cuando quieras.")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.82))
-                    }
-
-                    Spacer()
-
-                    if hasPendingWrapped {
-                        Text("NUEVO")
-                            .font(.caption2)
-                            .fontWeight(.bold)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(Color.orange.opacity(0.9))
-                            .foregroundStyle(.white)
-                            .clipShape(Capsule())
-                    } else {
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.72))
-                    }
-                }
-                .padding(16)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    LinearGradient(
-                        colors: hasPendingWrapped
-                            ? [Color(red: 0.90, green: 0.45, blue: 0.20), Color(red: 0.22, green: 0.40, blue: 0.88)]
-                            : [Color(red: 0.18, green: 0.33, blue: 0.79), Color(red: 0.23, green: 0.52, blue: 0.90)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 16))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16)
-                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                )
             }
-            .buttonStyle(.plain)
         }
     }
 
