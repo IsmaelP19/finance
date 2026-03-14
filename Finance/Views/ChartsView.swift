@@ -39,8 +39,11 @@ struct ChartsView: View {
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
+    @Query(filter: #Predicate<Movement> { $0.typeRaw == "income" && $0.reimbursementForId != nil })
+    private var reimbursementIncomes: [Movement]
     @Query(sort: \Budget.createdAt) private var budgets: [Budget]
     @State private var showingDetailedStats = false
+    @State private var showingPendingReimbursements = false
     @State private var showingWrappedHistory = false
 
     private var totalBalance: Decimal {
@@ -101,6 +104,44 @@ struct ChartsView: View {
         return !MonthlyWrappedService.hasSeen(month: latestWrappedMonth)
     }
 
+    private var recoveredReimbursementAmountsByExpenseID: [UUID: Decimal] {
+        reimbursementIncomes.reduce(into: [:]) { partialResult, reimbursement in
+            guard let expenseID = reimbursement.reimbursementForId else { return }
+            partialResult[expenseID, default: 0] += reimbursement.amount
+        }
+    }
+
+    private var pendingReimbursementMovements: [Movement] {
+        movements
+            .filter { movement in
+                guard movement.type == .expense, movement.isSharedExpense else { return false }
+                let recoveredAmount = recoveredReimbursementAmountsByExpenseID[movement.id] ?? 0
+                return movement.pendingReimbursementAmount(recoveredAmount: recoveredAmount) > 0
+            }
+            .sorted { lhs, rhs in
+                let lhsPending = lhs.pendingReimbursementAmount(
+                    recoveredAmount: recoveredReimbursementAmountsByExpenseID[lhs.id] ?? 0
+                )
+                let rhsPending = rhs.pendingReimbursementAmount(
+                    recoveredAmount: recoveredReimbursementAmountsByExpenseID[rhs.id] ?? 0
+                )
+
+                if lhsPending == rhsPending {
+                    return lhs.occurredAt > rhs.occurredAt
+                }
+
+                return lhsPending > rhsPending
+            }
+    }
+
+    private var totalPendingReimbursement: Decimal {
+        pendingReimbursementMovements.reduce(Decimal(0)) { partialResult, movement in
+            partialResult + movement.pendingReimbursementAmount(
+                recoveredAmount: recoveredReimbursementAmountsByExpenseID[movement.id] ?? 0
+            )
+        }
+    }
+
     private var pageBackground: LinearGradient {
         if colorScheme == .dark {
             return LinearGradient(
@@ -137,6 +178,8 @@ struct ChartsView: View {
                         .padding(.top, 48)
                     } else {
                         patrimonyHeroCard
+
+                        pendingReimbursementsCard
 
                         wrappedAccessCard
 
@@ -190,6 +233,13 @@ struct ChartsView: View {
             .sheet(isPresented: $showingDetailedStats) {
                 MovementStatsView()
             }
+            .sheet(isPresented: $showingPendingReimbursements) {
+                PendingReimbursementsListView(
+                    movements: pendingReimbursementMovements,
+                    recoveredReimbursementAmountsByExpenseID: recoveredReimbursementAmountsByExpenseID,
+                    currencyCode: appCurrencyCode
+                )
+            }
             .sheet(isPresented: $showingWrappedHistory) {
                 MonthlyWrappedHistoryView(initialMonth: latestWrappedMonth)
             }
@@ -197,12 +247,26 @@ struct ChartsView: View {
     }
 
     @ViewBuilder
+    private var pendingReimbursementsCard: some View {
+        if !pendingReimbursementMovements.isEmpty {
+            PendingReimbursementsCard(
+                totalPending: totalPendingReimbursement,
+                movementCount: pendingReimbursementMovements.count,
+                currencyCode: appCurrencyCode,
+                hideBalances: hideBalances
+            ) {
+                showingPendingReimbursements = true
+            }
+        }
+    }
+
+    @ViewBuilder
     private var wrappedAccessCard: some View {
-        if let latestWrappedMonth {
+        if hasPendingWrapped, let latestWrappedMonth {
             WrappedAccessBannerCard(
-                title: hasPendingWrapped ? "Tu resumen de \(latestWrappedMonth.longLabel) está listo" : "Explora tus resúmenes",
-                subtitle: hasPendingWrapped ? "Abre el resumen del mes y consulta sus estadísticas" : "Consulta meses anteriores cuando quieras",
-                hasPendingWrapped: hasPendingWrapped
+                title: "Tu resumen de \(latestWrappedMonth.longLabel) está listo",
+                subtitle: "Abre el resumen del mes y consulta sus estadísticas",
+                hasPendingWrapped: true
             ) {
                 showingWrappedHistory = true
             }

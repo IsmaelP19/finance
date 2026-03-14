@@ -8,7 +8,7 @@
 import Foundation
 import UserNotifications
 
-/// Calcula el progreso del presupuesto mensual único y dispara notificaciones push
+/// Calcula el progreso del presupuesto mensual único y gestiona notificaciones locales
 /// por categoría cuando se alcanzan los umbrales del 80 % y 100 % de la asignación.
 enum BudgetService {
 
@@ -66,14 +66,31 @@ enum BudgetService {
 
     private static let itemNotificationPrefix = "budget-item-"
 
+    static func requestNotificationAuthorizationIfNeeded(completion: ((Bool) -> Void)? = nil) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                completion?(true)
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+                    completion?(granted)
+                }
+            case .denied:
+                completion?(false)
+            @unknown default:
+                completion?(false)
+            }
+        }
+    }
+
     /// Evalúa cada ítem del presupuesto y programa/cancela notificaciones de umbral
     /// según el gasto actual de cada categoría. Llamar después de guardar un gasto.
     static func evaluateAndNotify(budget: Budget, movements: [Movement]) {
         guard budget.isActive else { return }
-        let center = UNUserNotificationCenter.current()
-        center.getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized ||
-                  settings.authorizationStatus == .provisional else { return }
+        requestNotificationAuthorizationIfNeeded { granted in
+            guard granted else { return }
+            let center = UNUserNotificationCenter.current()
             for item in budget.items {
                 evaluateItem(item, budget: budget, movements: movements, center: center)
             }

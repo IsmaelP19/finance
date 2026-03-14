@@ -60,6 +60,7 @@ enum AutoBackupService {
         movements: [Movement],
         investmentSnapshots: [InvestmentSnapshot],
         recurringMovements: [RecurringMovement],
+        budgets: [Budget],
         now: Date = Date()
     ) throws -> Bool {
         let hour = configuredHour
@@ -75,7 +76,8 @@ enum AutoBackupService {
             categories: categories,
             movements: movements,
             investmentSnapshots: investmentSnapshots,
-            recurringMovements: recurringMovements
+            recurringMovements: recurringMovements,
+            budgets: budgets
         )
 
         UserDefaults.standard.set(now, forKey: lastAutoBackupAtStorageKey)
@@ -106,6 +108,9 @@ enum AutoBackupService {
         let recurringMovements = try context.fetch(
             FetchDescriptor<RecurringMovement>(sortBy: [SortDescriptor(\RecurringMovement.updatedAt, order: .reverse)])
         )
+        let budgets = try context.fetch(
+            FetchDescriptor<Budget>(sortBy: [SortDescriptor(\Budget.createdAt)])
+        )
 
         return try performAutoBackupIfDue(
             banks: banks,
@@ -114,6 +119,7 @@ enum AutoBackupService {
             movements: movements,
             investmentSnapshots: snapshots,
             recurringMovements: recurringMovements,
+            budgets: budgets,
             now: now
         )
     }

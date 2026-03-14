@@ -19,6 +19,7 @@ struct SettingsView: View {
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \InvestmentSnapshot.snapshotDate, order: .reverse) private var investmentSnapshots: [InvestmentSnapshot]
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
+    @Query(sort: \Budget.createdAt) private var budgets: [Budget]
 
     @AppStorage("investmentReminderEnabled") private var investmentReminderEnabled = false
     @AppStorage("investmentReminderHour") private var investmentReminderHour = 21
@@ -289,7 +290,8 @@ struct SettingsView: View {
                 categories: categories,
                 movements: movements,
                 investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements
+                recurringMovements: recurringMovements,
+                budgets: budgets
             )
             showingExportSheet = true
         } catch {
@@ -350,8 +352,12 @@ struct SettingsView: View {
                 modelContext.insert(recurring)
             }
 
+            for budget in importResult.budgets {
+                modelContext.insert(budget)
+            }
+
             alertTitle = "Importacion completada"
-            alertMessage = "Se importaron \(importResult.banks.count) banco(s), \(importResult.accounts.count) cuenta(s), \(importResult.categories.count) categoria(s), \(importResult.movements.count) movimiento(s), \(importResult.investmentSnapshots.count) snapshot(s) de inversión y \(importResult.recurringMovements.count) recurrencia(s)."
+            alertMessage = "Se importaron \(importResult.banks.count) banco(s), \(importResult.accounts.count) cuenta(s), \(importResult.categories.count) categoria(s), \(importResult.movements.count) movimiento(s), \(importResult.investmentSnapshots.count) snapshot(s) de inversión, \(importResult.recurringMovements.count) recurrencia(s) y \(importResult.budgets.count) presupuesto(s)."
             showingAlert = true
         } catch {
             showError("Error al importar: \(error.localizedDescription)")
@@ -370,6 +376,10 @@ struct SettingsView: View {
 
             for recurring in recurringMovements {
                 modelContext.delete(recurring)
+            }
+
+            for budget in budgets {
+                modelContext.delete(budget)
             }
 
             for category in categories {
@@ -436,7 +446,8 @@ struct SettingsView: View {
                 categories: categories,
                 movements: movements,
                 investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements
+                recurringMovements: recurringMovements,
+                budgets: budgets
             )
 
             let formatter = DateFormatter()
@@ -480,6 +491,10 @@ struct SettingsView: View {
 
             for recurring in importResult.recurringMovements {
                 modelContext.insert(recurring)
+            }
+
+            for budget in importResult.budgets {
+                modelContext.insert(budget)
             }
 
             ManualSyncService.markImported(exportDate: exportDate)

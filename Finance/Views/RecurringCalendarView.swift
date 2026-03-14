@@ -166,13 +166,13 @@ struct RecurringCalendarView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Calendario") {
+                Section {
 #if canImport(UIKit)
                     DecoratedRecurringCalendarView(
                         selectedDate: $selectedDate,
                         decorations: decoratedDates
                     )
-                    .frame(minHeight: 340)
+                    .frame(minHeight: 372, idealHeight: 380)
                     .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
 #else
                     DatePicker(
@@ -558,17 +558,31 @@ private struct RecurringCalendarRow: View {
     }
 
     var body: some View {
+        let badges: [MovementRowBadge] = {
+            guard let categoryName = occurrence.rule.category?.name,
+                  let categoryIconName = occurrence.rule.category?.iconName,
+                  let categoryColor = occurrence.rule.category?.color else {
+                return []
+            }
+
+            return [
+                MovementRowBadge(
+                    id: "category",
+                    name: categoryName,
+                    iconName: categoryIconName,
+                    color: categoryColor
+                )
+            ]
+        }()
+
         RecurringMovementRowContent(
             type: occurrence.rule.type,
             concept: occurrence.rule.concept,
-            categoryName: occurrence.rule.category?.name,
-            categoryIconName: occurrence.rule.category?.iconName,
-            categoryColor: occurrence.rule.category?.color,
-            accountName: accountText,
+            badges: badges,
+            detailLines: [accountText],
             amountText: amountText,
-            statusTitle: status.title,
-            statusColor: status.color,
-            dueDateText: occurrence.dueDate.asSpanishShortDate()
+            trailingPill: MovementTrailingPill(title: status.title, color: status.color),
+            dateText: occurrence.dueDate.asSpanishShortDate()
         )
     }
 }

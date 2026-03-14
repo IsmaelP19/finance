@@ -38,18 +38,12 @@ struct ContentView: View {
         ).count
     }
 
-    private var alertingBudgetsCount: Int {
-        guard let budget = budgets.first else { return 0 }
-        return BudgetService.isAlerting(budget: budget, movements: movements) ? 1 : 0
-    }
-
     var body: some View {
         TabView {
             ChartsView()
                 .tabItem {
                     Label("Inicio", systemImage: "house.fill")
                 }
-                .badge(alertingBudgetsCount > 0 ? Text("\(alertingBudgetsCount)") : nil)
 
             MovementsView()
                 .tabItem {
@@ -144,7 +138,8 @@ struct ContentView: View {
                 categories: categories,
                 movements: movements,
                 investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements
+                recurringMovements: recurringMovements,
+                budgets: budgets
             )
         } catch {
             return
@@ -182,6 +177,10 @@ struct ContentView: View {
                 modelContext.insert(recurring)
             }
 
+            for budget in importResult.budgets {
+                modelContext.insert(budget)
+            }
+
             ManualSyncService.markImported(exportDate: exportDate)
             pendingSyncExportDate = nil
         } catch {
@@ -202,6 +201,10 @@ struct ContentView: View {
 
             for recurring in recurringMovements {
                 modelContext.delete(recurring)
+            }
+
+            for budget in budgets {
+                modelContext.delete(budget)
             }
 
             for category in categories {

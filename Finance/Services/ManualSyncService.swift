@@ -72,7 +72,8 @@ enum ManualSyncService {
         categories: [MovementCategory],
         movements: [Movement],
         investmentSnapshots: [InvestmentSnapshot],
-        recurringMovements: [RecurringMovement]
+        recurringMovements: [RecurringMovement],
+        budgets: [Budget]
     ) throws -> BackupInfo {
         try withSyncDirectoryAccess { directoryURL in
             let tempURL = try DataExportService.exportData(
@@ -81,7 +82,8 @@ enum ManualSyncService {
                 categories: categories,
                 movements: movements,
                 investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements
+                recurringMovements: recurringMovements,
+                budgets: budgets
             )
 
             let destinationURL = directoryURL.appendingPathComponent(tempURL.lastPathComponent)

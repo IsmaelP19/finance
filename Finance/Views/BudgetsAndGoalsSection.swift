@@ -163,8 +163,35 @@ private struct BudgetSummaryCard: View {
 
     private var remaining: Decimal { budget.totalAmount - spent }
 
+    private var isAlerting: Bool {
+        BudgetService.isAlerting(budget: budget, movements: movements)
+    }
+
+    private var isOverBudget: Bool {
+        progress >= 1
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if isAlerting {
+                HStack(spacing: 8) {
+                    Image(systemName: isOverBudget ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                        .font(.caption)
+                    Text(isOverBudget ? "Presupuesto superado" : "Alerta de presupuesto")
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    Text(isOverBudget ? "Revisa tus categorias" : "Has alcanzado el 80 %")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .foregroundStyle(isOverBudget ? Color.red : Color.orange)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background((isOverBudget ? Color.red : Color.orange).opacity(colorScheme == .dark ? 0.16 : 0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+
             // Amounts row
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
@@ -230,17 +257,20 @@ private struct BudgetSummaryCard: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
+        .background(colorScheme == .dark ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Color.white.opacity(0.84)))
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
                 .stroke(
-                    progress >= 1
+                    isOverBudget
                         ? Color.red.opacity(0.4)
-                        : (colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12)),
+                        : (isAlerting
+                            ? Color.orange.opacity(colorScheme == .dark ? 0.4 : 0.28)
+                            : (colorScheme == .dark ? Color.white.opacity(0.10) : Color.blue.opacity(0.14))),
                     lineWidth: 1
                 )
         )
+        .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 5)
     }
 }
 

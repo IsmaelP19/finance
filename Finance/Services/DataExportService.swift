@@ -24,6 +24,7 @@ enum DataExportService {
         let movements: [MovementDTO]
         let investmentSnapshots: [InvestmentSnapshotDTO]
         let recurringMovements: [RecurringMovementDTO]
+        let budgets: [BudgetDTO]
 
         enum CodingKeys: String, CodingKey {
             case version
@@ -34,6 +35,7 @@ enum DataExportService {
             case movements
             case investmentSnapshots
             case recurringMovements
+            case budgets
         }
 
         init(
@@ -44,7 +46,8 @@ enum DataExportService {
             categories: [MovementCategoryDTO],
             movements: [MovementDTO],
             investmentSnapshots: [InvestmentSnapshotDTO],
-            recurringMovements: [RecurringMovementDTO]
+            recurringMovements: [RecurringMovementDTO],
+            budgets: [BudgetDTO]
         ) {
             self.version = version
             self.exportDate = exportDate
@@ -54,6 +57,7 @@ enum DataExportService {
             self.movements = movements
             self.investmentSnapshots = investmentSnapshots
             self.recurringMovements = recurringMovements
+            self.budgets = budgets
         }
 
         init(from decoder: Decoder) throws {
@@ -66,6 +70,7 @@ enum DataExportService {
             movements = try container.decodeIfPresent([MovementDTO].self, forKey: .movements) ?? []
             investmentSnapshots = try container.decodeIfPresent([InvestmentSnapshotDTO].self, forKey: .investmentSnapshots) ?? []
             recurringMovements = try container.decodeIfPresent([RecurringMovementDTO].self, forKey: .recurringMovements) ?? []
+            budgets = try container.decodeIfPresent([BudgetDTO].self, forKey: .budgets) ?? []
         }
 
         func encode(to encoder: Encoder) throws {
@@ -78,6 +83,7 @@ enum DataExportService {
             try container.encode(movements, forKey: .movements)
             try container.encode(investmentSnapshots, forKey: .investmentSnapshots)
             try container.encode(recurringMovements, forKey: .recurringMovements)
+            try container.encode(budgets, forKey: .budgets)
         }
     }
 
@@ -114,6 +120,7 @@ enum DataExportService {
         movements: [Movement],
         investmentSnapshots: [InvestmentSnapshot],
         recurringMovements: [RecurringMovement],
+        budgets: [Budget],
         compact: Bool = false
     ) throws -> URL {
         let bankDTOs = banks.map { BankDTO(from: $0) }
@@ -122,16 +129,18 @@ enum DataExportService {
         let movementDTOs = movements.map { MovementDTO(from: $0) }
         let snapshotDTOs = investmentSnapshots.map { InvestmentSnapshotDTO(from: $0) }
         let recurringDTOs = recurringMovements.map { RecurringMovementDTO(from: $0) }
+        let budgetDTOs = budgets.map { BudgetDTO(from: $0) }
 
         let exportData = ExportData(
-            version: 5,
+            version: 6,
             exportDate: Date(),
             banks: bankDTOs,
             accounts: accountDTOs,
             categories: categoryDTOs,
             movements: movementDTOs,
             investmentSnapshots: snapshotDTOs,
-            recurringMovements: recurringDTOs
+            recurringMovements: recurringDTOs,
+            budgets: budgetDTOs
         )
 
         let encoder = JSONEncoder()
@@ -169,6 +178,7 @@ enum DataExportService {
         let movements: [Movement]
         let investmentSnapshots: [InvestmentSnapshot]
         let recurringMovements: [RecurringMovement]
+        let budgets: [Budget]
     }
 
     /// Importa bancos, cuentas, categorías y movimientos desde un archivo JSON.
@@ -237,6 +247,24 @@ enum DataExportService {
             return recurring
         }
 
+        let budgets = exportData.budgets.map { $0.toModel() }
+        let budgetsByID = Dictionary(uniqueKeysWithValues: budgets.map { ($0.id, $0) })
+
+        for budgetDTO in exportData.budgets {
+            guard let budget = budgetsByID[budgetDTO.id] else { continue }
+
+            let linkedItems = budgetDTO.items.map { itemDTO -> BudgetItem in
+                let item = itemDTO.toModel()
+                if let categoryId = itemDTO.categoryId {
+                    item.category = categoriesByID[categoryId]
+                }
+                item.budget = budget
+                return item
+            }
+
+            budget.items = linkedItems
+        }
+
         // Crear movimientos y vincular cuenta/categoría
         let movements = exportData.movements.map { dto -> Movement in
             let movement = dto.toModel()
@@ -260,8 +288,8 @@ enum DataExportService {
             categories: categories,
             movements: movements,
             investmentSnapshots: snapshots,
-            recurringMovements: recurringMovements
+            recurringMovements: recurringMovements,
+            budgets: budgets
         )
     }
 }
-

@@ -101,6 +101,54 @@ private struct MovementDetailSelection: Identifiable {
     let movement: Movement
 }
 
+private struct MovementDetailSnapshot: Equatable {
+    let id: UUID
+    let concept: String
+    let amount: Decimal
+    let typeRaw: String
+    let occurredAt: Date
+    let accountID: UUID?
+    let destinationAccountID: UUID?
+    let categoryID: UUID?
+    let personalAmount: Decimal?
+    let reimbursementForID: UUID?
+    let recurringRuleID: UUID?
+
+    init(movement: Movement) {
+        id = movement.id
+        concept = movement.concept
+        amount = movement.amount
+        typeRaw = movement.typeRaw
+        occurredAt = movement.occurredAt
+        accountID = movement.account?.id
+        destinationAccountID = movement.destinationAccount?.id
+        categoryID = movement.category?.id
+        personalAmount = movement.personalAmount
+        reimbursementForID = movement.reimbursementForId
+        recurringRuleID = movement.recurringRuleId
+    }
+}
+
+private struct MovementDetailDismissContext {
+    let movementCount: Int
+    let latestCreatedAt: Date?
+    let loadedMovementCount: Int
+    let snapshot: MovementDetailSnapshot
+}
+
+private struct MovementSheetBaseline {
+    let movementCount: Int
+    let latestCreatedAt: Date?
+    let loadedMovementCount: Int
+}
+
+private enum MovementSyncAction {
+    case none
+    case reconcileListAndRefreshHeader
+    case insertNewMovementsAndRefreshHeader
+    case reloadAll
+}
+
 private struct MovementListScrollOffsetKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
@@ -113,6 +161,7 @@ private struct MovementListScrollOffsetKey: PreferenceKey {
 struct MovementsView: View {
     private static let movementPageSize = 20
     private static let movementFetchBatchSize = 120
+    private static let movementSummaryBatchSize = 60
 
     @Environment(\.modelContext) private var modelContext
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
@@ -120,6 +169,8 @@ struct MovementsView: View {
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
+    @Query(filter: #Predicate<Movement> { $0.typeRaw == "income" && $0.reimbursementForId != nil })
+    private var reimbursementIncomes: [Movement]
 
     @State private var showingAddMovement = false
     @State private var movementToView: MovementDetailSelection?
@@ -145,7 +196,13 @@ struct MovementsView: View {
     @State private var summary = MovementListSummary()
     @State private var recurringConfirmationMovements: [Movement] = []
     @State private var searchReloadTask: Task<Void, Never>?
+    @State private var summaryReloadTask: Task<Void, Never>?
+    @State private var isSummaryLoading = false
     @State private var availablePeriodYears: [Int] = [Calendar.current.component(.year, from: Date())]
+    @State private var reloadToken = UUID()
+    @State private var movementDetailDismissContext: MovementDetailDismissContext?
+    @State private var addMovementBaseline: MovementSheetBaseline?
+    @State private var editMovementDismissContext: MovementDetailDismissContext?
     @State private var lastFiltersMinY: CGFloat = 0
     @State private var hasInitializedFiltersMinY = false
     @State private var isFloatingFiltersVisible = false
@@ -293,10 +350,21 @@ struct MovementsView: View {
         loadedMovements
     }
 
+    private var shouldShowFiltersHeader: Bool {
+        !accounts.isEmpty
+    }
+
+    private var recoveredReimbursementAmountsByExpenseID: [UUID: Decimal] {
+        reimbursementIncomes.reduce(into: [:]) { partialResult, reimbursement in
+            guard let expenseID = reimbursement.reimbursementForId else { return }
+            partialResult[expenseID, default: 0] += reimbursement.amount
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
-                if hasAnyMovements {
+                if shouldShowFiltersHeader {
                     filtersHeader
                         .padding(.bottom, 8)
                         .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
@@ -332,17 +400,22 @@ struct MovementsView: View {
                     }
                 }
 
-                if hasAnyMovements {
+                if shouldShowFiltersHeader {
                     Section {
-                        MovementSummaryView(
-                            totalIncome: totalIncome,
-                            totalExpense: totalExpense,
-                            netBalance: netBalance,
-                            movementCount: movementCount,
-                            currencyCode: appCurrencyCode,
-                            hideBalances: hideBalances
-                        )
-                        .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        if isSummaryLoading {
+                            MovementSummaryLoadingView()
+                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        } else {
+                            MovementSummaryView(
+                                totalIncome: totalIncome,
+                                totalExpense: totalExpense,
+                                netBalance: netBalance,
+                                movementCount: movementCount,
+                                currencyCode: appCurrencyCode,
+                                hideBalances: hideBalances
+                            )
+                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                        }
                     }
                 }
 
@@ -422,17 +495,22 @@ struct MovementsView: View {
                             MovementRowView(
                                 movement: movement,
                                 currencyCode: appCurrencyCode,
-                                hideBalances: hideBalances
+                                hideBalances: hideBalances,
+                                recoveredReimbursementAmount: recoveredReimbursementAmountsByExpenseID[movement.id] ?? 0
                             )
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .top).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                                 .contentShape(Rectangle())
                                 .onTapGesture {
-                                    movementToView = MovementDetailSelection(id: movement.id, movement: movement)
+                                    presentMovementDetail(for: movement)
                                 }
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                     Button {
-                                        movementToEdit = MovementEditingSelection(id: movement.id, movement: movement)
+                                        presentEditMovement(for: movement)
                                     } label: {
                                         Label("Editar", systemImage: "pencil")
                                     }
@@ -459,6 +537,8 @@ struct MovementsView: View {
                             }
                         }
                     }
+                    .animation(.snappy(duration: 0.28, extraBounce: 0.04), value: visibleFilteredMovements.map(\.id))
+                    .animation(.snappy(duration: 0.24, extraBounce: 0), value: recoveredReimbursementAmountsByExpenseID)
                 }
 
             }
@@ -505,7 +585,7 @@ struct MovementsView: View {
                 lastFiltersMinY = offset
             }
             .overlay(alignment: .top) {
-                if isFloatingFiltersVisible && hasAnyMovements {
+                if isFloatingFiltersVisible && shouldShowFiltersHeader {
                     floatingFiltersHeader
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
@@ -519,6 +599,8 @@ struct MovementsView: View {
             .onDisappear {
                 searchReloadTask?.cancel()
                 searchReloadTask = nil
+                summaryReloadTask?.cancel()
+                summaryReloadTask = nil
             }
             .onChange(of: selectedDateFilter) { _, _ in
                 reloadMovements()
@@ -554,7 +636,7 @@ struct MovementsView: View {
 
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        showingAddMovement = true
+                        presentAddMovement()
                     } label: {
                         Image(systemName: "plus")
                             .financeToolbarIconStyle()
@@ -563,7 +645,7 @@ struct MovementsView: View {
                 }
             }
             .sheet(isPresented: $showingAddMovement, onDismiss: {
-                reloadMovements()
+                handleAddMovementDismiss()
             }) {
                 AddMovementView()
             }
@@ -577,7 +659,7 @@ struct MovementsView: View {
                 )
             }
             .sheet(item: $movementToView, onDismiss: {
-                reloadMovements()
+                reloadMovementsIfNeededAfterDetailDismiss()
             }) { selection in
                 MovementDetailView(
                     movement: selection.movement,
@@ -585,7 +667,7 @@ struct MovementsView: View {
                 )
             }
             .sheet(item: $movementToEdit, onDismiss: {
-                reloadMovements()
+                handleEditMovementDismiss()
             }) { selection in
                 AddMovementView(movementToEdit: selection.movement)
             }
@@ -633,9 +715,300 @@ struct MovementsView: View {
     private func reloadMovements() {
         searchReloadTask?.cancel()
         searchReloadTask = nil
-        reloadMovementSummaryAndRecurringState()
+
+        summaryReloadTask?.cancel()
+        summaryReloadTask = nil
+
+        let token = UUID()
+        reloadToken = token
+        isSummaryLoading = true
+        summary = MovementListSummary()
+        recurringConfirmationMovements = []
+
         resetMovementPagination()
         loadNextMovementPage()
+        startSummaryReload(token: token)
+    }
+
+    private func refreshSummaryAndRecurringStateSilently() {
+        summaryReloadTask?.cancel()
+        summaryReloadTask = nil
+
+        let token = UUID()
+        reloadToken = token
+        startSummaryReload(token: token)
+    }
+
+    private func presentAddMovement() {
+        addMovementBaseline = currentMovementSheetBaseline()
+        showingAddMovement = true
+    }
+
+    private func handleAddMovementDismiss() {
+        defer { addMovementBaseline = nil }
+        guard let baseline = addMovementBaseline else {
+            reloadMovements()
+            return
+        }
+
+        applyMovementSyncAction(syncAction(afterDismissFrom: baseline), baseline: baseline)
+    }
+
+    private func presentEditMovement(for movement: Movement) {
+        guard let baseline = currentMovementSheetBaseline() else {
+            editMovementDismissContext = nil
+            movementToEdit = MovementEditingSelection(id: movement.id, movement: movement)
+            return
+        }
+
+        editMovementDismissContext = MovementDetailDismissContext(
+            movementCount: baseline.movementCount,
+            latestCreatedAt: baseline.latestCreatedAt,
+            loadedMovementCount: baseline.loadedMovementCount,
+            snapshot: MovementDetailSnapshot(movement: movement)
+        )
+        movementToEdit = MovementEditingSelection(id: movement.id, movement: movement)
+    }
+
+    private func handleEditMovementDismiss() {
+        defer { editMovementDismissContext = nil }
+        guard let context = editMovementDismissContext else {
+            reloadMovements()
+            return
+        }
+
+        applyMovementSyncAction(syncAction(afterDismissFrom: context), baseline: MovementSheetBaseline(
+            movementCount: context.movementCount,
+            latestCreatedAt: context.latestCreatedAt,
+            loadedMovementCount: context.loadedMovementCount
+        ))
+    }
+
+    private func presentMovementDetail(for movement: Movement) {
+        guard let baseline = currentMovementSheetBaseline() else {
+            movementDetailDismissContext = nil
+            movementToView = MovementDetailSelection(id: movement.id, movement: movement)
+            return
+        }
+
+        movementDetailDismissContext = MovementDetailDismissContext(
+            movementCount: baseline.movementCount,
+            latestCreatedAt: baseline.latestCreatedAt,
+            loadedMovementCount: baseline.loadedMovementCount,
+            snapshot: MovementDetailSnapshot(movement: movement)
+        )
+        movementToView = MovementDetailSelection(id: movement.id, movement: movement)
+    }
+
+    private func reloadMovementsIfNeededAfterDetailDismiss() {
+        defer { movementDetailDismissContext = nil }
+
+        guard let context = movementDetailDismissContext else {
+            reloadMovements()
+            return
+        }
+
+        applyMovementSyncAction(syncAction(afterDismissFrom: context), baseline: MovementSheetBaseline(
+            movementCount: context.movementCount,
+            latestCreatedAt: context.latestCreatedAt,
+            loadedMovementCount: context.loadedMovementCount
+        ))
+    }
+
+    private func currentMovementSheetBaseline() -> MovementSheetBaseline? {
+        guard let movementCount = currentMovementCount() else { return nil }
+        return MovementSheetBaseline(
+            movementCount: movementCount,
+            latestCreatedAt: currentLatestMovementCreatedAt(),
+            loadedMovementCount: loadedMovements.count
+        )
+    }
+
+    private func currentMovementCount() -> Int? {
+        do {
+            return try modelContext.fetchCount(FetchDescriptor<Movement>())
+        } catch {
+            return nil
+        }
+    }
+
+    private func currentLatestMovementCreatedAt() -> Date? {
+        do {
+            var descriptor = FetchDescriptor<Movement>(
+                sortBy: [SortDescriptor(\Movement.createdAt, order: .reverse)]
+            )
+            descriptor.fetchLimit = 1
+            return try modelContext.fetch(descriptor).first?.createdAt
+        } catch {
+            return nil
+        }
+    }
+
+    private func fetchMovement(id: UUID) -> Movement? {
+        do {
+            var descriptor = FetchDescriptor<Movement>(predicate: #Predicate { $0.id == id })
+            descriptor.fetchLimit = 1
+            return try modelContext.fetch(descriptor).first
+        } catch {
+            return nil
+        }
+    }
+
+    private func fetchRecentlyCreatedMovements(limit: Int) -> [Movement] {
+        do {
+            var descriptor = FetchDescriptor<Movement>(
+                sortBy: [
+                    SortDescriptor(\Movement.createdAt, order: .reverse),
+                    SortDescriptor(\Movement.occurredAt, order: .reverse)
+                ]
+            )
+            descriptor.fetchLimit = limit
+            return try modelContext.fetch(descriptor)
+        } catch {
+            return []
+        }
+    }
+
+    private func syncAction(afterDismissFrom baseline: MovementSheetBaseline) -> MovementSyncAction {
+        guard let currentCount = currentMovementCount() else { return .reloadAll }
+        if currentCount < baseline.movementCount { return .reloadAll }
+        if currentCount > baseline.movementCount { return .insertNewMovementsAndRefreshHeader }
+
+        let currentLatestCreatedAt = currentLatestMovementCreatedAt()
+        if currentLatestCreatedAt != baseline.latestCreatedAt { return .insertNewMovementsAndRefreshHeader }
+        return .none
+    }
+
+    private func syncAction(afterDismissFrom context: MovementDetailDismissContext) -> MovementSyncAction {
+        guard let currentCount = currentMovementCount() else { return .reloadAll }
+        if currentCount < context.movementCount { return .reloadAll }
+        if currentCount > context.movementCount { return .insertNewMovementsAndRefreshHeader }
+
+        guard let currentMovement = fetchMovement(id: context.snapshot.id) else {
+            return .reloadAll
+        }
+
+        let currentSnapshot = MovementDetailSnapshot(movement: currentMovement)
+        return movementChangeAction(from: context.snapshot, to: currentSnapshot)
+    }
+
+    private func movementChangeAction(from previous: MovementDetailSnapshot, to current: MovementDetailSnapshot) -> MovementSyncAction {
+        if previous == current { return .none }
+
+        if previous.concept != current.concept {
+            return trimmedSearchText.isEmpty ? .none : .reconcileListAndRefreshHeader
+        }
+
+        let hasStructuralChange = previous.amount != current.amount
+            || previous.typeRaw != current.typeRaw
+            || previous.occurredAt != current.occurredAt
+            || previous.accountID != current.accountID
+            || previous.destinationAccountID != current.destinationAccountID
+            || previous.categoryID != current.categoryID
+            || previous.personalAmount != current.personalAmount
+            || previous.reimbursementForID != current.reimbursementForID
+            || previous.recurringRuleID != current.recurringRuleID
+
+        return hasStructuralChange ? .reconcileListAndRefreshHeader : .none
+    }
+
+    private func applyMovementSyncAction(_ action: MovementSyncAction, baseline: MovementSheetBaseline) {
+        switch action {
+        case .none:
+            return
+        case .reconcileListAndRefreshHeader:
+            reconcileLoadedMovements(preferredVisibleCount: baseline.loadedMovementCount)
+            refreshSummaryAndRecurringStateSilently()
+        case .insertNewMovementsAndRefreshHeader:
+            insertRecentlyCreatedMovements(since: baseline.latestCreatedAt, preferredVisibleCount: baseline.loadedMovementCount)
+            refreshSummaryAndRecurringStateSilently()
+        case .reloadAll:
+            reloadMovements()
+        }
+    }
+
+    private func reconcileLoadedMovements(preferredVisibleCount: Int) {
+        let targetVisibleCount = targetVisibleMovementCount(from: preferredVisibleCount)
+        let existingIDs = Set(loadedMovements.map(\.id))
+        pendingFilteredMovements.removeAll { existingIDs.contains($0.id) }
+
+        let reconciledMovements = Array(
+            Dictionary(grouping: loadedMovements.filter { matchesActiveFilters($0) }, by: \.id)
+                .values
+                .compactMap(\.first)
+                .sorted(by: movementSortsBefore)
+        )
+
+        loadedMovements = Array(reconciledMovements.prefix(targetVisibleCount))
+
+        if reconciledMovements.count > targetVisibleCount {
+            let overflow = Array(reconciledMovements.dropFirst(targetVisibleCount))
+            let overflowIDs = Set(overflow.map(\.id))
+            pendingFilteredMovements = overflow + pendingFilteredMovements.filter { !overflowIDs.contains($0.id) }
+        }
+
+        if loadedMovements.count < targetVisibleCount {
+            loadNextMovementPage()
+        }
+    }
+
+    private func insertRecentlyCreatedMovements(since baselineLatestCreatedAt: Date?, preferredVisibleCount: Int) {
+        let targetVisibleCount = targetVisibleMovementCount(from: preferredVisibleCount)
+        let candidateLimit = max(Self.movementPageSize * 2, targetVisibleCount + 12)
+        let recentCandidates = fetchRecentlyCreatedMovements(limit: candidateLimit)
+        let existingIDs = Set(loadedMovements.map(\.id))
+
+        let newVisibleMovements = recentCandidates.filter { movement in
+            guard !existingIDs.contains(movement.id) else { return false }
+            if let baselineLatestCreatedAt {
+                guard movement.createdAt > baselineLatestCreatedAt else { return false }
+            }
+            return matchesActiveFilters(movement)
+        }
+
+        guard !newVisibleMovements.isEmpty else { return }
+
+        mergeVisibleMovements(newVisibleMovements, preferredVisibleCount: targetVisibleCount)
+    }
+
+    private func mergeVisibleMovements(_ newVisibleMovements: [Movement], preferredVisibleCount: Int) {
+        guard !newVisibleMovements.isEmpty else { return }
+
+        loadedMovements.append(contentsOf: newVisibleMovements)
+        loadedMovements = Array(
+            Dictionary(grouping: loadedMovements, by: \.id)
+                .values
+                .compactMap(\.first)
+                .sorted(by: movementSortsBefore)
+        )
+        hasAnyMovements = true
+
+        if loadedMovements.count > preferredVisibleCount {
+            let overflow = Array(loadedMovements.dropFirst(preferredVisibleCount))
+            loadedMovements = Array(loadedMovements.prefix(preferredVisibleCount))
+
+            let loadedIDs = Set(loadedMovements.map(\.id))
+            let overflowUnique = overflow.filter { !loadedIDs.contains($0.id) }
+            pendingFilteredMovements.removeAll { loadedIDs.contains($0.id) }
+            pendingFilteredMovements = overflowUnique + pendingFilteredMovements.filter { !Set(overflowUnique.map(\.id)).contains($0.id) }
+        }
+    }
+
+    private func targetVisibleMovementCount(from preferredVisibleCount: Int) -> Int {
+        preferredVisibleCount == 0 ? Self.movementPageSize : preferredVisibleCount
+    }
+
+    private func movementSortsBefore(_ lhs: Movement, _ rhs: Movement) -> Bool {
+        if lhs.occurredAt != rhs.occurredAt {
+            return lhs.occurredAt > rhs.occurredAt
+        }
+        return lhs.createdAt > rhs.createdAt
+    }
+
+    private func startSummaryReload(token: UUID) {
+        summaryReloadTask = Task(priority: .utility) { @MainActor in
+            await reloadMovementSummaryAndRecurringState(token: token)
+        }
     }
 
     private func scheduleSearchReload() {
@@ -650,7 +1023,8 @@ struct MovementsView: View {
         }
     }
 
-    private func reloadMovementSummaryAndRecurringState() {
+    @MainActor
+    private func reloadMovementSummaryAndRecurringState(token: UUID) async {
         var computedSummary = MovementListSummary()
         var confirmations: [Movement] = []
         var scannedCount = 0
@@ -659,7 +1033,9 @@ struct MovementsView: View {
 
         do {
             while true {
-                let batch = try fetchMovementBatch(offset: offset, limit: Self.movementFetchBatchSize)
+                if Task.isCancelled || token != reloadToken { return }
+
+                let batch = try fetchMovementBatch(offset: offset, limit: Self.movementSummaryBatchSize)
                 guard !batch.isEmpty else { break }
 
                 scannedCount += batch.count
@@ -685,20 +1061,26 @@ struct MovementsView: View {
                     }
                 }
 
-                if batch.count < Self.movementFetchBatchSize {
+                if batch.count < Self.movementSummaryBatchSize {
                     break
                 }
+
+                await Task.yield()
             }
 
+            guard !Task.isCancelled, token == reloadToken else { return }
             summary = computedSummary
             recurringConfirmationMovements = confirmations
             hasAnyMovements = scannedCount > 0
             availablePeriodYears = discoveredYears.sorted(by: >)
+            isSummaryLoading = false
         } catch {
+            guard !Task.isCancelled, token == reloadToken else { return }
             summary = MovementListSummary()
             recurringConfirmationMovements = []
             hasAnyMovements = false
             availablePeriodYears = Array(Set([calendar.component(.year, from: Date()), selectedYear])).sorted(by: >)
+            isSummaryLoading = false
         }
     }
 
@@ -749,6 +1131,10 @@ struct MovementsView: View {
             let visibleChunk = Array(matches.prefix(missing))
             loadedMovements.append(contentsOf: visibleChunk)
 
+            if !loadedMovements.isEmpty {
+                hasAnyMovements = true
+            }
+
             if matches.count > missing {
                 pendingFilteredMovements.append(contentsOf: matches.dropFirst(missing))
             }
@@ -756,6 +1142,10 @@ struct MovementsView: View {
             if batch.isEmpty {
                 hasMoreSourceMovements = false
             }
+        }
+
+        if loadedMovements.isEmpty, !hasMoreSourceMovements {
+            hasAnyMovements = false
         }
     }
 
@@ -857,7 +1247,8 @@ struct MovementsView: View {
         }
 
         HapticFeedback.success()
-        reloadMovements()
+        mergeVisibleMovements([movement], preferredVisibleCount: targetVisibleMovementCount(from: loadedMovements.count))
+        refreshSummaryAndRecurringStateSilently()
     }
 
     private func cancelPendingRecurring(_ recurring: RecurringMovement) {
@@ -1245,21 +1636,75 @@ private struct MovementSummaryView: View {
     }
 }
 
+private struct MovementSummaryLoadingView: View {
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.secondary.opacity(0.14))
+                    .frame(height: 58)
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(Color.secondary.opacity(0.14))
+                    .frame(height: 58)
+            }
+
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.secondary.opacity(0.12))
+                .frame(height: 34)
+
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.secondary.opacity(0.12))
+                .frame(height: 34)
+        }
+        .padding(12)
+        .redacted(reason: .placeholder)
+    }
+}
+
 private struct SummaryPill: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     let title: String
     let value: String
     let color: Color
+
+    private var titleColor: Color {
+        colorScheme == .dark ? .white.opacity(0.82) : .black.opacity(0.88)
+    }
+
+    private var valueColor: Color {
+        colorScheme == .dark ? .white : .black.opacity(0.96)
+    }
+
+    private var backgroundColors: [Color] {
+        if colorScheme == .dark {
+            return [
+                color.opacity(0.28),
+                color.opacity(0.20)
+            ]
+        }
+
+        return [
+            color.opacity(0.56),
+            color.opacity(0.45)
+        ]
+    }
+
+    private var borderColor: Color {
+        colorScheme == .dark ? color.opacity(0.35) : color.opacity(0.78)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption2)
-                .foregroundStyle(.white.opacity(0.75))
+                .fontWeight(.semibold)
+                .foregroundStyle(titleColor)
 
             Text(value)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .foregroundStyle(.white)
+                .font(.headline)
+                .fontWeight(.bold)
+                .foregroundStyle(valueColor)
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1267,10 +1712,7 @@ private struct SummaryPill: View {
         .padding(.vertical, 12)
         .background(
             LinearGradient(
-                colors: [
-                    color.opacity(0.28),
-                    color.opacity(0.20)
-                ],
+                colors: backgroundColors,
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -1278,7 +1720,7 @@ private struct SummaryPill: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(color.opacity(0.35), lineWidth: 1)
+                .stroke(borderColor, lineWidth: colorScheme == .dark ? 1.1 : 1.25)
         )
     }
 }
@@ -1324,25 +1766,51 @@ private struct PendingRecurringMovementRowView: View {
     }
 
     var body: some View {
+        let badges: [MovementRowBadge] = {
+            guard let categoryName = pending.rule.category?.name,
+                  let categoryIconName = pending.rule.category?.iconName,
+                  let categoryColor = pending.rule.category?.color else {
+                return []
+            }
+
+            return [
+                MovementRowBadge(
+                    id: "category",
+                    name: categoryName,
+                    iconName: categoryIconName,
+                    color: categoryColor
+                )
+            ]
+        }()
+
         RecurringMovementRowContent(
             type: pending.rule.type,
             concept: pending.rule.concept,
-            categoryName: pending.rule.category?.name,
-            categoryIconName: pending.rule.category?.iconName,
-            categoryColor: pending.rule.category?.color,
-            accountName: accountName,
+            badges: badges,
+            detailLines: [accountName],
             amountText: amountText,
-            statusTitle: statusTitle,
-            statusColor: statusColor,
-            dueDateText: pending.dueDate.asSpanishShortDate()
+            trailingPill: MovementTrailingPill(title: statusTitle, color: statusColor),
+            dateText: pending.dueDate.asSpanishShortDate()
         )
     }
 }
 
-private struct MovementRowView: View {
+private struct MovementRowView: View, Equatable {
     let movement: Movement
     let currencyCode: String
     let hideBalances: Bool
+    let recoveredReimbursementAmount: Decimal
+
+    static func == (lhs: MovementRowView, rhs: MovementRowView) -> Bool {
+        lhs.movement.id == rhs.movement.id
+            && lhs.currencyCode == rhs.currencyCode
+            && lhs.hideBalances == rhs.hideBalances
+            && lhs.recoveredReimbursementAmount == rhs.recoveredReimbursementAmount
+            && lhs.movement.amount == rhs.movement.amount
+            && lhs.movement.personalAmount == rhs.movement.personalAmount
+            && lhs.movement.resultingBalance == rhs.movement.resultingBalance
+            && lhs.movement.occurredAt == rhs.movement.occurredAt
+    }
 
     private var accountAndBankText: String {
         let accountText = movement.account?.name ?? "Sin cuenta"
@@ -1358,93 +1826,85 @@ private struct MovementRowView: View {
         return "Saldo: \(resultingBalance.masked(hideBalances, code: currencyCode))"
     }
 
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: movement.type.icon)
-                .font(.title3)
-                .foregroundStyle(.white)
-                .frame(width: 36, height: 36)
-                .background(movement.type.color)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+    private var reimbursementExpectedText: String? {
+        guard movement.type == .expense, movement.isSharedExpense else { return nil }
+        let pending = movement.pendingReimbursementAmount(recoveredAmount: recoveredReimbursementAmount)
+        guard pending > 0 else { return nil }
+        return "Pendiente: \(pending.masked(hideBalances, code: currencyCode))"
+    }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(movement.concept)
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .lineLimit(2)
+    private var detailLines: [String] {
+        var lines: [String] = [accountAndBankText]
 
-                HStack(spacing: 6) {
-                    if movement.type == .transfer {
-                        CategoryChipView(
-                            name: "Transferencia",
-                            iconName: "arrow.left.arrow.right",
-                            color: .blue
-                        )
-                    } else {
-                        CategoryChipView(
-                            name: movement.category?.name ?? "Sin categoría",
-                            iconName: movement.category?.iconName ?? "tag",
-                            color: movement.category?.color ?? .secondary
-                        )
-
-                        if movement.isReimbursementIncome {
-                            CategoryChipView(
-                                name: "Reembolso",
-                                iconName: "arrow.uturn.left.circle",
-                                color: .blue
-                            )
-                        }
-
-                        if movement.isSharedExpense {
-                            CategoryChipView(
-                                name: "Compartido",
-                                iconName: "person.2.fill",
-                                color: .orange
-                            )
-                        }
-                    }
-                }
-
-                Text(accountAndBankText)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                if let statsDetailText {
-                    Text(statsDetailText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-
-                if let balanceAfterText {
-                    Text(balanceAfterText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(displayAmount)
-                    .font(.body)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(displayAmountColor)
-
-                if let personalAmountText {
-                    Text(personalAmountText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                Text(movement.occurredAt.asSpanishShortDate())
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        if let reimbursementExpectedText {
+            lines.append(reimbursementExpectedText)
         }
-        .padding(.vertical, 4)
+
+        if let balanceAfterText {
+            lines.append(balanceAfterText)
+        }
+
+        return lines
+    }
+
+    private var badgeItems: [MovementRowBadge] {
+        if movement.type == .transfer {
+            return [
+                MovementRowBadge(
+                    id: "transfer",
+                    name: "Transferencia",
+                    iconName: "arrow.left.arrow.right",
+                    color: .blue
+                )
+            ]
+        }
+
+        var items: [MovementRowBadge] = [
+            MovementRowBadge(
+                id: "category",
+                name: movement.category?.name ?? "Sin categoría",
+                iconName: movement.category?.iconName ?? "tag",
+                color: movement.category?.color ?? .secondary
+            )
+        ]
+
+        if movement.isReimbursementIncome {
+            items.append(
+                MovementRowBadge(
+                    id: "reimbursement",
+                    name: "Reembolso",
+                    iconName: "arrow.uturn.left.circle",
+                    color: .blue
+                )
+            )
+        }
+
+        if movement.isSharedExpense {
+            items.append(
+                MovementRowBadge(
+                    id: "shared",
+                    name: "Compartido",
+                    iconName: "person.2.fill",
+                    color: .orange
+                )
+            )
+        }
+
+        return items
+    }
+
+    var body: some View {
+        RecurringMovementRowContent(
+            type: movement.type,
+            concept: movement.concept,
+            badges: badgeItems,
+            detailLines: detailLines,
+            amountText: displayAmount,
+            amountColor: displayAmountColor,
+            trailingInfoText: personalAmountText,
+            dateText: movement.occurredAt.asSpanishShortDate()
+        )
+        .contentTransition(.opacity)
     }
 
     private var displayAmount: String {
@@ -1471,18 +1931,5 @@ private struct MovementRowView: View {
         guard movement.type == .expense, movement.isSharedExpense else { return nil }
         let signedPersonal = movement.statsExpenseAmount * movement.type.signMultiplier
         return "Mi parte: \(signedPersonal.masked(hideBalances, code: currencyCode))"
-    }
-
-    private var statsDetailText: String? {
-        if movement.isReimbursementIncome {
-            return "No cuenta como ingreso en estadísticas"
-        }
-
-        if movement.isSharedExpense {
-            let expected = max(movement.amount - movement.statsExpenseAmount, 0)
-            return "Reembolso esperado: \(expected.masked(hideBalances, code: currencyCode))"
-        }
-
-        return nil
     }
 }

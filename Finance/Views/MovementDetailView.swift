@@ -65,13 +65,19 @@ struct MovementDetailView: View {
     }
 
     private var expectedReimbursement: Decimal {
-        guard movement.type == .expense else { return 0 }
-        let personal = movement.normalizedPersonalAmount ?? movement.amount
-        return max(movement.amount - personal, 0)
+        movement.expectedReimbursementAmount
     }
 
     private var recoveredReimbursement: Decimal {
         linkedReimbursements.reduce(Decimal(0)) { $0 + $1.amount }
+    }
+
+    private var pendingReimbursement: Decimal {
+        movement.pendingReimbursementAmount(recoveredAmount: recoveredReimbursement)
+    }
+
+    private var reimbursementOverage: Decimal {
+        movement.reimbursementOverageAmount(recoveredAmount: recoveredReimbursement)
     }
 
     private var isFullyRecovered: Bool {
@@ -84,8 +90,10 @@ struct MovementDetailView: View {
     }
 
     private var statusBadge: (title: String, color: Color) {
-        if movement.type == .expense, expectedReimbursement > 0, !isFullyRecovered {
-            return ("Reembolso pendiente", .orange)
+        if movement.type == .expense, expectedReimbursement > 0 {
+            return isFullyRecovered
+                ? ("Reembolso completado", .green)
+                : ("Reembolso pendiente", .orange)
         }
         if movement.isReimbursementIncome {
             return ("Reembolso recibido", .green)
@@ -340,6 +348,7 @@ struct MovementDetailView: View {
 
             if shouldShowReimbursementTracking {
                 infoRow(title: "Reembolso esperado", value: expectedReimbursement.asCurrency(code: currencyCode), valueColor: .orange)
+                infoRow(title: "Pendiente", value: pendingReimbursement.asCurrency(code: currencyCode), valueColor: pendingReimbursement == 0 ? .green : .secondary)
 
                 ProgressView(
                     value: min((recoveredReimbursement as NSDecimalNumber).doubleValue, (expectedReimbursement as NSDecimalNumber).doubleValue),
@@ -351,14 +360,18 @@ struct MovementDetailView: View {
                     .font(.caption)
                     .foregroundStyle(isFullyRecovered ? .green : .secondary)
 
-                if !isFullyRecovered {
-                    actionButton(
-                        title: "Registrar reembolso",
-                        systemImage: "plus.circle.fill",
-                        tint: .blue
-                    ) {
-                        showingQuickReimbursementSheet = true
-                    }
+                if reimbursementOverage > 0 {
+                    Text("Extra recibido: \(reimbursementOverage.asCurrency(code: currencyCode))")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+
+                actionButton(
+                    title: "Registrar reembolso",
+                    systemImage: "plus.circle.fill",
+                    tint: .blue
+                ) {
+                    showingQuickReimbursementSheet = true
                 }
             }
 

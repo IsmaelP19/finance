@@ -235,50 +235,90 @@ struct MovementStatsView: View {
     }
 
     private var investmentSeries: [InvestmentSeriesPoint] {
-        let groupedByDate = Dictionary(grouping: filteredInvestmentSnapshots) {
-            calendar.startOfDay(for: $0.snapshotDate)
+        // Fallback: no snapshots exist at all
+        guard !filteredInvestmentSnapshots.isEmpty else {
+            if selectedDateFilter == .all && !investmentAccounts.isEmpty {
+                let today = calendar.startOfDay(for: Date())
+                let invested = investmentAccounts.reduce(Decimal(0)) { $0 + $1.effectiveInvestedAmount }
+                let market = investmentAccounts.reduce(Decimal(0)) { $0 + $1.effectiveMarketValue }
+                return [InvestmentSeriesPoint(id: today, date: today, invested: invested, market: market)]
+            }
+            return []
         }
 
-        let points = groupedByDate.compactMap { date, dailySnapshots -> InvestmentSeriesPoint? in
-            let groupedByAccount = Dictionary(grouping: dailySnapshots.compactMap { snapshot -> (UUID, InvestmentSnapshot)? in
-                guard let accountId = snapshot.account?.id else { return nil }
-                return (accountId, snapshot)
-            }) { pair in
-                pair.0
-            }
+        // --- Pre-processing (O(S log S)) ---
+        // Build a lookup: accountId → snapshots sorted ascending by (date, updatedAt).
+        // This is done once and reused for every chart point.
+        let allInvestmentSnapshots = snapshots.filter { $0.account?.accountType == .investment }
 
-            let latestPerAccount = groupedByAccount.values.compactMap { accountSnapshots in
-                accountSnapshots
-                    .map { $0.1 }
-                    .max { lhs, rhs in lhs.updatedAt < rhs.updatedAt }
-            }
+        // A lightweight value type to avoid repeated Date normalisation inside loops
+        struct NormalizedSnapshot {
+            let day: Date               // startOfDay of snapshotDate
+            let updatedAt: Date
+            let investedAmount: Decimal
+            let marketValue: Decimal
+        }
 
-            guard !latestPerAccount.isEmpty else { return nil }
-
-            let totalInvested = latestPerAccount.reduce(Decimal(0)) { $0 + $1.investedAmount }
-            let totalMarket = latestPerAccount.reduce(Decimal(0)) { $0 + $1.marketValue }
-
-            return InvestmentSeriesPoint(
-                id: date,
-                date: date,
-                invested: totalInvested,
-                market: totalMarket
+        var snapshotsByAccount: [UUID: [NormalizedSnapshot]] = [:]
+        for snapshot in allInvestmentSnapshots {
+            guard let accountId = snapshot.account?.id else { continue }
+            let entry = NormalizedSnapshot(
+                day: calendar.startOfDay(for: snapshot.snapshotDate),
+                updatedAt: snapshot.updatedAt,
+                investedAmount: snapshot.investedAmount,
+                marketValue: snapshot.marketValue
             )
+            snapshotsByAccount[accountId, default: []].append(entry)
         }
-        .sorted { $0.date < $1.date }
-
-        if !points.isEmpty {
-            return points
-        }
-
-        if selectedDateFilter == .all && !investmentAccounts.isEmpty {
-            let today = calendar.startOfDay(for: Date())
-            let invested = investmentAccounts.reduce(Decimal(0)) { $0 + $1.effectiveInvestedAmount }
-            let market = investmentAccounts.reduce(Decimal(0)) { $0 + $1.effectiveMarketValue }
-            return [InvestmentSeriesPoint(id: today, date: today, invested: invested, market: market)]
+        // Sort each account's list once: primary = day ascending, secondary = updatedAt ascending
+        for key in snapshotsByAccount.keys {
+            snapshotsByAccount[key]!.sort {
+                $0.day == $1.day ? $0.updatedAt < $1.updatedAt : $0.day < $1.day
+            }
         }
 
-        return []
+        // --- Chart point generation (O(D × A × log S)) ---
+        // Unique dates within the active filter, sorted ascending.
+        let sortedDates = Set(filteredInvestmentSnapshots.map {
+            calendar.startOfDay(for: $0.snapshotDate)
+        }).sorted()
+
+        let points: [InvestmentSeriesPoint] = sortedDates.compactMap { date in
+            var totalInvested = Decimal(0)
+            var totalMarket = Decimal(0)
+            var hasAnyValue = false
+
+            for account in investmentAccounts {
+                let accountId = account.id
+                guard let sorted = snapshotsByAccount[accountId],
+                      !sorted.isEmpty
+                else { continue }
+
+                // Binary search: find the last snapshot whose day <= date.
+                // Because the array is sorted by day (then updatedAt), the last element
+                // with day <= date is also the latest-updated snapshot for that day.
+                var lo = 0, hi = sorted.count - 1, bestIndex: Int? = nil
+                while lo <= hi {
+                    let mid = (lo + hi) / 2
+                    if sorted[mid].day <= date {
+                        bestIndex = mid
+                        lo = mid + 1
+                    } else {
+                        hi = mid - 1
+                    }
+                }
+
+                guard let idx = bestIndex else { continue }
+                totalInvested += sorted[idx].investedAmount
+                totalMarket += sorted[idx].marketValue
+                hasAnyValue = true
+            }
+
+            guard hasAnyValue else { return nil }
+            return InvestmentSeriesPoint(id: date, date: date, invested: totalInvested, market: totalMarket)
+        }
+
+        return points
     }
 
     private var latestInvestmentPoint: InvestmentSeriesPoint? {
@@ -1961,5 +2001,9 @@ private struct StatTile: View {
         .padding(10)
         .background(tint.opacity(0.10))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(tint.opacity(colorScheme == .dark ? 0.45 : 0.30), lineWidth: 1)
+        )
     }
 }

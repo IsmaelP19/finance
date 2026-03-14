@@ -31,6 +31,7 @@ struct AddBudgetView: View {
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
 
     @Query(sort: \MovementCategory.name) private var allCategories: [MovementCategory]
+    @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
 
     private let budgetToEdit: Budget?
 
@@ -349,6 +350,8 @@ struct AddBudgetView: View {
             return
         }
 
+        let savedBudget: Budget
+
         if let b = budgetToEdit {
             // Cancel existing item notifications before replacing items
             BudgetService.cancelAllNotifications(for: b)
@@ -362,6 +365,7 @@ struct AddBudgetView: View {
             // Remove old items and replace with new ones
             for old in b.items { modelContext.delete(old) }
             b.items = buildBudgetItems(for: b)
+            savedBudget = b
         } else {
             let budget = Budget(
                 totalAmount: total,
@@ -371,6 +375,11 @@ struct AddBudgetView: View {
             )
             modelContext.insert(budget)
             budget.items = buildBudgetItems(for: budget)
+            savedBudget = budget
+        }
+
+        if savedBudget.isActive && (savedBudget.notifyAt80Percent || savedBudget.notifyAt100Percent) {
+            BudgetService.evaluateAndNotify(budget: savedBudget, movements: movements)
         }
 
         dismiss()

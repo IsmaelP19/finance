@@ -147,6 +147,14 @@ struct AddMovementView: View {
         linkedReimbursementsForEditedExpense.reduce(Decimal(0)) { $0 + $1.amount }
     }
 
+    private var pendingReimbursementForEditedExpense: Decimal {
+        max(expectedReimbursementForDraftExpense - recoveredAmountForEditedExpense, 0)
+    }
+
+    private var reimbursementOverageForEditedExpense: Decimal {
+        max(recoveredAmountForEditedExpense - expectedReimbursementForDraftExpense, 0)
+    }
+
     private var draftSharedExpenseTotal: Decimal {
         parseAmount(from: amountText)
     }
@@ -266,12 +274,20 @@ struct AddMovementView: View {
                                         .font(.caption)
                                         .foregroundStyle(isReimbursementFullyRecovered ? .green : .secondary)
 
-                                    if !isReimbursementFullyRecovered {
-                                        Button {
-                                            showingQuickReimbursementSheet = true
-                                        } label: {
-                                            Label("Registrar reembolso", systemImage: "plus.circle")
-                                        }
+                                    Text("Pendiente: \(pendingReimbursementForEditedExpense.asCurrency(code: appCurrencyCode))")
+                                        .font(.caption)
+                                        .foregroundStyle(isReimbursementFullyRecovered ? .green : .secondary)
+
+                                    if reimbursementOverageForEditedExpense > 0 {
+                                        Text("Extra recibido: \(reimbursementOverageForEditedExpense.asCurrency(code: appCurrencyCode))")
+                                            .font(.caption)
+                                            .foregroundStyle(.green)
+                                    }
+
+                                    Button {
+                                        showingQuickReimbursementSheet = true
+                                    } label: {
+                                        Label("Registrar reembolso", systemImage: "plus.circle")
                                     }
                                 }
 
@@ -710,20 +726,6 @@ struct AddMovementView: View {
             ? normalizedPersonalAmountForExpense(totalAmount: amount, rawPersonalAmount: personalAmountForStats)
             : nil
 
-        let linkedReimbursementsTotalForEditedExpense = linkedReimbursementsForEditedExpense
-            .reduce(Decimal(0)) { partial, movement in
-                partial + movement.amount
-            }
-
-        if movementType == .expense,
-           let normalizedPersonalAmountForStats,
-           linkedReimbursementsTotalForEditedExpense > 0,
-           normalizedPersonalAmountForStats + linkedReimbursementsTotalForEditedExpense > amount {
-            validationMessage = "No se puede guardar: tu gasto (\(normalizedPersonalAmountForStats.asCurrency(code: appCurrencyCode))) más reembolsos vinculados (\(linkedReimbursementsTotalForEditedExpense.asCurrency(code: appCurrencyCode))) supera el total del movimiento (\(amount.asCurrency(code: appCurrencyCode)))."
-            showingValidationAlert = true
-            return
-        }
-
         let reimbursementForID: UUID?
         if movementType == .income && isReimbursementIncome && canConfigureOwnershipFields {
             if let linkedExpense = selectedReimbursementExpense {
@@ -871,9 +873,7 @@ struct AddMovementView: View {
 
             movementToEdit.updatedAt = Date()
 
-            if movementType == .expense, let activeBudget = budgets.first {
-                BudgetService.evaluateAndNotify(budget: activeBudget, movements: movements)
-            }
+            reevaluateBudgetNotifications()
         } else {
             let resultingBalance = applyMovementImpact(
                 type: movementType,
@@ -895,15 +895,24 @@ struct AddMovementView: View {
                 personalAmount: normalizedPersonalAmountForStats,
                 reimbursementForId: movementType == .income ? reimbursementForID : nil
             )
-
+            
             modelContext.insert(movement)
 
-            if movementType == .expense, let activeBudget = budgets.first {
-                BudgetService.evaluateAndNotify(budget: activeBudget, movements: movements)
-            }
+            reevaluateBudgetNotifications(appending: movement)
         }
 
         dismiss()
+    }
+
+    private func reevaluateBudgetNotifications(appending movement: Movement? = nil) {
+        guard let activeBudget = budgets.first else { return }
+
+        var updatedMovements = movements
+        if let movement {
+            updatedMovements.append(movement)
+        }
+
+        BudgetService.evaluateAndNotify(budget: activeBudget, movements: updatedMovements)
     }
 
     @discardableResult

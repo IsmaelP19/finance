@@ -45,3 +45,63 @@ final class Budget {
         self.updatedAt = Date()
     }
 }
+
+// MARK: - Codable DTO para Export/Import JSON
+
+struct BudgetDTO: Codable {
+    let id: UUID
+    let totalAmount: Decimal
+    let isActive: Bool
+    let notifyAt80Percent: Bool
+    let notifyAt100Percent: Bool
+    let createdAt: Date
+    let updatedAt: Date
+    let items: [BudgetItemDTO]
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case totalAmount
+        case isActive
+        case notifyAt80Percent
+        case notifyAt100Percent
+        case createdAt
+        case updatedAt
+        case items
+    }
+
+    init(from budget: Budget) {
+        self.id = budget.id
+        self.totalAmount = budget.totalAmount
+        self.isActive = budget.isActive
+        self.notifyAt80Percent = budget.notifyAt80Percent
+        self.notifyAt100Percent = budget.notifyAt100Percent
+        self.createdAt = budget.createdAt
+        self.updatedAt = budget.updatedAt
+        self.items = budget.items.map { BudgetItemDTO(from: $0) }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        totalAmount = try container.decode(Decimal.self, forKey: .totalAmount)
+        isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? true
+        notifyAt80Percent = try container.decodeIfPresent(Bool.self, forKey: .notifyAt80Percent) ?? true
+        notifyAt100Percent = try container.decodeIfPresent(Bool.self, forKey: .notifyAt100Percent) ?? true
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+        items = try container.decodeIfPresent([BudgetItemDTO].self, forKey: .items) ?? []
+    }
+
+    func toModel() -> Budget {
+        let budget = Budget(
+            totalAmount: totalAmount,
+            isActive: isActive,
+            notifyAt80Percent: notifyAt80Percent,
+            notifyAt100Percent: notifyAt100Percent
+        )
+        budget.id = id
+        budget.createdAt = createdAt
+        budget.updatedAt = updatedAt
+        return budget
+    }
+}

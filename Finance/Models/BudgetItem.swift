@@ -32,3 +32,29 @@ final class BudgetItem {
         self.createdAt = Date()
     }
 }
+
+// MARK: - Codable DTO para Export/Import JSON
+
+struct BudgetItemDTO: Codable {
+    let id: UUID
+    let allocatedAmount: Decimal
+    let createdAt: Date
+    let categoryId: UUID?
+
+    init(from item: BudgetItem) {
+        self.id = item.id
+        self.allocatedAmount = item.allocatedAmount
+        self.createdAt = item.createdAt
+        self.categoryId = item.category?.id
+    }
+
+    func toModel() -> BudgetItem {
+        let item = BudgetItem(
+            allocatedAmount: allocatedAmount,
+            category: nil
+        )
+        item.id = id
+        item.createdAt = createdAt
+        return item
+    }
+}

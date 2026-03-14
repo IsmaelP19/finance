@@ -70,6 +70,21 @@ final class Movement {
         return isReimbursementIncome ? 0 : amount
     }
 
+    var expectedReimbursementAmount: Decimal {
+        guard type == .expense else { return 0 }
+        return max(amount - statsExpenseAmount, 0)
+    }
+
+    func pendingReimbursementAmount(recoveredAmount: Decimal) -> Decimal {
+        guard type == .expense else { return 0 }
+        return max(expectedReimbursementAmount - max(recoveredAmount, 0), 0)
+    }
+
+    func reimbursementOverageAmount(recoveredAmount: Decimal) -> Decimal {
+        guard type == .expense else { return 0 }
+        return max(max(recoveredAmount, 0) - expectedReimbursementAmount, 0)
+    }
+
     init(
         concept: String,
         amount: Decimal,

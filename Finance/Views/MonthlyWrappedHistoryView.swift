@@ -210,8 +210,12 @@ private struct WrappedLatestCard: View {
         .fontWeight(.semibold)
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .background(Color.white.opacity(0.14))
-        .foregroundStyle(.white)
+        .background(colorScheme == .dark ? Color.white.opacity(0.14) : Color.white.opacity(0.72))
+        .foregroundStyle(colorScheme == .dark ? Color.white : Color.black.opacity(0.75))
+        .overlay(
+            Capsule()
+                .stroke(colorScheme == .dark ? Color.white.opacity(0.18) : Color.black.opacity(0.14), lineWidth: 1)
+        )
         .clipShape(Capsule())
     }
 }
@@ -310,6 +314,7 @@ private enum WrappedStoryPage: Int, CaseIterable {
     case dailyAverageExpense
     case bestWeek
     case comparison
+    case closing
 }
 
 struct MonthlyWrappedStoriesView: View {
@@ -375,6 +380,8 @@ struct MonthlyWrappedStoriesView: View {
         if summary.comparison != nil {
             stories.append(.comparison)
         }
+
+        stories.append(.closing)
 
         return stories
     }
@@ -443,6 +450,12 @@ struct MonthlyWrappedStoriesView: View {
         case .comparison:
             return LinearGradient(
                 colors: [Color(red: 0.07, green: 0.08, blue: 0.18), Color(red: 0.11, green: 0.12, blue: 0.25), Color(red: 0.16, green: 0.16, blue: 0.32)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        case .closing:
+            return LinearGradient(
+                colors: [Color(red: 0.08, green: 0.12, blue: 0.18), Color(red: 0.11, green: 0.19, blue: 0.28), Color(red: 0.16, green: 0.27, blue: 0.34)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -646,7 +659,65 @@ struct MonthlyWrappedStoriesView: View {
         case .comparison:
             comparisonStory
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        case .closing:
+            closingStory
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
         }
+    }
+
+    private var closingStory: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Spacer(minLength: 12)
+
+            wrappedBadge(title: "Siempre disponible", icon: "sparkles.rectangle.stack")
+                .wrappedReveal(step: 1, current: revealStep)
+
+            Image(systemName: "sparkles.rectangle.stack.fill")
+                .font(.system(size: 72, weight: .bold))
+                .foregroundStyle(.white.opacity(0.94))
+                .wrappedReveal(step: 2, current: revealStep)
+
+            Text("Eso es todo por ahora")
+                .font(.system(size: 36, weight: .black, design: .rounded))
+                .foregroundStyle(.white)
+                .wrappedReveal(step: 2, current: revealStep)
+
+            Text("Puedes volver a ver este resumen cuando quieras desde el boton superior derecho.")
+                .font(.title3)
+                .lineSpacing(3)
+                .foregroundStyle(.white.opacity(0.9))
+                .wrappedReveal(step: 3, current: revealStep)
+
+            Text("Busca el icono de wrapped en la pantalla de inicio.")
+                .font(.subheadline)
+                .foregroundStyle(.white.opacity(0.72))
+                .wrappedReveal(step: 3, current: revealStep)
+
+            Spacer()
+
+            Button {
+                dismiss()
+            } label: {
+                HStack(spacing: 10) {
+                    Text("Cerrar")
+                        .fontWeight(.semibold)
+
+                    Image(systemName: "arrow.right")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .foregroundStyle(Color(red: 0.08, green: 0.16, blue: 0.24))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .wrappedReveal(step: 4, current: revealStep)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.horizontal, 22)
+        .padding(.top, 22)
+        .padding(.bottom, 20)
     }
 
     private var overviewStory: some View {
