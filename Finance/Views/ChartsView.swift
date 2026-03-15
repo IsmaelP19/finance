@@ -183,17 +183,17 @@ struct ChartsView: View {
 
                         wrappedAccessCard
 
-                        PatrimonyPieChart(data: pieTypeBalances, currencyCode: appCurrencyCode)
-
-                        BalanceByBankBarChart(data: bankBalances, currencyCode: appCurrencyCode)
-
-                        summarySection
-
                         BudgetsSection(
                             budgets: budgets,
                             movements: movements,
                             currencyCode: appCurrencyCode
                         )
+
+                        PatrimonyPieChart(data: pieTypeBalances, currencyCode: appCurrencyCode)
+
+                        BalanceByBankBarChart(data: bankBalances, currencyCode: appCurrencyCode)
+
+                        summarySection
                     }
                 }
                 .padding()
