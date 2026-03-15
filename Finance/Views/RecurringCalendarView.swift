@@ -94,6 +94,7 @@ struct RecurringCalendarView: View {
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
 
     @State private var selectedDate: Date = Date()
+    @State private var visibleMonthDate: Date = Date()
     @State private var showingActionAlert = false
     @State private var actionAlertMessage = ""
 
@@ -111,6 +112,84 @@ struct RecurringCalendarView: View {
         return occurrences(in: interval, includeConfirmed: true)
     }
 
+    private var visibleMonthWeekRows: Int {
+        let monthStartDate = monthStart(for: visibleMonthDate)
+        guard let dayRange = recurringCalendar.range(of: .day, in: .month, for: monthStartDate) else {
+            return 6
+        }
+
+        let firstDayWeekday = recurringCalendar.component(.weekday, from: monthStartDate)
+        let leadingEmptyDays = (firstDayWeekday - recurringCalendar.firstWeekday + 7) % 7
+        let totalGridCells = leadingEmptyDays + dayRange.count
+        return min(6, max(4, Int(ceil(Double(totalGridCells) / 7.0))))
+    }
+
+    private var calendarBlockHeight: CGFloat {
+        let baseHeight: CGFloat = 126
+        let weekRowHeight: CGFloat = 61
+        return baseHeight + (CGFloat(visibleMonthWeekRows) * weekRowHeight)
+    }
+
+    private var selectedMonthInterval: DateInterval {
+        let monthStart = recurringCalendar.date(
+            from: recurringCalendar.dateComponents([.year, .month], from: visibleMonthDate)
+        ) ?? recurringCalendar.startOfDay(for: visibleMonthDate)
+        let monthEnd = recurringCalendar.date(byAdding: .month, value: 1, to: monthStart) ?? monthStart
+        return DateInterval(start: monthStart, end: monthEnd)
+    }
+
+    private var selectedMonthOccurrences: [RecurringCalendarOccurrence] {
+        occurrences(in: selectedMonthInterval, includeConfirmed: true)
+    }
+
+    private var selectedMonthRecurringExpenseTotal: Decimal {
+        selectedMonthOccurrences.reduce(Decimal(0)) { partialResult, occurrence in
+            guard occurrence.rule.type == .expense else { return partialResult }
+            return partialResult + occurrence.rule.amount
+        }
+    }
+
+    private var selectedMonthRecurringIncomeTotal: Decimal {
+        selectedMonthOccurrences.reduce(Decimal(0)) { partialResult, occurrence in
+            guard occurrence.rule.type == .income else { return partialResult }
+            return partialResult + occurrence.rule.amount
+        }
+    }
+
+    private var selectedMonthExpenseOccurrenceCount: Int {
+        selectedMonthOccurrences.reduce(into: 0) { partialResult, occurrence in
+            if occurrence.rule.type == .expense {
+                partialResult += 1
+            }
+        }
+    }
+
+    private var selectedDateHeaderTitle: String {
+        selectedDate.formatted(
+            .dateTime
+                .weekday(.wide)
+                .day()
+                .month(.wide)
+                .locale(Locale(identifier: "es_ES"))
+        ).capitalized
+    }
+
+    private var selectedDatePendingCount: Int {
+        selectedDateOccurrences.filter { !$0.isConfirmed }.count
+    }
+
+    private var selectedDateConfirmedCount: Int {
+        selectedDateOccurrences.filter(\.isConfirmed).count
+    }
+
+    private var nextUpcomingPreviewCount: Int {
+        min(upcomingOccurrences.count, 12)
+    }
+
+    private var shouldShowTodayShortcut: Bool {
+        !recurringCalendar.isDate(selectedDate, inSameDayAs: Date())
+    }
+
     private var upcomingOccurrences: [RecurringCalendarOccurrence] {
         let now = Date()
         let dayStart = recurringCalendar.startOfDay(for: now)
@@ -121,8 +200,8 @@ struct RecurringCalendarView: View {
 
     private var decorationInterval: DateInterval {
         let monthStart = recurringCalendar.date(
-            from: recurringCalendar.dateComponents([.year, .month], from: selectedDate)
-        ) ?? recurringCalendar.startOfDay(for: selectedDate)
+            from: recurringCalendar.dateComponents([.year, .month], from: visibleMonthDate)
+        ) ?? recurringCalendar.startOfDay(for: visibleMonthDate)
 
         let selectedWindowStart = recurringCalendar.date(byAdding: .month, value: -6, to: monthStart) ?? monthStart
         let selectedWindowEnd = recurringCalendar.date(byAdding: .month, value: 18, to: monthStart) ?? monthStart
@@ -163,6 +242,12 @@ struct RecurringCalendarView: View {
         return map
     }
 
+    private func monthStart(for date: Date) -> Date {
+        recurringCalendar.date(
+            from: recurringCalendar.dateComponents([.year, .month], from: date)
+        ) ?? recurringCalendar.startOfDay(for: date)
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -170,9 +255,10 @@ struct RecurringCalendarView: View {
 #if canImport(UIKit)
                     DecoratedRecurringCalendarView(
                         selectedDate: $selectedDate,
+                        visibleMonthDate: $visibleMonthDate,
                         decorations: decoratedDates
                     )
-                    .frame(minHeight: 372, idealHeight: 380)
+                    .frame(height: calendarBlockHeight)
                     .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
 #else
                     DatePicker(
@@ -184,10 +270,35 @@ struct RecurringCalendarView: View {
 #endif
                 }
 
-                Section("Cobros y pagos del día") {
+                Section {
+                    RecurringCalendarLegendCard()
+                    .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                }
+
+                Section {
+                    RecurringMonthlySummaryCard(
+                        monthDate: visibleMonthDate,
+                        expenseTotal: selectedMonthRecurringExpenseTotal,
+                        incomeTotal: selectedMonthRecurringIncomeTotal,
+                        occurrenceCount: selectedMonthExpenseOccurrenceCount,
+                        currencyCode: appCurrencyCode,
+                        hideBalances: hideBalances
+                    )
+                    .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                }
+
+                Section {
                     if selectedDateOccurrences.isEmpty {
-                        Text("No hay pagos recurrentes para este día.")
-                            .foregroundStyle(.secondary)
+                        ContentUnavailableView(
+                            "Sin movimientos para este día",
+                            systemImage: "calendar.badge.exclamationmark",
+                            description: Text("Cambia el día o vuelve a hoy para revisar otros cobros y pagos recurrentes.")
+                        )
+                        .listRowBackground(Color.clear)
                     } else {
                         ForEach(selectedDateOccurrences) { occurrence in
                             RecurringCalendarRow(
@@ -219,14 +330,27 @@ struct RecurringCalendarView: View {
                             }
                         }
                     }
+                } header: {
+                    RecurringCalendarSectionHeader(
+                        title: "Cobros y pagos del día",
+                        subtitle: selectedDateHeaderTitle,
+                        trailingText: selectedDateOccurrences.isEmpty ? nil : "\(selectedDateOccurrences.count) previstos",
+                        detailText: selectedDateOccurrences.isEmpty
+                            ? ""
+                            : "\(selectedDatePendingCount) pendientes · \(selectedDateConfirmedCount) confirmados"
+                    )
                 }
 
-                Section("Próximos pagos recurrentes") {
+                Section {
                     if upcomingOccurrences.isEmpty {
-                        Text("No hay próximos pagos pendientes en los próximos 90 días.")
-                            .foregroundStyle(.secondary)
+                        ContentUnavailableView(
+                            "Sin próximos vencimientos",
+                            systemImage: "checkmark.circle",
+                            description: Text("No hay pagos recurrentes pendientes en los próximos 90 días.")
+                        )
+                        .listRowBackground(Color.clear)
                     } else {
-                        ForEach(upcomingOccurrences.prefix(30)) { occurrence in
+                        ForEach(upcomingOccurrences.prefix(12)) { occurrence in
                             RecurringCalendarRow(
                                 occurrence: occurrence,
                                 currencyCode: appCurrencyCode,
@@ -253,10 +377,26 @@ struct RecurringCalendarView: View {
                             }
                         }
                     }
+                } header: {
+                    RecurringCalendarSectionHeader(
+                        title: "Próximos pagos recurrentes",
+                        subtitle: "Agenda inmediata",
+                        trailingText: upcomingOccurrences.isEmpty ? nil : "\(nextUpcomingPreviewCount) visibles",
+                        detailText: upcomingOccurrences.isEmpty ? "" : "Mostrando los siguientes movimientos pendientes"
+                    )
                 }
             }
             .financeGlassListContainer()
             .navigationTitle("Calendario")
+            .onAppear {
+                visibleMonthDate = monthStart(for: selectedDate)
+            }
+            .onChange(of: selectedDate) { _, newValue in
+                let newMonthStart = monthStart(for: newValue)
+                if !recurringCalendar.isDate(newMonthStart, equalTo: visibleMonthDate, toGranularity: .month) {
+                    visibleMonthDate = newMonthStart
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -266,6 +406,17 @@ struct RecurringCalendarView: View {
                             .financeToolbarIconStyle()
                     }
                     .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    if shouldShowTodayShortcut {
+                        Button("Hoy") {
+                            let today = recurringCalendar.startOfDay(for: Date())
+                            selectedDate = today
+                            visibleMonthDate = monthStart(for: today)
+                        }
+                        .font(.subheadline.weight(.semibold))
+                    }
                 }
             }
             .alert("Acción no disponible", isPresented: $showingActionAlert) {
@@ -400,9 +551,93 @@ struct RecurringCalendarView: View {
     }
 }
 
+private struct RecurringCalendarLegendCard: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        HStack(spacing: 0) {
+            legendItem(color: .red, title: "Vencido")
+            legendItem(color: .orange, title: "Hoy")
+            legendItem(color: .blue, title: "Pendiente")
+            legendItem(color: .green, title: "Confirmado")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Capsule(style: .continuous)
+                .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.90))
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.20) : Color.black.opacity(0.10), lineWidth: 1)
+        )
+    }
+
+    private func legendItem(color: Color, title: String) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .allowsTightening(true)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct RecurringCalendarSectionHeader: View {
+    let title: String
+    let subtitle: String
+    let trailingText: String?
+    let detailText: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.headline.weight(.bold))
+
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                if let trailingText {
+                    Text(trailingText)
+                        .font(.caption.weight(.bold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.accentColor.opacity(0.12))
+                        .foregroundStyle(Color.accentColor)
+                        .clipShape(Capsule())
+                }
+            }
+
+            if !detailText.isEmpty {
+                Text(detailText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .textCase(nil)
+        .padding(.top, 6)
+    }
+}
+
 #if canImport(UIKit)
 private struct DecoratedRecurringCalendarView: UIViewRepresentable {
     @Binding var selectedDate: Date
+    @Binding var visibleMonthDate: Date
     let decorations: [Date: RecurringCalendarStatus]
 
     func makeUIView(context: Context) -> UIView {
@@ -432,6 +667,7 @@ private struct DecoratedRecurringCalendarView: UIViewRepresentable {
         context.coordinator.calendarView = calendarView
         context.coordinator.calendar = calendarView.calendar
         context.coordinator.updateDecorations(decorations)
+        context.coordinator.setVisibleMonth(visibleMonthDate, animated: false)
         context.coordinator.selectDate(selectedDate, animated: false)
 
         return containerView
@@ -442,6 +678,7 @@ private struct DecoratedRecurringCalendarView: UIViewRepresentable {
         guard let calendarView = context.coordinator.calendarView else { return }
         context.coordinator.calendar = calendarView.calendar
         context.coordinator.updateDecorations(decorations)
+        context.coordinator.setVisibleMonth(visibleMonthDate, animated: false)
         context.coordinator.selectDate(selectedDate, animated: false)
     }
 
@@ -496,6 +733,19 @@ private struct DecoratedRecurringCalendarView: UIViewRepresentable {
             selection.setSelected(target, animated: animated)
         }
 
+        func setVisibleMonth(_ date: Date, animated: Bool) {
+            guard let calendarView else { return }
+
+            let target = calendar.dateComponents([.year, .month], from: date)
+            let current = calendarView.visibleDateComponents
+
+            guard current.year != target.year || current.month != target.month else {
+                return
+            }
+
+            calendarView.setVisibleDateComponents(target, animated: animated)
+        }
+
         func dateSelection(_ selection: UICalendarSelectionSingleDate, didSelectDate dateComponents: DateComponents?) {
             guard let dateComponents else { return }
             guard let date = calendar.date(from: dateComponents) else { return }
@@ -503,6 +753,24 @@ private struct DecoratedRecurringCalendarView: UIViewRepresentable {
             let normalizedDate = calendar.startOfDay(for: date)
             if parent.selectedDate != normalizedDate {
                 parent.selectedDate = normalizedDate
+            }
+
+            let selectedMonthStart = calendar.date(
+                from: calendar.dateComponents([.year, .month], from: normalizedDate)
+            ) ?? normalizedDate
+            if parent.visibleMonthDate != selectedMonthStart {
+                parent.visibleMonthDate = selectedMonthStart
+            }
+        }
+
+        func calendarView(_ calendarView: UICalendarView, didChangeVisibleDateComponentsFrom previousDateComponents: DateComponents) {
+            let visible = calendarView.visibleDateComponents
+            guard let year = visible.year, let month = visible.month else { return }
+            guard let visibleMonthStart = calendar.date(from: DateComponents(year: year, month: month, day: 1)) else { return }
+
+            let normalizedMonthStart = calendar.startOfDay(for: visibleMonthStart)
+            if parent.visibleMonthDate != normalizedMonthStart {
+                parent.visibleMonthDate = normalizedMonthStart
             }
         }
 

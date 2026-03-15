@@ -75,14 +75,26 @@ private struct FinanceInsetCardModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     let cornerRadius: CGFloat
 
+    private var strokeColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.18) : Color.black.opacity(0.10)
+    }
+
+    private var highlightColor: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.55)
+    }
+
     func body(content: Content) -> some View {
         content
             .padding(10)
             .background(colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.88))
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.40), lineWidth: 1)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(strokeColor, lineWidth: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(highlightColor, lineWidth: 0.5)
             )
     }
 }
