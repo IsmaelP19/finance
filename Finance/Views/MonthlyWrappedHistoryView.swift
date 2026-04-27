@@ -314,6 +314,8 @@ private enum WrappedStoryPage: Int, CaseIterable {
     case dailyAverageExpense
     case bestWeek
     case comparison
+    case sharedExpenses
+    case slowestReimbursement
     case closing
 }
 
@@ -379,6 +381,11 @@ struct MonthlyWrappedStoriesView: View {
 
         if summary.comparison != nil {
             stories.append(.comparison)
+        }
+
+        if summary.sharedExpenseSummary != nil {
+            stories.append(.sharedExpenses)
+            stories.append(.slowestReimbursement)
         }
 
         stories.append(.closing)
@@ -450,6 +457,18 @@ struct MonthlyWrappedStoriesView: View {
         case .comparison:
             return LinearGradient(
                 colors: [Color(red: 0.07, green: 0.08, blue: 0.18), Color(red: 0.11, green: 0.12, blue: 0.25), Color(red: 0.16, green: 0.16, blue: 0.32)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        case .sharedExpenses:
+            return LinearGradient(
+                colors: [Color(red: 0.05, green: 0.14, blue: 0.18), Color(red: 0.08, green: 0.21, blue: 0.28), Color(red: 0.11, green: 0.28, blue: 0.34)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        case .slowestReimbursement:
+            return LinearGradient(
+                colors: [Color(red: 0.12, green: 0.09, blue: 0.18), Color(red: 0.18, green: 0.13, blue: 0.26), Color(red: 0.26, green: 0.18, blue: 0.32)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
@@ -658,6 +677,12 @@ struct MonthlyWrappedStoriesView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
         case .comparison:
             comparisonStory
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        case .sharedExpenses:
+            sharedExpensesStory
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        case .slowestReimbursement:
+            slowestReimbursementStory
                 .transition(.opacity.combined(with: .scale(scale: 0.98)))
         case .closing:
             closingStory
@@ -1217,6 +1242,129 @@ struct MonthlyWrappedStoriesView: View {
                         comparisonDeltaChip(title: "Tasa ahorro", delta: comparison.savingsRateDelta, valueText: comparison.savingsRateDelta.map { signedPercent($0) } ?? "-", positiveIsGood: true)
                     }
                     .wrappedReveal(step: 4, current: revealStep)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 22)
+            .padding(.top, 22)
+            .padding(.bottom, 20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var sharedExpensesStory: some View {
+        ZStack(alignment: .topLeading) {
+            Image(systemName: "person.2.fill")
+                .font(.system(size: 180, weight: .black))
+                .foregroundStyle(.white.opacity(0.10))
+                .offset(x: 184, y: 16)
+                .rotationEffect(.degrees(-8))
+                .allowsHitTesting(false)
+
+            VStack(alignment: .leading, spacing: 14) {
+                wrappedBadge(title: "Gastos compartidos", icon: "person.2")
+                    .wrappedReveal(step: 1, current: revealStep)
+
+                if let shared = summary.sharedExpenseSummary {
+                    Text(shared.totalExpected.asCurrency(code: appCurrencyCode))
+                        .font(.system(size: 50, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                        .wrappedReveal(step: 2, current: revealStep)
+
+                    Text(shared.movementCount == 1 ? "1 gasto compartido registrado" : "\(shared.movementCount) gastos compartidos registrados")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.90))
+                        .wrappedReveal(step: 3, current: revealStep)
+
+                    Text("Top: \(shared.topSharedExpense.concept) - \(shared.topSharedExpense.expectedReimbursement.asCurrency(code: appCurrencyCode))")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white.opacity(0.94))
+                        .lineLimit(2)
+                        .wrappedReveal(step: 3, current: revealStep)
+
+                    if let rate = shared.recoveryRate {
+                        Text("Recuperaste el \(wrappedPercentString(rate)) al cierre del mes.")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.84))
+                            .wrappedReveal(step: 3, current: revealStep)
+                    }
+
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                        storyMetricTile(title: "Esperado", value: shared.totalExpected.asCurrency(code: appCurrencyCode), tint: .white)
+                        storyMetricTile(title: "Recuperado", value: shared.totalRecovered.asCurrency(code: appCurrencyCode), tint: .green)
+                        storyMetricTile(title: "Pendiente", value: shared.totalPending.asCurrency(code: appCurrencyCode), tint: shared.totalPending > 0 ? .orange : .green)
+                    }
+                    .wrappedReveal(step: 4, current: revealStep)
+                } else {
+                    Text("Sin gastos compartidos")
+                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .wrappedReveal(step: 2, current: revealStep)
+
+                    Text("No registraste gastos compartidos durante este mes.")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.90))
+                        .wrappedReveal(step: 3, current: revealStep)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(.horizontal, 22)
+            .padding(.top, 22)
+            .padding(.bottom, 20)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var slowestReimbursementStory: some View {
+        ZStack(alignment: .topLeading) {
+            Image(systemName: "hourglass")
+                .font(.system(size: 176, weight: .black))
+                .foregroundStyle(.white.opacity(0.10))
+                .offset(x: 182, y: 14)
+                .rotationEffect(.degrees(8))
+                .allowsHitTesting(false)
+
+            VStack(alignment: .leading, spacing: 14) {
+                wrappedBadge(title: "Reembolsos cerrados en el mes", icon: "hourglass")
+                    .wrappedReveal(step: 1, current: revealStep)
+
+                if let slowest = summary.slowestReimbursementCompletion {
+                    Text("\(slowest.daysToComplete) días")
+                        .font(.system(size: 52, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                        .wrappedReveal(step: 2, current: revealStep)
+
+                    Text("Fue el reembolso que más tardó en completarse al 100% este mes.")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.90))
+                        .wrappedReveal(step: 3, current: revealStep)
+
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                        storyMetricTile(title: "Gasto origen", value: slowest.expenseDate.asSpanishShortDate(), tint: .white)
+                        storyMetricTile(title: "Completado", value: slowest.completionDate.asSpanishShortDate(), tint: .green)
+                        storyMetricTile(title: "Reembolso", value: slowest.expectedReimbursement.asCurrency(code: appCurrencyCode), tint: .orange)
+                        storyMetricTile(title: "Concepto", value: slowest.concept, tint: .white)
+                    }
+                    .wrappedReveal(step: 4, current: revealStep)
+                } else {
+                    Text("Sin reembolsos completados")
+                        .font(.system(size: 34, weight: .black, design: .rounded))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .wrappedReveal(step: 2, current: revealStep)
+
+                    Text("Este mes no se completó ningún reembolso al 100%.")
+                        .font(.subheadline)
+                        .foregroundStyle(.white.opacity(0.90))
+                        .wrappedReveal(step: 3, current: revealStep)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

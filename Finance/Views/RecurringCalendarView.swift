@@ -95,6 +95,8 @@ struct RecurringCalendarView: View {
 
     @State private var selectedDate: Date = Date()
     @State private var visibleMonthDate: Date = Date()
+    @State private var calendarHeightMonthDate: Date = Date()
+    @State private var calendarHeightUpdateTask: DispatchWorkItem?
     @State private var showingActionAlert = false
     @State private var actionAlertMessage = ""
 
@@ -113,7 +115,7 @@ struct RecurringCalendarView: View {
     }
 
     private var visibleMonthWeekRows: Int {
-        let monthStartDate = monthStart(for: visibleMonthDate)
+        let monthStartDate = monthStart(for: calendarHeightMonthDate)
         guard let dayRange = recurringCalendar.range(of: .day, in: .month, for: monthStartDate) else {
             return 6
         }
@@ -389,13 +391,26 @@ struct RecurringCalendarView: View {
             .financeGlassListContainer()
             .navigationTitle("Calendario")
             .onAppear {
-                visibleMonthDate = monthStart(for: selectedDate)
+                let initialMonth = monthStart(for: selectedDate)
+                visibleMonthDate = initialMonth
+                setCalendarHeightMonthDate(initialMonth)
             }
             .onChange(of: selectedDate) { _, newValue in
                 let newMonthStart = monthStart(for: newValue)
                 if !recurringCalendar.isDate(newMonthStart, equalTo: visibleMonthDate, toGranularity: .month) {
                     visibleMonthDate = newMonthStart
+                    scheduleCalendarHeightUpdate(for: newMonthStart)
                 }
+            }
+            .onChange(of: visibleMonthDate) { _, newValue in
+                scheduleCalendarHeightUpdate(for: newValue)
+                if !recurringCalendar.isDate(selectedDate, equalTo: newValue, toGranularity: .month) {
+                    selectedDate = newValue
+                }
+            }
+            .onDisappear {
+                calendarHeightUpdateTask?.cancel()
+                calendarHeightUpdateTask = nil
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -412,8 +427,10 @@ struct RecurringCalendarView: View {
                     if shouldShowTodayShortcut {
                         Button("Hoy") {
                             let today = recurringCalendar.startOfDay(for: Date())
+                            let todayMonth = monthStart(for: today)
                             selectedDate = today
-                            visibleMonthDate = monthStart(for: today)
+                            visibleMonthDate = todayMonth
+                            setCalendarHeightMonthDate(todayMonth)
                         }
                         .font(.subheadline.weight(.semibold))
                     }
@@ -530,6 +547,31 @@ struct RecurringCalendarView: View {
         withAnimation {
             recurring.isActive = false
             recurring.updatedAt = Date()
+        }
+    }
+
+    private func scheduleCalendarHeightUpdate(for monthDate: Date) {
+        let normalizedMonth = monthStart(for: monthDate)
+        calendarHeightUpdateTask?.cancel()
+
+        let task = DispatchWorkItem {
+            setCalendarHeightMonthDate(normalizedMonth)
+            calendarHeightUpdateTask = nil
+        }
+
+        calendarHeightUpdateTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: task)
+    }
+
+    private func setCalendarHeightMonthDate(_ monthDate: Date) {
+        guard !recurringCalendar.isDate(monthDate, equalTo: calendarHeightMonthDate, toGranularity: .month) else {
+            return
+        }
+
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            calendarHeightMonthDate = monthDate
         }
     }
 

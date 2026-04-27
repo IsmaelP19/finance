@@ -8,13 +8,15 @@ struct RecurringMonthlySummaryCard: View {
     let currencyCode: String
     let hideBalances: Bool
 
+    private static let monthTitleFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "es_ES")
+        formatter.dateFormat = "LLLL yyyy"
+        return formatter
+    }()
+
     private var monthTitle: String {
-        monthDate.formatted(
-            .dateTime
-                .month(.wide)
-                .year()
-                .locale(Locale(identifier: "es_ES"))
-        )
+        Self.monthTitleFormatter.string(from: monthDate)
     }
 
     var body: some View {

@@ -119,6 +119,32 @@ struct WrappedComparison {
     let savingsRateDelta: Decimal?
 }
 
+struct WrappedSharedExpenseHighlight: Identifiable {
+    let id: UUID
+    let concept: String
+    let expectedReimbursement: Decimal
+    let date: Date
+    let categoryIconName: String
+}
+
+struct WrappedSharedExpenseSummary {
+    let movementCount: Int
+    let totalExpected: Decimal
+    let totalRecovered: Decimal
+    let totalPending: Decimal
+    let recoveryRate: Decimal?
+    let topSharedExpense: WrappedSharedExpenseHighlight
+}
+
+struct WrappedReimbursementCompletionHighlight: Identifiable {
+    let id: UUID
+    let concept: String
+    let expectedReimbursement: Decimal
+    let completionDate: Date
+    let expenseDate: Date
+    let daysToComplete: Int
+}
+
 struct WrappedSummary {
     let month: WrappedMonth
     let movementCount: Int
@@ -135,6 +161,8 @@ struct WrappedSummary {
     let averageDailyExpense: WrappedDailyExpenseAverage
     let bestWeek: WrappedWeekBalanceStat?
     let comparison: WrappedComparison?
+    let sharedExpenseSummary: WrappedSharedExpenseSummary?
+    let slowestReimbursementCompletion: WrappedReimbursementCompletionHighlight?
 }
 
 private enum WrappedMonthFormatter {
@@ -265,6 +293,7 @@ enum MonthlyWrappedService {
         let currentInterval = interval(for: month)
         let currentMovements = movements.filter { currentInterval.contains($0.occurredAt) }
         let currentTotals = periodTotals(for: currentMovements)
+        let reimbursementsByExpenseID = reimbursementIncomesByExpenseID(from: movements)
 
         let currentExpenseMovements = currentMovements.filter { $0.type == .expense }
 
@@ -290,6 +319,17 @@ enum MonthlyWrappedService {
             )
         }
 
+        let sharedSummary = sharedExpenseSummary(
+            for: month,
+            currentMovements: currentMovements,
+            reimbursementsByExpenseID: reimbursementsByExpenseID
+        )
+        let slowestCompletion = slowestReimbursementCompletion(
+            for: month,
+            movements: movements,
+            reimbursementsByExpenseID: reimbursementsByExpenseID
+        )
+
         return WrappedSummary(
             month: month,
             movementCount: currentTotals.movementCount,
@@ -305,7 +345,9 @@ enum MonthlyWrappedService {
             bestSavingsCategory: bestSavingsCategory(for: month, currentExpenseMovements: currentExpenseMovements, allMovements: movements),
             averageDailyExpense: averageDailyExpense(for: month, expenseTotal: currentTotals.expense),
             bestWeek: bestWeek(for: month, movements: currentMovements),
-            comparison: comparison
+            comparison: comparison,
+            sharedExpenseSummary: sharedSummary,
+            slowestReimbursementCompletion: slowestCompletion
         )
     }
 
@@ -573,6 +615,109 @@ enum MonthlyWrappedService {
         )
     }
 
+    private static func sharedExpenseSummary(
+        for month: WrappedMonth,
+        currentMovements: [Movement],
+        reimbursementsByExpenseID: [UUID: [Movement]]
+    ) -> WrappedSharedExpenseSummary? {
+        let monthInterval = interval(for: month)
+        let sharedExpenses = currentMovements
+            .filter { $0.type == .expense && $0.isSharedExpense }
+            .filter { $0.expectedReimbursementAmount > 0 }
+
+        guard let topExpense = sharedExpenses.max(by: { lhs, rhs in
+            if lhs.expectedReimbursementAmount == rhs.expectedReimbursementAmount {
+                return lhs.occurredAt < rhs.occurredAt
+            }
+            return lhs.expectedReimbursementAmount < rhs.expectedReimbursementAmount
+        }) else {
+            return nil
+        }
+
+        var totalExpected: Decimal = 0
+        var totalRecovered: Decimal = 0
+        var totalPending: Decimal = 0
+
+        for expense in sharedExpenses {
+            let reimbursements = reimbursementsByExpenseID[expense.id] ?? []
+            let recoveredUntilMonthEnd = reimbursements
+                .filter { $0.occurredAt < monthInterval.end }
+                .reduce(Decimal(0)) { partial, reimbursement in
+                    partial + max(reimbursement.amount, 0)
+                }
+            let expected = expense.expectedReimbursementAmount
+            let recoveredApplied = min(recoveredUntilMonthEnd, expected)
+            let pending = max(expected - recoveredApplied, 0)
+
+            totalExpected += expected
+            totalRecovered += recoveredApplied
+            totalPending += pending
+        }
+
+        let recoveryRate: Decimal?
+        if totalExpected > 0 {
+            recoveryRate = (totalRecovered / totalExpected) * 100
+        } else {
+            recoveryRate = nil
+        }
+
+        return WrappedSharedExpenseSummary(
+            movementCount: sharedExpenses.count,
+            totalExpected: totalExpected,
+            totalRecovered: totalRecovered,
+            totalPending: totalPending,
+            recoveryRate: recoveryRate,
+            topSharedExpense: WrappedSharedExpenseHighlight(
+                id: topExpense.id,
+                concept: topExpense.concept,
+                expectedReimbursement: topExpense.expectedReimbursementAmount,
+                date: topExpense.occurredAt,
+                categoryIconName: topExpense.category?.iconName ?? "person.2.fill"
+            )
+        )
+    }
+
+    private static func slowestReimbursementCompletion(
+        for month: WrappedMonth,
+        movements: [Movement],
+        reimbursementsByExpenseID: [UUID: [Movement]]
+    ) -> WrappedReimbursementCompletionHighlight? {
+        let monthInterval = interval(for: month)
+        let sharedExpenses = movements
+            .filter { $0.type == .expense && $0.isSharedExpense }
+            .filter { $0.expectedReimbursementAmount > 0 }
+
+        var completions: [WrappedReimbursementCompletionHighlight] = []
+
+        for expense in sharedExpenses {
+            let reimbursements = reimbursementsByExpenseID[expense.id] ?? []
+            guard let completionDate = completionDate(for: expense, reimbursements: reimbursements) else {
+                continue
+            }
+            guard monthInterval.contains(completionDate) else {
+                continue
+            }
+
+            completions.append(
+                WrappedReimbursementCompletionHighlight(
+                    id: expense.id,
+                    concept: expense.concept,
+                    expectedReimbursement: expense.expectedReimbursementAmount,
+                    completionDate: completionDate,
+                    expenseDate: expense.occurredAt,
+                    daysToComplete: daysBetween(start: expense.occurredAt, end: completionDate)
+                )
+            )
+        }
+
+        return completions.max(by: { lhs, rhs in
+            if lhs.daysToComplete == rhs.daysToComplete {
+                return lhs.expectedReimbursement < rhs.expectedReimbursement
+            }
+            return lhs.daysToComplete < rhs.daysToComplete
+        })
+    }
+
     private static func weekIndexInMonth(for weekStartDate: Date, month: WrappedMonth, calendar: Calendar) -> Int {
         let monthStart = month.monthStart
         let anchorWeekStart = calendar.dateInterval(of: .weekOfMonth, for: monthStart)?.start ?? monthStart
@@ -600,6 +745,45 @@ enum MonthlyWrappedService {
                 movementCount: value.movementCount
             )
         }
+    }
+
+    private static func reimbursementIncomesByExpenseID(from movements: [Movement]) -> [UUID: [Movement]] {
+        var grouped: [UUID: [Movement]] = [:]
+
+        for movement in movements where movement.type == .income {
+            guard let expenseID = movement.reimbursementForId else { continue }
+            grouped[expenseID, default: []].append(movement)
+        }
+
+        for expenseID in grouped.keys {
+            grouped[expenseID]?.sort { lhs, rhs in
+                lhs.occurredAt < rhs.occurredAt
+            }
+        }
+
+        return grouped
+    }
+
+    private static func completionDate(for expense: Movement, reimbursements: [Movement]) -> Date? {
+        let expected = expense.expectedReimbursementAmount
+        guard expected > 0 else { return nil }
+
+        var recovered: Decimal = 0
+        for reimbursement in reimbursements {
+            recovered += max(reimbursement.amount, 0)
+            if recovered >= expected {
+                return reimbursement.occurredAt
+            }
+        }
+
+        return nil
+    }
+
+    private static func daysBetween(start: Date, end: Date) -> Int {
+        let calendar = Calendar.current
+        let startDay = calendar.startOfDay(for: start)
+        let endDay = calendar.startOfDay(for: end)
+        return max(calendar.dateComponents([.day], from: startDay, to: endDay).day ?? 0, 0)
     }
 
     private static func categoryDescriptor(for movement: Movement) -> WrappedCategoryDescriptor {

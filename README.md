@@ -6,26 +6,20 @@
 ![Persistence](https://img.shields.io/badge/Persistence-SwiftData-34C759)
 ![Privacy](https://img.shields.io/badge/Data-Local%20Only-111111)
 
-Aplicacion iOS para gestionar patrimonio financiero personal de forma local: cuentas bancarias, saldos y analitica visual.
-
-## Capturas
-
-![Inicio](docs/screenshots/home.png)
-![Graficos](docs/screenshots/charts.png)
-![Ajustes](docs/screenshots/settings.png)
-
+Aplicacion iOS para gestionar patrimonio financiero personal de forma local: cuentas bancarias, movimientos, presupuestos y analitica.
 
 ## Objetivo
 
-- Llevar control manual de saldos por cuenta y banco
-- Ver patrimonio total y desglose por tipo de cuenta
-- Mantener privacidad total (sin backend ni sincronizacion externa)
+- Llevar control manual de cuentas, saldos y movimientos
+- Entender ingresos, gastos, patrimonio e inversiones con analitica visual
+- Mantener privacidad total (sin backend ni sincronizacion con terceros)
 
 ## Stack tecnico
 
 - SwiftUI
 - SwiftData
 - Swift Charts
+- WidgetKit + App Intents
 - Xcode (iOS 17+)
 
 ## Funcionalidades actuales
@@ -35,40 +29,63 @@ Aplicacion iOS para gestionar patrimonio financiero personal de forma local: cue
   - Tipos de cuenta (corriente, ahorro, inversion, etc.)
   - Banco con icono y color personalizado
   - Moneda global configurable para toda la app
+  - Modo ocultar/mostrar saldos
+
 - Movimientos
   - Registro de ingresos, gastos y transferencias entre cuentas
   - Edicion y eliminacion con ajuste de saldos
-  - Filtros por tipo/categoria y buscador de movimientos
-- Categorias
-  - Gestion completa de categorias (crear, editar, eliminar)
-  - Categoria con icono y color
-- Estadisticas
-  - Analitica en una sola pantalla con dos ambitos: Movimientos e Inversiones
-  - Filtros temporales (mes actual, ultimo mes, ultimos 3 meses, ano actual, ano anterior, personalizado y todo)
+  - Filtros por cuenta, tipo, categoria, periodo y buscador avanzado
+  - Vista detalle rica del movimiento (incluye cambios rapidos)
+
+- Gastos compartidos y reembolsos
+  - Definir "mi parte" en gastos compartidos
+  - Registro de ingresos como reembolso vinculados al gasto origen
+  - Seguimiento de recuperado, pendiente y exceso
+  - Lista de reembolsos pendientes desde Inicio
+
+- Recurrentes
+  - Crear ingresos/gastos recurrentes (semanal, mensual o anual)
+  - Confirmacion manual de ocurrencias para impactar saldo
+  - Gestion visual en calendario con estados (vencido, hoy, pendiente, confirmado)
+
+- Presupuesto mensual
+  - Presupuesto unico con distribucion por categorias
+  - Progreso global y por categoria
+  - Alertas locales al 80 % y 100 %
+  - Vista de detalle con desglose por categoria
+
+- Estadisticas y Wrapped
+  - Ambitos de estadisticas: Movimientos e Inversiones
+  - Comparativas entre periodos y evolucion mensual
   - Graficos por categoria para ingresos y gastos
   - KPIs de inversion (invertido, mercado, rentabilidad y rentabilidad %)
-  - Evolucion historica de inversiones y desglose por cuenta
+  - Wrapped mensual con historial y experiencia tipo stories
+
 - Inversiones
   - Campos de cantidad invertida y valor de mercado por cuenta de inversion
-  - Actualizacion manual con fecha seleccionable para completar historico
-  - Snapshots diarios para construir series temporales
-  - Recordatorio local de actualizacion de inversiones de lunes a viernes
-- Exportacion, importacion y sync manual
-  - Exportar/importar JSON con compatibilidad retroactiva entre versiones
-  - Modo de importacion: mantener datos actuales o reemplazar
-  - Backup manual en iCloud Drive con retencion automatica de las 2 ultimas copias
-  - Backup automatico diario configurable por hora (modo best effort en iOS)
+  - Snapshots diarios para construir historico
+  - Evolucion temporal agregada y desglose por cuenta
+  - Recordatorio local de actualizacion de inversiones (L-V)
+
+- Exportacion, importacion y backups
+  - Exportar/importar JSON versionado con compatibilidad retroactiva
+  - Importacion en modo "sumar" o "reemplazar"
+  - Sincronizacion manual con carpeta de iCloud Drive
+  - Retencion automatica de las 2 ultimas copias en iCloud Drive
+  - Backup automatico diario configurable por hora (best effort en iOS)
   - Aviso al abrir la app si existe una copia mas reciente en iCloud Drive
-- App Icon
-  - Variantes light/dark/tinted
 
-## Privacidad y RGPD
+- Widget y atajos
+  - Widget para anadir gasto rapido
+  - Deep link `finance://add-expense`
+  - Shortcut/App Intent para registrar gastos desde Atajos/Siri
 
-- Sin llamadas de red para datos financieros
-- Sin APIs de bancos
-- Sin analitica de terceros
+## Privacidad
+
+- Sin APIs de bancos ni servicios de terceros
+- Sin analitica externa
 - Persistencia local en dispositivo mediante SwiftData
-- Export/import manual controlado por el usuario
+- Control total del usuario sobre export/import y backups
 
 ## Estructura del proyecto
 
@@ -76,53 +93,49 @@ Aplicacion iOS para gestionar patrimonio financiero personal de forma local: cue
 Finance/
   README.md
   docs/
-    screenshots/
-      home.png
-      charts.png
-      settings.png
   Finance/
     FinanceApp.swift
     ContentView.swift
     Models/
-      AccountType.swift
-      Bank.swift
       BankAccount.swift
-      BankColor.swift
-      BankIcon.swift
       Movement.swift
-      MovementCategory.swift
-      MovementType.swift
+      RecurringMovement.swift
+      Budget.swift
+      BudgetItem.swift
       InvestmentSnapshot.swift
+      ...
     Views/
-      AccountListView.swift
-      AddAccountView.swift
-      AccountDetailView.swift
-      MovementsView.swift
-      AddMovementView.swift
-      MovementStatsView.swift
       ChartsView.swift
-      BankManagementView.swift
-      CategoryManagementView.swift
+      MovementsView.swift
+      RecurringCalendarView.swift
+      AccountListView.swift
       SettingsView.swift
-      Charts/
-        PatrimonyPieChart.swift
-        BalanceByBankBarChart.swift
-        CategoryPieChart.swift
-        CategoryAmountBarChart.swift
-      Components/
-        AccountRowView.swift
-        TotalBalanceCard.swift
-        BalanceByTypeCard.swift
-        CategoryChipView.swift
-        InvestmentPerformanceCard.swift
+      MovementStatsView.swift
+      MonthlyWrappedHistoryView.swift
+      PendingReimbursementsListView.swift
+      AddMovementView.swift
+      AddBudgetView.swift
+      ...
     Services/
       DataExportService.swift
       ManualSyncService.swift
-      InvestmentReminderService.swift
+      AutoBackupService.swift
+      RecurringMovementService.swift
+      BudgetService.swift
+      MonthlyWrappedService.swift
+      ...
+    Intents/
+      AddExpenseIntent.swift
+      BankAccountEntity.swift
+      MovementCategoryEntity.swift
     Utilities/
-      CurrencyFormatter.swift
-      AppDateFormatter.swift
       AppCurrency.swift
+      AppVersion.swift
+      DeepLinkRouter.swift
+      ...
+  FinanceWidget/
+    QuickExpenseWidget.swift
+    FinanceWidgetBundle.swift
 ```
 
 ## Ejecutar en local
@@ -131,7 +144,7 @@ Finance/
 2. Seleccionar un simulador iOS
 3. `Cmd + R`
 
-Si cambias modelos de SwiftData y hay inconsistencias de esquema en pruebas:
+Si cambias modelos de SwiftData y hay inconsistencias de esquema:
 
 - `Product > Clean Build Folder`
 - Borrar la app del simulador
@@ -139,18 +152,18 @@ Si cambias modelos de SwiftData y hay inconsistencias de esquema en pruebas:
 
 ## Formato de numeros
 
-La aplicacion usa este formato monetario:
+La aplicacion usa formato monetario con:
 
 - Separador de miles: `.`
 - Separador decimal: `,`
-- Ejemplo: `12.345,67 €`
+- Ejemplo: `12.345,67 EUR`
 
 ## Roadmap (proximos pasos)
 
-- Mejoras de UX y pulido visual en estadisticas y movimientos
-- Filtros avanzados y comparativas entre periodos
-- Mas automatizaciones alrededor de inversiones (alertas y seguimiento)
+- Mejoras de UX y rendimiento en pantallas con listas y filtros largos
+- Ampliar analitica comparativa entre periodos (tendencias y variaciones)
+- Mayor automatizacion para seguimiento de inversiones
 
 ---
 
-Proyecto personal en evolucion. Enfocado en simplicidad, privacidad y control local de datos.
+Proyecto personal en evolucion, enfocado en simplicidad, privacidad y control local de datos.
