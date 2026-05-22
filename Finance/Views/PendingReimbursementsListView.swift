@@ -28,14 +28,7 @@ private struct PendingReimbursementRow: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(iconColor.opacity(0.18))
-                .frame(width: 48, height: 48)
-                .overlay {
-                    Image(systemName: iconName)
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(iconColor)
-                }
+            FinanceGlassIconBadge(systemName: iconName, tint: iconColor, size: 46)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(movement.concept)
@@ -69,7 +62,8 @@ private struct PendingReimbursementRow: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .padding(.vertical, 6)
+        .financeElevatedRow()
+        .padding(.vertical, 2)
     }
 }
 
@@ -110,12 +104,12 @@ struct PendingReimbursementsListView: View {
         NavigationStack {
             List {
                 if entries.isEmpty {
-                    ContentUnavailableView(
+                    FinanceEmptyStateContent(
                         "Sin saldo pendiente",
                         systemImage: "checkmark.circle",
                         description: Text("No hay movimientos compartidos con reembolsos pendientes.")
                     )
-                    .listRowBackground(Color.clear)
+                    .financeGlassClearListRow()
                 } else {
                     Section {
                         VStack(alignment: .leading, spacing: 10) {
@@ -133,12 +127,11 @@ struct PendingReimbursementsListView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .financeGlassCard()
-                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                        .listRowBackground(Color.clear)
+                            .financeGlassCard()
+                            .financeGlassClearListRow()
                     }
 
-                    Section("Movimientos compartidos") {
+                    Section {
                         ForEach(entries, id: \.movement.id) { entry in
                             Button {
                                 selectedMovement = PendingReimbursementSelection(id: entry.movement.id, movement: entry.movement)
@@ -150,7 +143,10 @@ struct PendingReimbursementsListView: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .financeGlassClearListRow()
                         }
+                    } header: {
+                        FinanceGlassSectionHeader(title: "Movimientos compartidos", systemImage: "person.2.fill", subtitle: "Toca para ver el detalle y registrar reembolso")
                     }
                 }
             }

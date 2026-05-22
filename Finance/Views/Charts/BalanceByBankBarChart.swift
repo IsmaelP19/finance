@@ -6,77 +6,184 @@
 //
 
 import SwiftUI
-import Charts
 
 struct BalanceByBankBarChart: View {
     @Environment(\.colorScheme) private var colorScheme
     let data: [BankBalanceDatum]
     let currencyCode: String
 
+    private var sortedData: [BankBalanceDatum] {
+        data.sorted { abs($0.amountDouble) > abs($1.amountDouble) }
+    }
+
+    private var maxMagnitude: Double {
+        data.map { abs($0.amountDouble) }.max() ?? 0
+    }
+
+    private var hasNegatives: Bool {
+        data.contains { $0.amountDouble < 0 }
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("Saldo por banco", systemImage: "building.columns.fill")
-                .font(.headline)
-                .foregroundStyle(colorScheme == .dark ? .white : .primary)
+        VStack(alignment: .leading, spacing: 16) {
+            chartHeader
 
-            Chart(data) { item in
-                BarMark(
-                    x: .value("Saldo", item.amountDouble),
-                    y: .value("Banco", item.name)
+            if data.isEmpty {
+                FinanceEmptyStateContent(
+                    "Sin bancos",
+                    systemImage: "building.columns",
+                    description: Text("Añade cuentas para ver el saldo por banco.")
                 )
-                .foregroundStyle(item.color.gradient)
-                .cornerRadius(5)
-                .annotation(position: .trailing) {
-                    Text(item.amount.asCurrency(code: currencyCode))
-                        .font(.caption)
-                        .foregroundStyle(colorScheme == .dark ? .white.opacity(0.7) : .secondary)
-                }
-            }
-            .chartXAxis {
-                AxisMarks(position: .bottom) { _ in
-                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
-                        .foregroundStyle(.secondary.opacity(0.22))
-                    AxisValueLabel()
-                        .font(.caption2)
-                        .foregroundStyle(colorScheme == .dark ? .white.opacity(0.65) : .secondary)
-                }
-            }
-            .chartYAxis {
-                AxisMarks(position: .leading) { _ in
-                    AxisTick()
-                    AxisValueLabel()
-                        .font(.caption)
-                        .foregroundStyle(colorScheme == .dark ? .white.opacity(0.85) : .primary)
-                }
-            }
-            .frame(height: max(230, CGFloat(data.count) * 52))
-            .padding(12)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-
-            VStack(spacing: 8) {
-                ForEach(data) { item in
-                    HStack {
-                        Image(systemName: item.iconName)
-                            .foregroundStyle(item.color)
-                            .frame(width: 16)
-                        Text(item.name)
-                            .font(.subheadline)
-                            .foregroundStyle(colorScheme == .dark ? .white : .primary)
-                        Spacer()
-                        Text("\(item.count) \(item.count == 1 ? "cuenta" : "cuentas")")
-                            .font(.caption)
-                            .foregroundStyle(colorScheme == .dark ? .white.opacity(0.65) : .secondary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(Array(sortedData.enumerated()), id: \.element.id) { index, item in
+                        BankBalanceRow(
+                            item: item,
+                            currencyCode: currencyCode,
+                            maxMagnitude: maxMagnitude,
+                            rank: index + 1
+                        )
                     }
                 }
             }
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .padding(FinanceGlassTokens.Spacing.medium)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
+            RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 8)
+    }
+
+    private var chartHeader: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Saldo por banco", systemImage: "building.columns.fill")
+                    .font(.caption.weight(.bold))
+                    .textCase(.uppercase)
+                    .tracking(0.7)
+                    .foregroundStyle((colorScheme == .dark ? Color.white : Color.primary).opacity(0.78))
+
+                Text("Ranking de tus entidades bancarias según saldo acumulado")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Text("\(data.count) \(data.count == 1 ? "banco" : "bancos")")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(Color.primary.opacity(0.06), in: Capsule())
+
+            if hasNegatives {
+                Text("Incluye negativos")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .background(Color.red.opacity(0.10), in: Capsule())
+            }
+        }
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+private struct BankBalanceRow: View {
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
+    let item: BankBalanceDatum
+    let currencyCode: String
+    let maxMagnitude: Double
+    let rank: Int
+
+    private var progress: Double {
+        guard maxMagnitude > 0 else { return 0 }
+        return min(abs(item.amountDouble) / maxMagnitude, 1)
+    }
+
+    private var isZero: Bool {
+        item.amount == 0
+    }
+
+    private var isNegative: Bool {
+        item.amount < 0
+    }
+
+    private var trackTint: Color {
+        Color.primary.opacity(0.09)
+    }
+
+    private var fillTint: Color {
+        isNegative ? .red : item.color
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
+                Text("#\(rank)")
+                    .font(.caption2.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Color.primary.opacity(0.06), in: Capsule())
+
+                HStack(spacing: 12) {
+                    Image(systemName: item.iconName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(item.color)
+                        .frame(width: 34, height: 34)
+                        .background(item.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+
+                        Text("\(item.count) \(item.count == 1 ? "cuenta" : "cuentas")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer(minLength: 10)
+
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text(item.amount.masked(hideBalances, code: currencyCode))
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(isNegative ? .red : .primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
+            }
+
+            GeometryReader { geometry in
+                let barWidth = isZero ? 0 : max(8, geometry.size.width * progress)
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(trackTint)
+
+                    if !isZero {
+                        Capsule()
+                            .fill(fillTint)
+                            .frame(width: barWidth)
+                    }
+                }
+            }
+            .frame(height: 7)
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
     }
 }

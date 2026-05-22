@@ -18,81 +18,128 @@ struct PatrimonyPieChart: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Label("Patrimonio por tipo", systemImage: "chart.pie.fill")
-                .font(.headline)
-                .foregroundStyle(.primary)
+        VStack(alignment: .leading, spacing: 16) {
+            chartHeader
 
             if data.isEmpty || total <= 0 {
-                ContentUnavailableView(
+                FinanceEmptyStateContent(
                     "Sin valores positivos",
                     systemImage: "chart.pie",
                     description: Text("El grafico circular necesita saldos positivos.")
                 )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 18)
             } else {
-                Chart(data) { item in
-                    SectorMark(
-                        angle: .value("Saldo", item.amountDouble),
-                        innerRadius: .ratio(0.56),
-                        angularInset: 1.6
-                    )
-                    .foregroundStyle(item.type.color.gradient)
-                    .cornerRadius(4)
-                }
-                .frame(height: 220)
-                .chartLegend(.hidden)
-                .chartBackground { proxy in
-                    GeometryReader { geo in
-                        let frame = geo[proxy.plotFrame!]
-                        VStack(spacing: 3) {
-                            Text("Total")
-                                .font(.caption)
-                                .foregroundStyle(colorScheme == .dark ? .white.opacity(0.65) : .secondary)
-                            Text(Decimal(total).asCurrency(code: currencyCode))
-                                .font(.subheadline)
-                                .fontWeight(.bold)
-                                .foregroundStyle(colorScheme == .dark ? .white : .primary)
-                                .minimumScaleFactor(0.8)
-                        }
-                        .position(x: frame.midX, y: frame.midY)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 18) {
+                        donutChart
+                            .frame(width: 148, height: 148)
+
+                        compactLegend
+                    }
+
+                    VStack(alignment: .leading, spacing: 14) {
+                        donutChart
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 164)
+                        compactLegend
                     }
                 }
-                .padding(12)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
 
-                VStack(spacing: 8) {
-                    ForEach(data) { item in
-                        HStack(spacing: 10) {
-                            Circle()
-                                .fill(item.type.color)
-                                .frame(width: 10, height: 10)
+            }
+        }
+        .padding(FinanceGlassTokens.Spacing.medium)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+    }
 
-                            Text(item.type.displayName)
-                                .font(.subheadline)
-                                .foregroundStyle(colorScheme == .dark ? .white : .primary)
+    private var chartHeader: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Patrimonio por tipo", systemImage: "chart.pie.fill")
+                    .font(.caption.weight(.bold))
+                    .textCase(.uppercase)
+                    .tracking(0.7)
+                    .foregroundStyle(.primary.opacity(0.78))
 
-                            Spacer()
+                Text("Distribución de saldos")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
-                            Text("\(Int((item.amountDouble / total) * 100))%")
-                                .font(.subheadline)
-                                .foregroundStyle(colorScheme == .dark ? .white.opacity(0.65) : .secondary)
+            Spacer()
 
-                            Text(item.amount.asCurrency(code: currencyCode))
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(colorScheme == .dark ? .white : .primary)
-                        }
+            Text("\(data.count) \(data.count == 1 ? "tipo" : "tipos")")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .background(Color.primary.opacity(0.06), in: Capsule())
+        }
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var donutChart: some View {
+        Chart(data) { item in
+            SectorMark(
+                angle: .value("Saldo", item.amountDouble),
+                innerRadius: .ratio(0.62),
+                angularInset: 1.8
+            )
+            .foregroundStyle(item.type.color.gradient)
+            .cornerRadius(5)
+        }
+        .chartLegend(.hidden)
+        .chartBackground { proxy in
+            GeometryReader { geo in
+                if let plotFrame = proxy.plotFrame {
+                    let frame = geo[plotFrame]
+                    VStack(spacing: 3) {
+                        Text("Total")
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Text(Decimal(total).asCurrency(code: currencyCode))
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.62)
                     }
+                    .frame(width: min(frame.width * 0.54, 88))
+                    .position(x: frame.midX, y: frame.midY)
                 }
             }
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 8)
+        .accessibilityLabel("Gráfico de patrimonio por tipo")
+    }
+
+    private var compactLegend: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(data) { item in
+                HStack(spacing: 9) {
+                    Circle()
+                        .fill(item.type.color)
+                        .frame(width: 9, height: 9)
+
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(item.type.displayName)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+
+                        Text("\(Int((item.amountDouble / total) * 100))% · \(item.amount.asCurrency(code: currencyCode))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

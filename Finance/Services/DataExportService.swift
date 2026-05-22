@@ -132,7 +132,7 @@ enum DataExportService {
         let budgetDTOs = budgets.map { BudgetDTO(from: $0) }
 
         let exportData = ExportData(
-            version: 6,
+            version: 7,
             exportDate: Date(),
             banks: bankDTOs,
             accounts: accountDTOs,
@@ -243,6 +243,10 @@ enum DataExportService {
             }
             if let categoryId = dto.categoryId {
                 recurring.category = categoriesByID[categoryId]
+            }
+            if recurring.account?.isArchived == true {
+                recurring.isActive = false
+                recurring.updatedAt = Date()
             }
             return recurring
         }

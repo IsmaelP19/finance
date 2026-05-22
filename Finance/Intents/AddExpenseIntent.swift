@@ -46,7 +46,7 @@ struct AddExpenseIntent: AppIntent {
         let accountDescriptor = FetchDescriptor<BankAccount>(
             predicate: #Predicate { $0.id == accountID }
         )
-        guard let bankAccount = try context.fetch(accountDescriptor).first else {
+        guard let bankAccount = try context.fetch(accountDescriptor).first, bankAccount.isActive else {
             throw IntentError.accountNotFound
         }
 

@@ -17,11 +17,15 @@ struct AccountDetailView: View {
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \InvestmentSnapshot.snapshotDate, order: .forward) private var snapshots: [InvestmentSnapshot]
+    @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
+    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
 
     @Bindable var account: BankAccount
 
     @State private var showingEditSheet = false
     @State private var showingDeleteConfirmation = false
+    @State private var showingDeleteError = false
+    @State private var deleteErrorMessage = ""
     @State private var showingInvestedUpdateSheet = false
     @State private var showingMarketValueUpdateSheet = false
 
@@ -33,53 +37,29 @@ struct AccountDetailView: View {
 
     var body: some View {
         List {
-            // Cabecera con icono del tipo de cuenta y saldo
             Section {
-                VStack(spacing: 12) {
-                    Image(systemName: account.accountType.icon)
-                        .font(.system(size: 44))
-                        .foregroundStyle(.white)
-                        .frame(width: 72, height: 72)
-                        .background(account.accountType.color)
-                        .clipShape(RoundedRectangle(cornerRadius: 18))
+                AccountDetailHero(account: account, currencyCode: appCurrencyCode, hideBalances: hideBalances)
+            }
+            .financeGlassClearListRow()
 
-                    Text(account.name)
-                        .font(.title2)
-                        .fontWeight(.bold)
+            Section {
+                VStack(alignment: .leading, spacing: 10) {
+                    FinanceGlassSectionHeader(title: "Detalles", systemImage: "info.circle.fill")
 
-                    Text(account.bankDisplayName)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    Text(account.balance.masked(hideBalances, code: appCurrencyCode))
-                        .font(.system(size: 36, weight: .bold, design: .rounded))
-                        .foregroundStyle(account.balance.isNegative ? .red : .primary)
-                        .padding(.top, 4)
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                        AccountMetricTile(title: "Banco", value: account.bankDisplayName, icon: account.bank?.iconName ?? "building.columns", tint: account.bank?.color ?? account.accountType.color)
+                        AccountMetricTile(title: "Tipo", value: account.accountType.displayName, icon: account.accountType.icon, tint: account.accountType.color)
+                        AccountMetricTile(title: "Moneda", value: appCurrencyCode, icon: "eurosign.circle", tint: .blue)
+                        AccountMetricTile(title: "Actualizada", value: account.updatedAt.asSpanishDateTime(), icon: "clock", tint: .secondary)
+                    }
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 16)
-                .listRowBackground(Color.clear)
             }
-
-            // Información detallada
-            Section("Detalles") {
-                DetailRow(label: "Banco", value: account.bankDisplayName)
-                DetailRow(label: "Tipo", value: account.accountType.displayName)
-                DetailRow(label: "Moneda", value: appCurrencyCode)
-                DetailRow(
-                    label: "Creada",
-                    value: account.createdAt.asSpanishDateTime()
-                )
-                DetailRow(
-                    label: "Última actualización",
-                    value: account.updatedAt.asSpanishDateTime()
-                )
-            }
+            .financeGlassClearListRow()
 
             if account.isInvestmentAccount {
-                Section("Evolución") {
+                Section {
                     if accountSnapshots.isEmpty {
-                        ContentUnavailableView(
+                        FinanceEmptyStateContent(
                             "Sin histórico",
                             systemImage: "chart.line.uptrend.xyaxis",
                             description: Text("Actualiza inversión y valor de mercado para empezar la serie temporal")
@@ -91,32 +71,30 @@ struct AccountDetailView: View {
                             hideBalances: hideBalances
                         )
                     }
+                } header: {
+                    FinanceGlassSectionHeader(title: "Evolución", systemImage: "chart.line.uptrend.xyaxis")
                 }
+                .financeGlassFormSection()
 
-                Section("Inversión") {
-                    DetailRow(label: "Cantidad invertida", value: account.effectiveInvestedAmount.masked(hideBalances, code: appCurrencyCode))
-                    DetailRow(label: "Valor de mercado", value: account.effectiveMarketValue.masked(hideBalances, code: appCurrencyCode))
-
-                    DetailRow(
-                        label: "Rentabilidad",
-                        value: account.investmentProfit.masked(hideBalances, code: appCurrencyCode),
-                        valueColor: account.investmentProfit.isNegative ? .red : .green
-                    )
+                Section {
+                    AccountMetricTile(title: "Invertido", value: account.effectiveInvestedAmount.masked(hideBalances, code: appCurrencyCode), icon: "tray.and.arrow.down.fill", tint: .purple)
+                    AccountMetricTile(title: "Mercado", value: account.effectiveMarketValue.masked(hideBalances, code: appCurrencyCode), icon: "chart.line.uptrend.xyaxis", tint: .blue)
+                    AccountMetricTile(title: "Rentabilidad", value: account.investmentProfit.masked(hideBalances, code: appCurrencyCode), icon: "arrow.up.right", tint: account.investmentProfit.isNegative ? .red : .green)
 
                     if let returnPercent = account.investmentReturnPercent {
-                        DetailRow(
-                            label: "Rentabilidad %",
-                            value: returnPercent.asPercent(),
-                            valueColor: returnPercent.isNegative ? .red : .green
-                        )
+                        AccountMetricTile(title: "Rentabilidad %", value: returnPercent.asPercent(), icon: "percent", tint: returnPercent.isNegative ? .red : .green)
                     }
 
                     if let marketValueUpdatedAt = account.marketValueUpdatedAt {
-                        DetailRow(label: "Mercado actualizado", value: marketValueUpdatedAt.asSpanishDateTime())
+                        AccountMetricTile(title: "Mercado actualizado", value: marketValueUpdatedAt.asSpanishDateTime(), icon: "calendar.badge.clock", tint: .secondary)
                     }
+                } header: {
+                    FinanceGlassSectionHeader(title: "Inversión", systemImage: "chart.pie.fill")
                 }
+                .financeGlassFormSection()
 
-                Section("Actualización de inversión") {
+                if !account.isArchived {
+                    Section {
                     Button {
                         showingInvestedUpdateSheet = true
                     } label: {
@@ -128,32 +106,51 @@ struct AccountDetailView: View {
                     } label: {
                         Label("Actualizar valor de mercado", systemImage: "chart.line.uptrend.xyaxis")
                     }
+                    } header: {
+                        FinanceGlassSectionHeader(title: "Actualización", systemImage: "arrow.triangle.2.circlepath")
+                    }
+                    .financeGlassFormSection()
                 }
             }
 
             // Notas
             if !account.notes.isEmpty {
-                Section("Notas") {
+                Section {
                     Text(account.notes)
                         .font(.body)
                         .foregroundStyle(.secondary)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Notas", systemImage: "note.text")
                 }
+                .financeGlassFormSection()
             }
 
-            // Acciones
-            Section {
-                Button {
-                    showingEditSheet = true
-                } label: {
-                    Label("Editar cuenta", systemImage: "pencil")
+            if account.isArchived {
+                Section {
+                    Label("Cuenta eliminada", systemImage: "archivebox.fill")
+                        .foregroundStyle(.secondary)
+                    Text("Esta cuenta está oculta de Mis cuentas. Sus movimientos se conservan como histórico y no se pueden modificar.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
+                .financeGlassFormSection()
+            } else {
+                // Acciones
+                Section {
+                    Button {
+                        showingEditSheet = true
+                    } label: {
+                        Label("Editar cuenta", systemImage: "pencil")
+                    }
 
-                Button(role: .destructive) {
-                    showingDeleteConfirmation = true
-                } label: {
-                    Label("Eliminar cuenta", systemImage: "trash")
-                        .foregroundStyle(.red)
+                    Button(role: .destructive) {
+                        showingDeleteConfirmation = true
+                    } label: {
+                        Label("Eliminar cuenta", systemImage: "trash")
+                            .foregroundStyle(.red)
+                    }
                 }
+                .financeGlassFormSection()
             }
         }
         .financeGlassListContainer()
@@ -219,12 +216,31 @@ struct AccountDetailView: View {
             titleVisibility: .visible
         ) {
             Button("Eliminar", role: .destructive) {
-                modelContext.delete(account)
-                dismiss()
+                deleteAccount()
             }
             Button("Cancelar", role: .cancel) {}
         } message: {
-            Text("Se eliminará la cuenta \"\(account.name)\" permanentemente. Esta acción no se puede deshacer.")
+            Text("La cuenta se ocultará permanentemente de Mis cuentas y dejará de aparecer en filtros y selectores. Sus movimientos se conservarán como histórico: seguirán visibles por mes y búsqueda, pero no podrás filtrarlos por cuenta ni editarlos o eliminarlos. Si hay reembolsos pendientes, podrás registrarlos en otra cuenta activa distinta. Esta acción es irreversible.")
+        }
+        .alert("No se pudo eliminar la cuenta", isPresented: $showingDeleteError) {
+            Button("Aceptar", role: .cancel) {}
+        } message: {
+            Text(deleteErrorMessage)
+        }
+    }
+
+    private func deleteAccount() {
+        CrashReportService.shared.recordBreadcrumb("Eliminando cuenta desde su detalle")
+
+        do {
+            try AccountDeletionService.delete(account, allMovements: movements, recurringMovements: recurringMovements, in: modelContext)
+            showingEditSheet = false
+            showingInvestedUpdateSheet = false
+            showingMarketValueUpdateSheet = false
+            dismiss()
+        } catch {
+            deleteErrorMessage = error.localizedDescription
+            showingDeleteError = true
         }
     }
 
@@ -265,6 +281,83 @@ struct AccountDetailView: View {
 
 // MARK: - Componente auxiliar
 
+private struct AccountDetailHero: View {
+    let account: BankAccount
+    let currencyCode: String
+    let hideBalances: Bool
+
+    private var accent: Color { account.bank?.color ?? account.accountType.color }
+    private var iconName: String { account.bank?.iconName ?? account.accountType.icon }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(account.accountType.displayName)
+                        .font(.caption.weight(.bold))
+                        .textCase(.uppercase)
+                        .tracking(0.6)
+                        .foregroundStyle(accent)
+                    Text(account.name)
+                        .font(.title2.weight(.bold))
+                        .lineLimit(2)
+                    Text(account.bankDisplayName)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Image(systemName: iconName)
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 62, height: 62)
+                    .background(LinearGradient(colors: [accent, account.accountType.color.opacity(0.76)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Saldo disponible")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(account.balance.masked(hideBalances, code: currencyCode))
+                    .font(.system(size: 38, weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.72)
+                    .foregroundStyle(account.balance.isNegative ? .red : .primary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .financeGlassColorCard(
+            gradient: LinearGradient(colors: [accent.opacity(0.22), account.accountType.color.opacity(0.13), Color.white.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            cornerRadius: FinanceGlassTokens.Radius.hero
+        )
+    }
+}
+
+private struct AccountMetricTile: View {
+    let title: String
+    let value: String
+    let icon: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            FinanceGlassIconBadge(systemName: icon, tint: tint, size: 32)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(tint)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.78)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .financeInsetCard(cornerRadius: 18)
+    }
+}
+
 /// Fila de detalle con etiqueta y valor.
 private struct DetailRow: View {
     let label: String
@@ -297,19 +390,26 @@ private struct InvestmentValueUpdateSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(title) {
+                Section {
                     HStack {
                         TextField("0,00", text: $valueText)
                             .keyboardType(.decimalPad)
                         Text(currencyCode)
                             .foregroundStyle(.secondary)
                     }
+                } header: {
+                    FinanceGlassSectionHeader(title: title, systemImage: "eurosign.circle.fill")
                 }
+                .financeGlassFormSection()
 
-                Section("Fecha") {
+                Section {
                     DatePicker("Fecha del dato", selection: $snapshotDate, displayedComponents: .date)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Fecha", systemImage: "calendar")
                 }
+                .financeGlassFormSection()
             }
+            .financeGlassListContainer()
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

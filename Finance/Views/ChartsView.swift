@@ -35,6 +35,7 @@ struct BankBalanceDatum: Identifiable {
 /// Pestana de graficos y resumen del patrimonio.
 struct ChartsView: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
@@ -47,11 +48,15 @@ struct ChartsView: View {
     @State private var showingWrappedHistory = false
 
     private var totalBalance: Decimal {
-        accounts.reduce(Decimal(0)) { $0 + $1.balance }
+        activeAccounts.reduce(Decimal(0)) { $0 + $1.balance }
+    }
+
+    private var activeAccounts: [BankAccount] {
+        accounts.filter(\.isActive)
     }
 
     private var typeBalances: [TypeBalanceDatum] {
-        let grouped = Dictionary(grouping: accounts) { $0.accountType }
+        let grouped = Dictionary(grouping: activeAccounts) { $0.accountType }
         return AccountType.allCases.compactMap { type in
             guard let typeAccounts = grouped[type], !typeAccounts.isEmpty else { return nil }
             let total = typeAccounts.reduce(Decimal(0)) { $0 + $1.balance }
@@ -64,7 +69,7 @@ struct ChartsView: View {
     }
 
     private var bankBalances: [BankBalanceDatum] {
-        let grouped = Dictionary(grouping: accounts) {
+        let grouped = Dictionary(grouping: activeAccounts) {
             $0.bank?.id.uuidString ?? "no-bank"
         }
 
@@ -164,24 +169,31 @@ struct ChartsView: View {
         )
     }
 
+    private var summaryColumns: [GridItem] {
+        if dynamicTypeSize >= .accessibility1 {
+            return [GridItem(.flexible(), spacing: 10, alignment: .top)]
+        }
+
+        return [
+            GridItem(.adaptive(minimum: 158, maximum: 240), spacing: 10, alignment: .top)
+        ]
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if accounts.isEmpty {
-                        ContentUnavailableView(
-                            "Sin datos para gráficos",
-                            systemImage: "chart.bar.xaxis",
-                            description: Text("Añade cuentas en Cuentas para ver la evolucion de tu patrimonio")
-                        )
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, 48)
+                VStack(alignment: .leading, spacing: 24) {
+                    if activeAccounts.isEmpty {
+                        emptyState
                     } else {
+                        homeSubtitle
+
                         patrimonyHeroCard
 
-                        pendingReimbursementsCard
-
-                        wrappedAccessCard
+                        VStack(spacing: 12) {
+                            pendingReimbursementsCard
+                            wrappedAccessCard
+                        }
 
                         BudgetsSection(
                             budgets: budgets,
@@ -196,11 +208,13 @@ struct ChartsView: View {
                         summarySection
                     }
                 }
-                .padding()
-                .padding(.bottom, 24)
+                .padding(.horizontal, 18)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
             }
             .financeGlassPageBackground()
             .navigationTitle("Finance")
+            .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -217,6 +231,8 @@ struct ChartsView: View {
                         showingWrappedHistory = true
                     } label: {
                         Label("Wrapped", systemImage: "sparkles.rectangle.stack")
+                            .labelStyle(.iconOnly)
+                            .financeToolbarIconStyle()
                     }
                     .accessibilityLabel("Abrir wrapped mensual")
                 }
@@ -226,6 +242,8 @@ struct ChartsView: View {
                         showingDetailedStats = true
                     } label: {
                         Label("Estadísticas", systemImage: "chart.bar.xaxis")
+                            .labelStyle(.iconOnly)
+                            .financeToolbarIconStyle()
                     }
                     .accessibilityLabel("Abrir estadísticas detalladas")
                 }
@@ -249,24 +267,36 @@ struct ChartsView: View {
     @ViewBuilder
     private var pendingReimbursementsCard: some View {
         if !pendingReimbursementMovements.isEmpty {
-            PendingReimbursementsCard(
-                totalPending: totalPendingReimbursement,
-                movementCount: pendingReimbursementMovements.count,
-                currencyCode: appCurrencyCode,
-                hideBalances: hideBalances
+            let reimbursementsSubtitle = pendingReimbursementMovements.count == 1 ? "1 movimiento pendiente de reembolso" : "\(pendingReimbursementMovements.count) movimientos pendientes de reembolso"
+
+            FinanceHomeActionBanner(
+                title: "Saldo pendiente",
+                value: totalPendingReimbursement.masked(hideBalances, code: appCurrencyCode),
+                subtitle: reimbursementsSubtitle,
+                systemImage: "arrow.uturn.left.circle.fill",
+                pillText: "\(pendingReimbursementMovements.count)",
+                tint: Color(red: 0.00, green: 0.66, blue: 0.49),
+                showsChevron: true
             ) {
                 showingPendingReimbursements = true
             }
+            .accessibilityLabel(
+                "Saldo pendiente, \(totalPendingReimbursement.masked(hideBalances, code: appCurrencyCode)), \(reimbursementsSubtitle)"
+            )
         }
     }
 
     @ViewBuilder
     private var wrappedAccessCard: some View {
         if hasPendingWrapped, let latestWrappedMonth {
-            WrappedAccessBannerCard(
+            FinanceHomeActionBanner(
                 title: "Tu resumen de \(latestWrappedMonth.longLabel) está listo",
+                value: nil,
                 subtitle: "Abre el resumen del mes y consulta sus estadísticas",
-                hasPendingWrapped: true
+                systemImage: "sparkles.rectangle.stack.fill",
+                pillText: "NUEVO",
+                tint: .financeAccent,
+                showsChevron: false
             ) {
                 showingWrappedHistory = true
             }
@@ -274,72 +304,76 @@ struct ChartsView: View {
     }
 
     private var patrimonyHeroCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label("Patrimonio actual", systemImage: "sparkles")
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.9))
-                Spacer()
-                Text("\(accounts.count) cuentas")
-                    .font(.caption)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(.white.opacity(0.18))
-                    .clipShape(Capsule())
-                    .foregroundStyle(.white)
-            }
-
-            Text(totalBalance.masked(hideBalances, code: appCurrencyCode))
-                .font(.system(size: 34, weight: .bold, design: .rounded))
-                .foregroundStyle(.white)
-
-            Text("Vista global de la distribucion por tipo y banco")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.78))
-        }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(red: 0.14, green: 0.37, blue: 0.85),
-                    Color(red: 0.18, green: 0.56, blue: 0.91)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
+        FinanceHomeHeroCard(
+            totalBalance: totalBalance,
+            accountCount: activeAccounts.count,
+            currencyCode: appCurrencyCode,
+            hideBalances: hideBalances
         )
-        .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .fill(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.18), Color.clear],
-                        startPoint: .topLeading,
-                        endPoint: .center
-                    )
-                )
+    }
+
+    private var homeSubtitle: some View {
+        Text("Consulta de un vistazo todo sobre tu patrimonio")
+            .financeDisplaySubtitle(size: FinanceGlassTokens.Typography.bodySize, tracking: FinanceGlassTokens.Typography.bodyTracking)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(Color.financeHomeDark)
+                .frame(width: 64, height: 64)
+                .background(Color.white, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Sin datos para gráficos")
+                    .financeDisplayTitle()
+                    .foregroundStyle(.white)
+
+                Text("Añade cuentas para ver la evolucion de tu patrimonio")
+                    .financeDisplaySubtitle(size: FinanceGlassTokens.Typography.bodySize, tracking: FinanceGlassTokens.Typography.bodyTracking)
+                    .foregroundStyle(.white.opacity(0.78))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.white.opacity(0.22), lineWidth: 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .shadow(color: Color.black.opacity(0.16), radius: 18, x: 0, y: 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(24)
+        .background(Color.financeHomeDark, in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.hero, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.hero, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .padding(.top, 36)
+        .accessibilityElement(children: .combine)
     }
 
     private var summarySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Resumen rapido", systemImage: "square.grid.2x2")
-                .font(.headline)
-                .foregroundStyle(.primary)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Resumen rapido", systemImage: "square.grid.2x2")
+                        .font(.caption.weight(.bold))
+                        .textCase(.uppercase)
+                        .tracking(0.7)
+                        .foregroundStyle(.primary.opacity(0.78))
 
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    Text("Indicadores clave de tu inicio")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+
+            LazyVGrid(columns: summaryColumns, spacing: 10) {
                 SummaryMetricCard(title: "Patrimonio total", value: totalBalance.masked(hideBalances, code: appCurrencyCode), icon: "creditcard")
-                SummaryMetricCard(title: "Cuentas", value: "\(accounts.count)", icon: "building.columns")
+                SummaryMetricCard(title: "Cuentas", value: "\(activeAccounts.count)", icon: "building.columns")
                 SummaryMetricCard(title: "Bancos", value: "\(bankBalances.count)", icon: "building.2")
                 SummaryMetricCard(
                     title: "Saldo medio/cuenta",
-                    value: accounts.isEmpty ? Decimal(0).masked(hideBalances, code: appCurrencyCode) : (totalBalance / Decimal(accounts.count)).masked(hideBalances, code: appCurrencyCode),
+                    value: activeAccounts.isEmpty ? Decimal(0).masked(hideBalances, code: appCurrencyCode) : (totalBalance / Decimal(activeAccounts.count)).masked(hideBalances, code: appCurrencyCode),
                     icon: "divide.circle"
                 )
                 SummaryMetricCard(
@@ -354,6 +388,147 @@ struct ChartsView: View {
                 )
             }
         }
+        .padding(FinanceGlassTokens.Spacing.medium)
+        .padding(.bottom, 6)
+        .background(Color.financeHomeSurface, in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous)
+                .strokeBorder(Color.financeHomeStroke, lineWidth: 1)
+        )
+    }
+}
+
+private struct FinanceHomeHeroCard: View {
+    let totalBalance: Decimal
+    let accountCount: Int
+    let currencyCode: String
+    let hideBalances: Bool
+
+    private var accountCountText: String {
+        "\(accountCount) \(accountCount == 1 ? "cuenta conectada" : "cuentas conectadas")"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 30) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Patrimonio actual")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.74))
+                    Text("Incluye saldos de todas tus cuentas")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.58))
+                }
+
+                Spacer(minLength: 12)
+
+                Image(systemName: "chart.pie")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.financeHomeDark)
+                    .frame(width: 44, height: 44)
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                Text(totalBalance.masked(hideBalances, code: currencyCode))
+                    .font(.system(size: 44, weight: .medium, design: .rounded))
+                    .tracking(-1.2)
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.58)
+
+                Label(accountCountText, systemImage: "sparkles")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white.opacity(0.86))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Color.white.opacity(0.11), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.16), lineWidth: 1))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(24)
+        .background(Color.financeHomeDark, in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.hero, style: .continuous))
+        .overlay(alignment: .bottomTrailing) {
+            Circle()
+                .fill(Color.financeAccent.opacity(0.55))
+                .frame(width: 160, height: 160)
+                .offset(x: 58, y: 58)
+                .allowsHitTesting(false)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.hero, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.hero, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct FinanceHomeActionBanner: View {
+    let title: String
+    let value: String?
+    let subtitle: String
+    let systemImage: String
+    let pillText: String
+    let tint: Color
+    let showsChevron: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 44, height: 44)
+                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+
+                    if let value {
+                        Text(value)
+                            .font(.title3.weight(.medium))
+                            .tracking(-0.25)
+                            .foregroundStyle(.primary)
+                    }
+
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+
+                Spacer(minLength: 10)
+
+                VStack(alignment: .trailing, spacing: 10) {
+                    Text(pillText)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(tint, in: Capsule())
+
+                    if showsChevron {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.financeHomeSurface, in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous)
+                    .strokeBorder(Color.financeHomeStroke, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -365,24 +540,39 @@ private struct SummaryMetricCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: icon)
-                .font(.caption)
-                .foregroundStyle(colorScheme == .dark ? .white.opacity(0.72) : .secondary)
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(colorScheme == .dark ? .white : Color.financeHomeDark)
+                .frame(width: 34, height: 34)
+                .background(Color.financeHomeDark.opacity(colorScheme == .dark ? 0.95 : 0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(colorScheme == .dark ? .white.opacity(0.68) : .secondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
             Text(value)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .font(.system(.headline, design: .rounded).weight(.medium))
                 .foregroundStyle(colorScheme == .dark ? .white : .primary)
+                .lineLimit(2)
+                .minimumScaleFactor(0.84)
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 106, alignment: .topLeading)
+        .background(Color.primary.opacity(colorScheme == .dark ? 0.07 : 0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.10) : Color.blue.opacity(0.14), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
         )
-        .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 5)
+        .accessibilityElement(children: .combine)
     }
+}
+
+private extension Color {
+    static let financeHomeDark = Color(red: 0.098, green: 0.110, blue: 0.122)
+    static let financeHomeSurface = Color.primary.opacity(0.055)
+    static let financeHomeStroke = Color.primary.opacity(0.08)
 }

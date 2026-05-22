@@ -15,18 +15,26 @@ struct AccountListView: View {
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
+    @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
+    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
 
     @State private var showingAddAccount = false
     @State private var editingAccount: BankAccount?
     @State private var pendingAccountsDeletion: [BankAccount] = []
     @State private var showingDeleteConfirmation = false
+    @State private var showingDeleteError = false
+    @State private var deleteErrorMessage = ""
 
     private var totalBalance: Decimal {
-        accounts.reduce(Decimal(0)) { $0 + $1.balance }
+        activeAccounts.reduce(Decimal(0)) { $0 + $1.balance }
+    }
+
+    private var activeAccounts: [BankAccount] {
+        accounts.filter(\.isActive)
     }
 
     private var balancesByType: [(AccountType, Decimal, Int)] {
-        let grouped = Dictionary(grouping: accounts) { $0.accountType }
+        let grouped = Dictionary(grouping: activeAccounts) { $0.accountType }
         return AccountType.allCases.compactMap { type in
             guard let typeAccounts = grouped[type], !typeAccounts.isEmpty else { return nil }
             let total = typeAccounts.reduce(Decimal(0)) { $0 + $1.balance }
@@ -35,7 +43,7 @@ struct AccountListView: View {
     }
 
     private var groupedAccounts: [(AccountType, [BankAccount])] {
-        let grouped = Dictionary(grouping: accounts) { $0.accountType }
+        let grouped = Dictionary(grouping: activeAccounts) { $0.accountType }
         return AccountType.allCases.compactMap { type in
             guard let typeAccounts = grouped[type], !typeAccounts.isEmpty else { return nil }
             return (type, typeAccounts)
@@ -43,7 +51,7 @@ struct AccountListView: View {
     }
 
     private var investmentAccounts: [BankAccount] {
-        accounts.filter { $0.accountType == .investment }
+        activeAccounts.filter { $0.accountType == .investment }
     }
 
     private var totalInvestedInInvestments: Decimal {
@@ -58,17 +66,14 @@ struct AccountListView: View {
         NavigationStack {
             List {
                 Section {
-                    TabView {
+                    VStack(spacing: 14) {
                         TotalBalanceCard(
                             totalBalance: totalBalance,
-                            accountCount: accounts.count,
+                            accountCount: activeAccounts.count,
                             currencyCode: appCurrencyCode
                         )
 
-                        BalanceByTypeCard(
-                            balancesByType: balancesByType,
-                            currencyCode: appCurrencyCode
-                        )
+                        AccountTypeStrip(balancesByType: balancesByType, currencyCode: appCurrencyCode)
 
                         if !investmentAccounts.isEmpty {
                             InvestmentPerformanceCard(
@@ -78,42 +83,45 @@ struct AccountListView: View {
                             )
                         }
                     }
-                    .tabViewStyle(.page(indexDisplayMode: .always))
-                    .frame(height: investmentAccounts.isEmpty ? max(150, CGFloat(balancesByType.count) * 38 + 80) : 210)
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
+                    .financeGlassHeroListRow(insets: EdgeInsets(top: 10, leading: 0, bottom: 8, trailing: 0))
                 }
 
-                if accounts.isEmpty {
+                if activeAccounts.isEmpty {
                     Section {
-                        ContentUnavailableView(
+                        FinanceEmptyStateContent(
                             "Sin cuentas",
                             systemImage: "building.columns",
                             description: Text("Pulsa + para anadir tu primera cuenta bancaria")
                         )
-                        .listRowBackground(Color.clear)
+                        .financeGlassCenteredEmptyListRow(minHeight: 420)
                     }
                 } else {
                     ForEach(groupedAccounts, id: \.0) { type, typeAccounts in
-                        Section(header: Text(type.displayName)) {
-                            ForEach(typeAccounts, id: \.id) { account in
-                                NavigationLink(destination: AccountDetailView(account: account)) {
-                                    AccountRowView(account: account)
-                                }
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                    Button {
-                                        editingAccount = account
-                                    } label: {
-                                        Label("Editar", systemImage: "pencil")
-                                    }
-                                    .tint(.blue)
-                                }
+                        FinanceGlassSectionHeader(
+                            title: type.displayName,
+                            systemImage: type.icon,
+                            subtitle: typeAccounts.count == 1 ? "1 cuenta" : "\(typeAccounts.count) cuentas",
+                            tint: type.color
+                        )
+                        .financeGlassClearListRow(insets: EdgeInsets(top: 14, leading: 16, bottom: 6, trailing: 16))
+                        .accessibilityElement(children: .combine)
+
+                        ForEach(typeAccounts, id: \.id) { account in
+                            NavigationLink(destination: AccountDetailView(account: account)) {
+                                AccountRowView(account: account)
                             }
-                            .onDelete { offsets in
-                                requestDeleteAccounts(from: typeAccounts, at: offsets)
+                            .financeGlassClearListRow(insets: EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button {
+                                    editingAccount = account
+                                } label: {
+                                    Label("Editar", systemImage: "pencil")
+                                }
+                                .tint(.financeAccent)
                             }
+                        }
+                        .onDelete { offsets in
+                            requestDeleteAccounts(from: typeAccounts, at: offsets)
                         }
                     }
                 }
@@ -138,6 +146,7 @@ struct AccountListView: View {
                         Image(systemName: "plus")
                             .financeToolbarIconStyle()
                     }
+                    .accessibilityLabel("Añadir cuenta")
                 }
             }
             .sheet(isPresented: $showingAddAccount) {
@@ -159,14 +168,15 @@ struct AccountListView: View {
                 }
             } message: {
                 if pendingAccountsDeletion.count == 1 {
-                    if let name = pendingAccountsDeletion.first?.name {
-                        Text("Se eliminará la cuenta \(name). Esta acción no se puede deshacer.")
-                    } else {
-                        Text("Se eliminará una cuenta. Esta acción no se puede deshacer.")
-                    }
+                    Text("La cuenta se ocultará permanentemente de Mis cuentas y dejará de aparecer en filtros y selectores. Sus movimientos se conservarán como histórico: seguirán visibles por mes y búsqueda, pero no podrás filtrarlos por cuenta ni editarlos o eliminarlos. Si hay reembolsos pendientes, podrás registrarlos en otra cuenta activa distinta. Esta acción es irreversible.")
                 } else {
-                    Text("Se eliminarán \(pendingAccountsDeletion.count) cuentas. Esta acción no se puede deshacer.")
+                    Text("Las cuentas se ocultarán permanentemente de Mis cuentas y dejarán de aparecer en filtros y selectores. Sus movimientos se conservarán como histórico: seguirán visibles por mes y búsqueda, pero no podrás filtrarlos por cuenta ni editarlos o eliminarlos. Si hay reembolsos pendientes, podrás registrarlos en otra cuenta activa distinta. Esta acción es irreversible.")
                 }
+            }
+            .alert("No se pudo eliminar la cuenta", isPresented: $showingDeleteError) {
+                Button("Aceptar", role: .cancel) {}
+            } message: {
+                Text(deleteErrorMessage)
             }
         }
     }
@@ -179,12 +189,53 @@ struct AccountListView: View {
     }
 
     private func deletePendingAccounts() {
-        withAnimation {
-            for account in pendingAccountsDeletion {
-                modelContext.delete(account)
+        CrashReportService.shared.recordBreadcrumb("Eliminando cuenta desde el listado")
+
+        do {
+            try AccountDeletionService.delete(pendingAccountsDeletion, allMovements: movements, recurringMovements: recurringMovements, in: modelContext)
+            pendingAccountsDeletion = []
+        } catch {
+            deleteErrorMessage = error.localizedDescription
+            showingDeleteError = true
+        }
+    }
+}
+
+private struct AccountTypeStrip: View {
+    @AppStorage(HideBalances.storageKey) private var hideBalances = false
+    let balancesByType: [(AccountType, Decimal, Int)]
+    let currencyCode: String
+
+    var body: some View {
+        if !balancesByType.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(balancesByType, id: \.0) { type, balance, count in
+                        HStack(spacing: 10) {
+                            FinanceGlassIconBadge(systemName: type.icon, tint: type.color, size: 34)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(type.displayName)
+                                    .font(.caption.weight(.semibold))
+                                    .lineLimit(1)
+                                Text(balance.masked(hideBalances, code: currencyCode))
+                                    .font(.caption2.weight(.bold))
+                                    .foregroundStyle(type.color)
+                                    .lineLimit(1)
+                            }
+                            Text("\(count)")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 4)
+                                .background(.thinMaterial, in: Capsule())
+                        }
+                        .padding(10)
+                        .financeInsetCard(cornerRadius: 18)
+                    }
+                }
+                .padding(.horizontal, 16)
             }
         }
-        pendingAccountsDeletion = []
     }
 }
 

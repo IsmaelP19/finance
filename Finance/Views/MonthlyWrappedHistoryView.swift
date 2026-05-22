@@ -36,44 +36,55 @@ struct MonthlyWrappedHistoryView: View {
         NavigationStack {
             List {
                 if let latestMonth, let latestSummary = summariesByMonth[latestMonth] {
-                    Section("Último wrapped") {
-                        Button {
-                            openWrappedStories(for: latestMonth)
-                        } label: {
-                            WrappedLatestCard(
-                                summary: latestSummary,
-                                currencyCode: appCurrencyCode,
-                                highlighted: isMonthPending(latestMonth)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
-                        .listRowBackground(Color.clear)
+                    FinanceGlassSectionHeader(
+                        title: "Último wrapped",
+                        systemImage: "sparkles.rectangle.stack",
+                        subtitle: "Resumen más reciente disponible",
+                        tint: .purple
+                    )
+                    .financeGlassClearListRow()
+
+                    Button {
+                        openWrappedStories(for: latestMonth)
+                    } label: {
+                        WrappedLatestCard(
+                            summary: latestSummary,
+                            currencyCode: appCurrencyCode,
+                            highlighted: isMonthPending(latestMonth)
+                        )
                     }
+                    .buttonStyle(.plain)
+                    .financeGlassHeroListRow(insets: EdgeInsets(top: 8, leading: 0, bottom: 8, trailing: 0))
                 }
 
-                Section("Historial") {
-                    if availableMonths.isEmpty {
-                        ContentUnavailableView(
-                            "Sin wrappeds disponibles",
-                            systemImage: "sparkles.rectangle.stack",
-                            description: Text("Registra movimientos en varios meses para generar tu historial mensual.")
-                        )
-                        .listRowBackground(Color.clear)
-                    } else {
-                        ForEach(availableMonths) { month in
-                            if let summary = summariesByMonth[month] {
-                                Button {
-                                    openWrappedStories(for: month)
-                                } label: {
-                                    WrappedHistoryRow(
-                                        summary: summary,
-                                        currencyCode: appCurrencyCode,
-                                        showPendingBadge: isMonthPending(month)
-                                    )
-                                }
-                                .buttonStyle(.plain)
+                FinanceGlassSectionHeader(
+                    title: "Historial",
+                    systemImage: "calendar",
+                    subtitle: "Meses cerrados listos para revisar",
+                    tint: .blue
+                )
+                .financeGlassClearListRow()
+
+                if availableMonths.isEmpty {
+                    FinanceEmptyStateContent(
+                        "Sin wrappeds disponibles",
+                        systemImage: "sparkles.rectangle.stack",
+                        description: Text("Registra movimientos en varios meses para generar tu historial mensual.")
+                    )
+                    .financeGlassClearListRow()
+                } else {
+                    ForEach(availableMonths) { month in
+                        if let summary = summariesByMonth[month] {
+                            Button {
+                                openWrappedStories(for: month)
+                            } label: {
+                                WrappedHistoryRow(
+                                    summary: summary,
+                                    currencyCode: appCurrencyCode,
+                                    showPendingBadge: isMonthPending(month)
+                                )
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -148,7 +159,7 @@ private struct WrappedLatestCard: View {
                             .fontWeight(.bold)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
-                            .background(Color.orange.opacity(0.85))
+                            .background(Color.financeAccent)
                             .foregroundStyle(.white)
                             .clipShape(Capsule())
                     }

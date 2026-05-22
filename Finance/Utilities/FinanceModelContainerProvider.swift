@@ -12,6 +12,8 @@ import SwiftData
 /// that cannot use async/await (EntityQuery, etc.).
 enum FinanceModelContainerProvider {
     nonisolated static let shared: ModelContainer = {
+        DataIntegrityRepairService.repairBeforeOpeningModelContainer()
+
         let schema = Schema([
             Bank.self,
             BankAccount.self,

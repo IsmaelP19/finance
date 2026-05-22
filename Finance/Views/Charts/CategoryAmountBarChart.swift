@@ -37,7 +37,7 @@ struct CategoryAmountBarChart: View {
                 .foregroundStyle(colorScheme == .dark ? .white : .primary)
 
             if data.isEmpty {
-                ContentUnavailableView(
+                FinanceEmptyStateContent(
                     emptyTitle,
                     systemImage: "chart.bar.xaxis",
                     description: Text(emptyDescription)

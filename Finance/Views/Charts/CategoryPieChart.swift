@@ -28,7 +28,7 @@ struct CategoryPieChart: View {
                 .foregroundStyle(colorScheme == .dark ? .white : .primary)
 
             if data.isEmpty || total <= 0 {
-                ContentUnavailableView(
+                FinanceEmptyStateContent(
                     emptyTitle,
                     systemImage: "chart.pie",
                     description: Text(emptyDescription)
@@ -90,13 +90,6 @@ struct CategoryPieChart: View {
                 }
             }
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(0.10), radius: 12, x: 0, y: 8)
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 }

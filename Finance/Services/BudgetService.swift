@@ -11,6 +11,14 @@ import UserNotifications
 /// Calcula el progreso del presupuesto mensual único y gestiona notificaciones locales
 /// por categoría cuando se alcanzan los umbrales del 80 % y 100 % de la asignación.
 enum BudgetService {
+    private struct BudgetNotificationAction {
+        let id80: String
+        let id100: String
+        let categoryName: String
+        let notifyAt80Percent: Bool
+        let notifyAt100Percent: Bool
+        let progress: Decimal
+    }
 
     // MARK: - Spending calculations
 
@@ -88,48 +96,57 @@ enum BudgetService {
     /// según el gasto actual de cada categoría. Llamar después de guardar un gasto.
     static func evaluateAndNotify(budget: Budget, movements: [Movement]) {
         guard budget.isActive else { return }
+        let center = UNUserNotificationCenter.current()
+        let actions = budget.items.compactMap { notificationAction(for: $0, budget: budget, movements: movements) }
+
+        guard !actions.isEmpty else { return }
+
         requestNotificationAuthorizationIfNeeded { granted in
             guard granted else { return }
-            let center = UNUserNotificationCenter.current()
-            for item in budget.items {
-                evaluateItem(item, budget: budget, movements: movements, center: center)
+            for action in actions {
+                evaluateAction(action, center: center)
             }
         }
     }
 
-    private static func evaluateItem(
-        _ item: BudgetItem,
+    private static func notificationAction(
+        for item: BudgetItem,
         budget: Budget,
-        movements: [Movement],
-        center: UNUserNotificationCenter
-    ) {
-        guard let category = item.category else { return }
-        let pct = progress(for: item, movements: movements)
-        let categoryName = category.name
+        movements: [Movement]
+    ) -> BudgetNotificationAction? {
+        guard let category = item.category else { return nil }
 
-        let id100 = "\(itemNotificationPrefix)\(item.id.uuidString)-100"
-        let id80  = "\(itemNotificationPrefix)\(item.id.uuidString)-80"
+        return BudgetNotificationAction(
+            id80: "\(itemNotificationPrefix)\(item.id.uuidString)-80",
+            id100: "\(itemNotificationPrefix)\(item.id.uuidString)-100",
+            categoryName: category.name,
+            notifyAt80Percent: budget.notifyAt80Percent,
+            notifyAt100Percent: budget.notifyAt100Percent,
+            progress: progress(for: item, movements: movements)
+        )
+    }
 
-        if budget.notifyAt100Percent && pct >= 1 {
+    private static func evaluateAction(_ action: BudgetNotificationAction, center: UNUserNotificationCenter) {
+        if action.notifyAt100Percent && action.progress >= 1 {
             scheduleThresholdNotification(
                 center: center,
-                identifier: id100,
+                identifier: action.id100,
                 title: "Presupuesto superado",
-                body: "Has superado el presupuesto de \(categoryName) este mes."
+                body: "Has superado el presupuesto de \(action.categoryName) este mes."
             )
         } else {
-            cancelNotification(center: center, identifier: id100)
+            cancelNotification(center: center, identifier: action.id100)
         }
 
-        if budget.notifyAt80Percent && pct >= 0.8 && pct < 1 {
+        if action.notifyAt80Percent && action.progress >= 0.8 && action.progress < 1 {
             scheduleThresholdNotification(
                 center: center,
-                identifier: id80,
+                identifier: action.id80,
                 title: "Alerta de presupuesto",
-                body: "Llevas el 80 % del presupuesto de \(categoryName) este mes."
+                body: "Llevas el 80 % del presupuesto de \(action.categoryName) este mes."
             )
         } else {
-            cancelNotification(center: center, identifier: id80)
+            cancelNotification(center: center, identifier: action.id80)
         }
     }
 

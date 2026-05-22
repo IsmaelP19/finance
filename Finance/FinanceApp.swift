@@ -10,6 +10,9 @@ import SwiftData
 import BackgroundTasks
 import Foundation
 import os
+#if canImport(UIKit)
+import UIKit
+#endif
 
 private actor ModelContainerProvider {
     static let shared = ModelContainerProvider()
@@ -55,6 +58,8 @@ private actor ModelContainerProvider {
     }
 
     private nonisolated static func makeContainer() throws -> ModelContainer {
+        DataIntegrityRepairService.repairBeforeOpeningModelContainer()
+
         let schema = Schema([
             Bank.self,
             BankAccount.self,
@@ -79,6 +84,8 @@ private actor ModelContainerProvider {
 
 @main
 struct FinanceApp: App {
+    @Environment(\.scenePhase) private var scenePhase
+
     private let logger = Logger(subsystem: "Finance", category: "AppLaunch")
 
     @State private var sharedModelContainer: ModelContainer?
@@ -121,6 +128,9 @@ struct FinanceApp: App {
             .onOpenURL { url in
                 deepLinkRouter.handle(url: url)
             }
+            .onChange(of: scenePhase) { _, newPhase in
+                handleScenePhaseChange(newPhase)
+            }
         }
         .backgroundTask(.appRefresh(AutoBackupService.taskIdentifier)) {
             do {
@@ -133,7 +143,24 @@ struct FinanceApp: App {
     }
 
     init() {
+        CrashReportService.shared.install()
         AutoBackupService.refreshBackgroundScheduleFromSettings()
+        configureNavigationBarTypography()
+    }
+
+    private func configureNavigationBarTypography() {
+#if canImport(UIKit)
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithDefaultBackground()
+        appearance.largeTitleTextAttributes[.font] = FinanceGlassTokens.Typography.navigationLargeTitleUIFont()
+        appearance.largeTitleTextAttributes[.kern] = FinanceGlassTokens.Typography.cardTitleTracking
+        appearance.titleTextAttributes[.font] = FinanceGlassTokens.Typography.navigationInlineTitleUIFont()
+
+        UINavigationBar.appearance().standardAppearance = appearance
+        UINavigationBar.appearance().compactAppearance = appearance
+        UINavigationBar.appearance().scrollEdgeAppearance = appearance
+        UINavigationBar.appearance().compactScrollEdgeAppearance = appearance
+#endif
     }
 
     private func ensureModelContainerLoaded() async {
@@ -144,6 +171,10 @@ struct FinanceApp: App {
 
         do {
             let container = try await ModelContainerProvider.shared.loadIfNeeded()
+            try await MainActor.run {
+                let repairContext = ModelContext(container)
+                try MovementIntegrityRepairService.repairDanglingReimbursements(in: repairContext)
+            }
             let duration = Date().timeIntervalSince(start)
             logger.log("Model container loaded in \(duration, format: .fixed(precision: 3)) seconds")
 
@@ -165,6 +196,19 @@ struct FinanceApp: App {
             }
         }
     }
+
+    private func handleScenePhaseChange(_ newPhase: ScenePhase) {
+        switch newPhase {
+        case .active:
+            CrashReportService.shared.markSessionRunning()
+        case .background:
+            CrashReportService.shared.markSessionClean()
+        case .inactive:
+            break
+        @unknown default:
+            break
+        }
+    }
 }
 
 private struct FinanceLaunchPlaceholderView: View {
@@ -180,18 +224,21 @@ private struct FinanceHomeSkeletonView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 24) {
+                    skeletonHomeHeader
                     skeletonHeroCard
-                    skeletonWrappedCard
-                    skeletonChartCard(height: 260)
-                    skeletonChartCard(height: 240)
+                    skeletonBudgetSection
+                    skeletonPatrimonySection
+                    skeletonBankSection
                     skeletonSummarySection
                 }
-                .padding()
-                .padding(.bottom, 24)
+                .padding(.horizontal, 18)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
             }
             .financeGlassPageBackground()
             .navigationTitle("Finance")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Image(systemName: "eye")
@@ -216,100 +263,310 @@ private struct FinanceHomeSkeletonView: View {
         .accessibilityHidden(true)
     }
 
+    private var skeletonHomeHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.primary.opacity(0.20))
+                .frame(width: 130, height: 42)
+
+            Capsule()
+                .fill(Color.primary.opacity(0.14))
+                .frame(width: 260, height: 14)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .shimmerSkeleton()
+    }
+
     private var skeletonHeroCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Capsule()
-                .fill(Color.white.opacity(0.34))
-                .frame(width: 140, height: 14)
+        VStack(alignment: .leading, spacing: 30) {
+            HStack(alignment: .top, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.28))
+                        .frame(width: 145, height: 14)
 
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.white.opacity(0.34))
-                .frame(width: 220, height: 34)
+                    Capsule()
+                        .fill(Color.white.opacity(0.18))
+                        .frame(width: 210, height: 10)
+                }
 
-            Capsule()
-                .fill(Color.white.opacity(0.26))
-                .frame(width: 190, height: 12)
+                Spacer(minLength: 12)
+
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(Color.white.opacity(0.86))
+                    .frame(width: 44, height: 44)
+            }
+
+            VStack(alignment: .leading, spacing: 14) {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.white.opacity(0.30))
+                    .frame(width: 230, height: 48)
+
+                Capsule()
+                    .fill(Color.white.opacity(0.14))
+                    .frame(width: 190, height: 34)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background(
-            LinearGradient(
-                colors: [
-                    Color(red: 0.14, green: 0.37, blue: 0.85),
-                    Color(red: 0.18, green: 0.56, blue: 0.91)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .padding(24)
+        .background(Color(red: 0.098, green: 0.110, blue: 0.122), in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.hero, style: .continuous))
+        .overlay(alignment: .bottomTrailing) {
+            Circle()
+                .fill(Color.financeAccent.opacity(0.55))
+                .frame(width: 160, height: 160)
+                .offset(x: 58, y: 58)
+                .allowsHitTesting(false)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.hero, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.white.opacity(0.22), lineWidth: 1)
+            RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.hero, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
         )
         .shimmerSkeleton()
     }
 
-    private var skeletonWrappedCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Capsule()
-                .fill(Color.primary.opacity(0.2))
-                .frame(width: 180, height: 12)
+    private var skeletonBudgetSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            skeletonSectionHeader(titleWidth: 190, subtitleWidth: 200, trailingPillWidth: 36)
 
-            Capsule()
-                .fill(Color.primary.opacity(0.14))
-                .frame(width: 250, height: 10)
+            VStack(alignment: .leading, spacing: 16) {
+                Capsule()
+                    .fill(Color.orange.opacity(0.18))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 44)
 
-            Capsule()
-                .fill(Color.primary.opacity(0.14))
-                .frame(width: 220, height: 10)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .financeGlassCard()
-        .shimmerSkeleton()
-    }
-
-    private func skeletonChartCard(height: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 18)
-            .fill(Color.primary.opacity(0.08))
-            .frame(maxWidth: .infinity)
-            .frame(height: height)
-            .overlay(
-                RoundedRectangle(cornerRadius: 18)
-                    .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-            )
-            .shimmerSkeleton()
-    }
-
-    private var skeletonSummarySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Capsule()
-                .fill(Color.primary.opacity(0.2))
-                .frame(width: 140, height: 12)
-
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                ForEach(0..<6, id: \.self) { _ in
+                HStack(alignment: .top, spacing: 14) {
                     VStack(alignment: .leading, spacing: 8) {
                         Capsule()
-                            .fill(Color.primary.opacity(0.14))
-                            .frame(width: 90, height: 10)
+                            .fill(Color.primary.opacity(0.16))
+                            .frame(width: 130, height: 12)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.primary.opacity(0.22))
+                            .frame(width: 150, height: 34)
+                    }
 
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 6) {
                         Capsule()
-                            .fill(Color.primary.opacity(0.2))
-                            .frame(width: 110, height: 14)
+                            .fill(Color.primary.opacity(0.14))
+                            .frame(width: 48, height: 10)
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.primary.opacity(0.18))
+                            .frame(width: 92, height: 22)
+                    }
+                }
+
+                Capsule()
+                    .fill(Color.orange.opacity(0.45))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 10)
+
+                HStack {
+                    Capsule()
+                        .fill(Color.primary.opacity(0.14))
+                        .frame(width: 105, height: 12)
+                    Spacer()
+                    Capsule()
+                        .fill(Color.primary.opacity(0.14))
+                        .frame(width: 120, height: 12)
+                }
+            }
+            .padding(16)
+            .background(Color.primary.opacity(0.075), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.orange.opacity(0.30), lineWidth: 1)
+            )
+        }
+        .padding(FinanceGlassTokens.Spacing.medium)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .shimmerSkeleton()
+    }
+
+    private var skeletonPatrimonySection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            skeletonSectionHeader(titleWidth: 170, subtitleWidth: 145, trailingPillWidth: 64)
+
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 18) {
+                    ZStack {
+                        Circle()
+                            .stroke(Color.primary.opacity(0.16), lineWidth: 28)
+                            .frame(width: 148, height: 148)
+                        VStack(spacing: 6) {
+                            Capsule()
+                                .fill(Color.primary.opacity(0.14))
+                                .frame(width: 42, height: 10)
+                            Capsule()
+                                .fill(Color.primary.opacity(0.20))
+                                .frame(width: 74, height: 12)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(0..<4, id: \.self) { index in
+                            HStack(spacing: 9) {
+                                Circle()
+                                    .fill([Color.blue, .green, .purple, .cyan][index].opacity(0.55))
+                                    .frame(width: 9, height: 9)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Capsule()
+                                        .fill(Color.primary.opacity(0.20))
+                                        .frame(width: CGFloat([135, 155, 90, 75][index]), height: 12)
+                                    Capsule()
+                                        .fill(Color.primary.opacity(0.13))
+                                        .frame(width: CGFloat([120, 135, 105, 70][index]), height: 10)
+                                }
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                VStack(alignment: .leading, spacing: 14) {
+                    Circle()
+                        .stroke(Color.primary.opacity(0.16), lineWidth: 28)
+                        .frame(width: 164, height: 164)
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(0..<4, id: \.self) { _ in
+                            Capsule()
+                                .fill(Color.primary.opacity(0.16))
+                                .frame(height: 12)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .padding(FinanceGlassTokens.Spacing.medium)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .shimmerSkeleton()
+    }
+
+    private var skeletonBankSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            skeletonSectionHeader(titleWidth: 165, subtitleWidth: 170, trailingPillWidth: 70)
+
+            VStack(spacing: 10) {
+                ForEach(0..<4, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 10) {
+                            Capsule()
+                                .fill(Color.primary.opacity(0.12))
+                                .frame(width: 44, height: 28)
+
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .fill([Color.indigo, .blue, .green, .orange][index].opacity(0.18))
+                                .frame(width: 34, height: 34)
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Capsule()
+                                    .fill(Color.primary.opacity(0.22))
+                                    .frame(width: CGFloat([110, 145, 120, 85][index]), height: 14)
+                                Capsule()
+                                    .fill(Color.primary.opacity(0.14))
+                                    .frame(width: 75, height: 10)
+                            }
+
+                            Spacer()
+
+                            Capsule()
+                                .fill(Color.primary.opacity(0.22))
+                                .frame(width: 96, height: 14)
+                        }
+
+                        Capsule()
+                            .fill([Color.indigo, .blue, .green, .orange][index].opacity(0.45))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 7)
+                    }
                     .padding(12)
-                    .background(.ultraThinMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
                     )
                 }
             }
         }
+        .padding(FinanceGlassTokens.Spacing.medium)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
         .shimmerSkeleton()
+    }
+
+    private func skeletonSectionHeader(titleWidth: CGFloat, subtitleWidth: CGFloat, trailingPillWidth: CGFloat? = nil) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Capsule()
+                    .fill(Color.primary.opacity(0.22))
+                    .frame(width: titleWidth, height: 14)
+
+                Capsule()
+                    .fill(Color.primary.opacity(0.14))
+                    .frame(width: subtitleWidth, height: 12)
+            }
+
+            Spacer()
+
+            if let trailingPillWidth {
+                Capsule()
+                    .fill(Color.primary.opacity(0.10))
+                    .frame(width: trailingPillWidth, height: 32)
+            }
+        }
+    }
+
+    private var skeletonSummarySection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            skeletonSectionHeader(titleWidth: 150, subtitleWidth: 220)
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 158, maximum: 240), spacing: 10, alignment: .top)], spacing: 10) {
+                ForEach(0..<6, id: \.self) { index in
+                    VStack(alignment: .leading, spacing: 8) {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.primary.opacity(0.12))
+                            .frame(width: 34, height: 34)
+
+                        Capsule()
+                            .fill(Color.primary.opacity(0.16))
+                            .frame(width: CGFloat([120, 70, 62, 135, 125, 115][index]), height: 12)
+
+                        Capsule()
+                            .fill(Color.primary.opacity(0.22))
+                            .frame(width: CGFloat([130, 35, 35, 110, 90, 120][index]), height: 18)
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(minHeight: 106, alignment: .topLeading)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+                    )
+                }
+            }
+        }
+        .padding(FinanceGlassTokens.Spacing.medium)
+        .padding(.bottom, 6)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+            .shimmerSkeleton()
     }
 }
 

@@ -52,7 +52,7 @@ struct BankAccountEntityQuery: EntityQuery {
 
         let identifierSet = Set(identifiers)
         return accounts
-            .filter { identifierSet.contains($0.id) }
+            .filter { identifierSet.contains($0.id) && $0.isActive }
             .map { BankAccountEntity(from: $0) }
     }
 
@@ -65,6 +65,8 @@ struct BankAccountEntityQuery: EntityQuery {
         )
         let accounts = try context.fetch(descriptor)
 
-        return accounts.map { BankAccountEntity(from: $0) }
+        return accounts
+            .filter(\.isActive)
+            .map { BankAccountEntity(from: $0) }
     }
 }

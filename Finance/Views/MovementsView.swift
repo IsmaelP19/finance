@@ -91,6 +91,14 @@ private struct MovementListSummary {
     var movementCount: Int = 0
 }
 
+private struct MovementRowData: Identifiable {
+    let movement: Movement
+    let recoveredReimbursementAmount: Decimal
+    let isLocked: Bool
+
+    var id: UUID { movement.id }
+}
+
 private struct MovementEditingSelection: Identifiable {
     let id: UUID
     let movement: Movement
@@ -99,6 +107,13 @@ private struct MovementEditingSelection: Identifiable {
 private struct MovementDetailSelection: Identifiable {
     let id: UUID
     let movement: Movement
+}
+
+private struct MovementArchivedAccountSnapshot {
+    let movementID: UUID
+    let accountID: UUID?
+    let destinationAccountID: UUID?
+    let reimbursementForID: UUID?
 }
 
 private struct MovementDetailSnapshot: Equatable {
@@ -182,6 +197,7 @@ struct MovementsView: View {
     @State private var selectedMonth: Int = Calendar.current.component(.month, from: Date())
     @State private var selectedYear: Int = Calendar.current.component(.year, from: Date())
     @State private var showingCustomPeriodSheet = false
+    @State private var showingAdvancedFiltersSheet = false
     @State private var customMonthDraft: Int = Calendar.current.component(.month, from: Date())
     @State private var customYearDraft: Int = Calendar.current.component(.year, from: Date())
     @State private var searchText = ""
@@ -201,6 +217,7 @@ struct MovementsView: View {
     @State private var availablePeriodYears: [Int] = [Calendar.current.component(.year, from: Date())]
     @State private var reloadToken = UUID()
     @State private var movementDetailDismissContext: MovementDetailDismissContext?
+    @State private var archivedAccountMovementSnapshots: [MovementArchivedAccountSnapshot] = []
     @State private var addMovementBaseline: MovementSheetBaseline?
     @State private var editMovementDismissContext: MovementDetailDismissContext?
     @State private var lastFiltersMinY: CGFloat = 0
@@ -269,14 +286,14 @@ struct MovementsView: View {
         }
     }
 
-    private var categoryFilterOptions: [(id: MovementCategoryFilter, title: String, color: Color)] {
+    private var categoryFilterOptions: [(id: MovementCategoryFilter, title: String, iconName: String, color: Color)] {
         categories.map { category in
-            (MovementCategoryFilter.category(category.id), category.name, category.color)
+            (MovementCategoryFilter.category(category.id), category.name, category.iconName, category.color)
         }
     }
 
     private var accountsSortedByBankThenName: [BankAccount] {
-        accounts.sorted { lhs, rhs in
+        activeAccounts.sorted { lhs, rhs in
             let bankComparison = lhs.bankDisplayName.localizedCaseInsensitiveCompare(rhs.bankDisplayName)
             if bankComparison != .orderedSame {
                 return bankComparison == .orderedAscending
@@ -289,6 +306,10 @@ struct MovementsView: View {
 
             return lhs.id.uuidString < rhs.id.uuidString
         }
+    }
+
+    private var activeAccounts: [BankAccount] {
+        accounts.filter(\.isActive)
     }
 
     private var groupedAccountsByBank: [AccountFilterBankGroup] {
@@ -351,7 +372,7 @@ struct MovementsView: View {
     }
 
     private var shouldShowFiltersHeader: Bool {
-        !accounts.isEmpty
+        !activeAccounts.isEmpty
     }
 
     private var recoveredReimbursementAmountsByExpenseID: [UUID: Decimal] {
@@ -361,13 +382,27 @@ struct MovementsView: View {
         }
     }
 
+    private var visibleMovementRows: [MovementRowData] {
+        visibleFilteredMovements.map { movement in
+            MovementRowData(
+                movement: movement,
+                recoveredReimbursementAmount: recoveredReimbursementAmountsByExpenseID[movement.id] ?? 0,
+                isLocked: movementTouchesArchivedAccount(movement)
+            )
+        }
+    }
+
+    private var archivedAccountIDs: Set<UUID> {
+        Set(accounts.filter(\.isArchived).map(\.id))
+    }
+
     var body: some View {
         NavigationStack {
             List {
                 if shouldShowFiltersHeader {
                     filtersHeader
-                        .padding(.bottom, 8)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                        .padding(.bottom, 2)
+                        .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 2, trailing: 0))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
                         .background(
@@ -381,45 +416,28 @@ struct MovementsView: View {
                         )
                 }
 
-                if !accounts.isEmpty {
-                    Section {
-                        Picker("Cuenta", selection: $selectedAccountFilterID) {
-                            Text("Todas las cuentas")
-                                .tag(nil as UUID?)
-
-                            ForEach(groupedAccountsByBank) { bankGroup in
-                                Section(bankGroup.bankName) {
-                                    ForEach(bankGroup.accounts, id: \.id) { account in
-                                        Text(account.name)
-                                            .tag(Optional(account.id))
-                                    }
-                                }
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
+                if !activeAccounts.isEmpty {
+                    accountFilterControl
+                        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 8, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 }
 
                 if shouldShowFiltersHeader {
-                    Section {
-                        if isSummaryLoading {
-                            MovementSummaryLoadingView()
-                                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        } else {
-                            MovementSummaryView(
-                                totalIncome: totalIncome,
-                                totalExpense: totalExpense,
-                                netBalance: netBalance,
-                                movementCount: movementCount,
-                                currencyCode: appCurrencyCode,
-                                hideBalances: hideBalances
-                            )
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                        }
-                    }
+                    summaryHeaderContent
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
 
                 if shouldShowExpandedPendingRecurringSection && !pendingRecurringMovements.isEmpty {
+                    MovementInlineSectionHeader(
+                        title: "Próximos recurrentes",
+                        count: pendingRecurringMovements.count,
+                        systemImage: "repeat",
+                        tint: .blue
+                    )
+
                     Section {
                         ForEach(pendingRecurringMovements) { pending in
                             PendingRecurringMovementRowView(
@@ -429,6 +447,7 @@ struct MovementsView: View {
                             )
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button {
                                         confirmPendingRecurring(pending)
@@ -446,57 +465,59 @@ struct MovementsView: View {
                                     }
                                 }
                         }
-                    } header: {
-                        HStack {
-                            Text("Próximos recurrentes")
-                            Spacer()
-                            Text("\(pendingRecurringMovements.count)")
-                                .font(.caption2)
-                                .fontWeight(.semibold)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .background(Color.blue.opacity(0.2))
-                                .foregroundStyle(.blue)
-                                .clipShape(Capsule())
-                        }
                     }
                 }
 
                 if shouldShowPendingRecurringHint {
+                    MovementInlineSectionHeader(
+                        title: "Próximos recurrentes",
+                        systemImage: "repeat",
+                        tint: .blue
+                    )
+
                     Section {
                         PendingRecurringPeriodHintRow(
                             pendingCount: pendingRecurringMovements.count,
                             periodLabel: activePeriodLabel
                         )
-                    } header: {
-                        Text("Próximos recurrentes")
+                        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 6, trailing: 16))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                     }
                 }
 
                 if !hasAnyMovements && pendingRecurringMovements.isEmpty {
-                    ContentUnavailableView(
-                        accounts.isEmpty ? "Sin cuentas" : "Sin movimientos",
-                        systemImage: accounts.isEmpty ? "building.columns" : "arrow.left.arrow.right.circle",
-                        description: Text(accounts.isEmpty
+                    FinanceEmptyStateContent(
+                        activeAccounts.isEmpty ? "Sin cuentas" : "Sin movimientos",
+                        systemImage: activeAccounts.isEmpty ? "building.columns" : "arrow.left.arrow.right.circle",
+                        description: Text(activeAccounts.isEmpty
                                           ? "Crea al menos una cuenta en Cuentas para registrar movimientos"
                                           : "Pulsa + para registrar tu primer gasto, ingreso o transferencia")
                     )
-                    .listRowBackground(Color.clear)
+                    .financeGlassCenteredEmptyListRow(minHeight: 460)
                 } else if hasAnyMovements && movementCount == 0 {
-                    ContentUnavailableView(
+                    FinanceEmptyStateContent(
                         "Sin movimientos con estos filtros",
                         systemImage: "line.3.horizontal.decrease.circle",
                         description: Text("Ajusta cuenta, tipo o búsqueda para ver más resultados")
                     )
-                    .listRowBackground(Color.clear)
+                    .financeGlassCenteredEmptyListRow(minHeight: 460)
                 } else {
+                    if shouldShowExpandedPendingRecurringSection && !pendingRecurringMovements.isEmpty {
+                        MovementInlineSectionHeader(
+                            title: "Movimientos",
+                            systemImage: "arrow.left.arrow.right.circle",
+                            tint: .indigo
+                        )
+                    }
+
                     Section {
-                        ForEach(visibleFilteredMovements, id: \.id) { movement in
+                        ForEach(visibleMovementRows) { row in
                             MovementRowView(
-                                movement: movement,
+                                movement: row.movement,
                                 currencyCode: appCurrencyCode,
                                 hideBalances: hideBalances,
-                                recoveredReimbursementAmount: recoveredReimbursementAmountsByExpenseID[movement.id] ?? 0
+                                recoveredReimbursementAmount: row.recoveredReimbursementAmount
                             )
                                 .transition(.asymmetric(
                                     insertion: .move(edge: .top).combined(with: .opacity),
@@ -504,17 +525,20 @@ struct MovementsView: View {
                                 ))
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    presentMovementDetail(for: movement)
-                                }
-                                .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                    Button {
-                                        presentEditMovement(for: movement)
-                                    } label: {
-                                        Label("Editar", systemImage: "pencil")
+                                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+                                 .contentShape(Rectangle())
+                                 .onTapGesture {
+                                     presentMovementDetail(for: row.movement)
+                                 }
+                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                     if !row.isLocked {
+                                         Button {
+                                             presentEditMovement(for: row.movement)
+                                         } label: {
+                                             Label("Editar", systemImage: "pencil")
+                                         }
+                                        .tint(.financeAccent)
                                     }
-                                    .tint(.blue)
                                 }
                         }
                         .onDelete(perform: deleteMovements)
@@ -525,15 +549,11 @@ struct MovementsView: View {
                                 ProgressView()
                                 Spacer()
                             }
+                            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 14, trailing: 16))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
                             .onAppear {
                                 loadNextMovementPage()
-                            }
-                        }
-                    } header: {
-                        if shouldShowExpandedPendingRecurringSection && !pendingRecurringMovements.isEmpty {
-                            HStack {
-                                Text("Movimientos")
-                                Spacer()
                             }
                         }
                     }
@@ -590,11 +610,15 @@ struct MovementsView: View {
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
-            .financeGlassListContainer()
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .financeGlassPageBackground()
             .navigationTitle("Movimientos")
             .searchable(text: $searchText, prompt: "Buscar movimientos")
             .onAppear {
-                reloadMovements()
+                clearArchivedAccountFilterIfNeeded()
+                refreshArchivedAccountMovementSnapshots()
+                reloadMovements(refreshAvailableYears: true)
             }
             .onDisappear {
                 searchReloadTask?.cancel()
@@ -615,6 +639,12 @@ struct MovementsView: View {
                 reloadMovements()
             }
             .onChange(of: selectedAccountFilterID) { _, _ in
+                clearArchivedAccountFilterIfNeeded()
+                reloadMovements()
+            }
+            .onChange(of: accounts.map(\.isArchived)) { _, _ in
+                clearArchivedAccountFilterIfNeeded()
+                refreshArchivedAccountMovementSnapshots()
                 reloadMovements()
             }
             .onChange(of: selectedCategoryFilters) { _, _ in
@@ -641,7 +671,7 @@ struct MovementsView: View {
                         Image(systemName: "plus")
                             .financeToolbarIconStyle()
                     }
-                    .disabled(accounts.isEmpty)
+                    .disabled(activeAccounts.isEmpty)
                 }
             }
             .sheet(isPresented: $showingAddMovement, onDismiss: {
@@ -656,6 +686,14 @@ struct MovementsView: View {
                     selectedMonth: $customMonthDraft,
                     selectedYear: $customYearDraft,
                     onApply: applyCustomPeriod
+                )
+            }
+            .sheet(isPresented: $showingAdvancedFiltersSheet) {
+                MovementAdvancedFiltersSheet(
+                    selectedTypeFilter: $selectedTypeFilter,
+                    selectedCategoryFilters: $selectedCategoryFilters,
+                    categoryOptions: categoryFilterOptions,
+                    onClearCategories: { selectedCategoryFilters.removeAll() }
                 )
             }
             .sheet(item: $movementToView, onDismiss: {
@@ -680,9 +718,17 @@ struct MovementsView: View {
     }
 
     private func deleteMovements(at offsets: IndexSet) {
+        CrashReportService.shared.recordBreadcrumb("MovementsView.deleteMovements count=\(offsets.count)")
+
         withAnimation {
             for index in offsets {
                 let movement = visibleFilteredMovements[index]
+                guard !movementTouchesArchivedAccount(movement) else {
+                    pendingAlertMessage = "No se puede eliminar un movimiento asociado a una cuenta archivada. Sus movimientos se conservan solo como histórico."
+                    showingPendingAlert = true
+                    continue
+                }
+                unlinkReimbursementsLinkedToDeletedMovement(movement)
                 if let account = movement.account {
                     switch movement.type {
                     case .expense:
@@ -709,10 +755,19 @@ struct MovementsView: View {
             }
         }
 
-        reloadMovements()
+        reloadMovements(refreshAvailableYears: true)
     }
 
-    private func reloadMovements() {
+    private func unlinkReimbursementsLinkedToDeletedMovement(_ deletedMovement: Movement) {
+        guard deletedMovement.type == .expense else { return }
+
+        for movement in reimbursementIncomes where movement.reimbursementForId == deletedMovement.id {
+            movement.reimbursementForId = nil
+            movement.updatedAt = Date()
+        }
+    }
+
+    private func reloadMovements(refreshAvailableYears: Bool = false) {
         searchReloadTask?.cancel()
         searchReloadTask = nil
 
@@ -723,20 +778,19 @@ struct MovementsView: View {
         reloadToken = token
         isSummaryLoading = true
         summary = MovementListSummary()
-        recurringConfirmationMovements = []
 
         resetMovementPagination()
         loadNextMovementPage()
-        startSummaryReload(token: token)
+        startSummaryReload(token: token, refreshAvailableYears: refreshAvailableYears)
     }
 
-    private func refreshSummaryAndRecurringStateSilently() {
+    private func refreshSummaryAndRecurringStateSilently(refreshAvailableYears: Bool = false) {
         summaryReloadTask?.cancel()
         summaryReloadTask = nil
 
         let token = UUID()
         reloadToken = token
-        startSummaryReload(token: token)
+        startSummaryReload(token: token, refreshAvailableYears: refreshAvailableYears)
     }
 
     private func presentAddMovement() {
@@ -747,7 +801,7 @@ struct MovementsView: View {
     private func handleAddMovementDismiss() {
         defer { addMovementBaseline = nil }
         guard let baseline = addMovementBaseline else {
-            reloadMovements()
+            reloadMovements(refreshAvailableYears: true)
             return
         }
 
@@ -755,6 +809,12 @@ struct MovementsView: View {
     }
 
     private func presentEditMovement(for movement: Movement) {
+        guard !movementTouchesArchivedAccount(movement) else {
+            pendingAlertMessage = "No se puede editar un movimiento asociado a una cuenta archivada. Sus movimientos se conservan solo como histórico."
+            showingPendingAlert = true
+            return
+        }
+
         guard let baseline = currentMovementSheetBaseline() else {
             editMovementDismissContext = nil
             movementToEdit = MovementEditingSelection(id: movement.id, movement: movement)
@@ -773,7 +833,7 @@ struct MovementsView: View {
     private func handleEditMovementDismiss() {
         defer { editMovementDismissContext = nil }
         guard let context = editMovementDismissContext else {
-            reloadMovements()
+            reloadMovements(refreshAvailableYears: true)
             return
         }
 
@@ -804,7 +864,7 @@ struct MovementsView: View {
         defer { movementDetailDismissContext = nil }
 
         guard let context = movementDetailDismissContext else {
-            reloadMovements()
+            reloadMovements(refreshAvailableYears: true)
             return
         }
 
@@ -918,12 +978,11 @@ struct MovementsView: View {
             return
         case .reconcileListAndRefreshHeader:
             reconcileLoadedMovements(preferredVisibleCount: baseline.loadedMovementCount)
-            refreshSummaryAndRecurringStateSilently()
+            refreshSummaryAndRecurringStateSilently(refreshAvailableYears: true)
         case .insertNewMovementsAndRefreshHeader:
-            insertRecentlyCreatedMovements(since: baseline.latestCreatedAt, preferredVisibleCount: baseline.loadedMovementCount)
-            refreshSummaryAndRecurringStateSilently()
+            reloadMovements(refreshAvailableYears: true)
         case .reloadAll:
-            reloadMovements()
+            reloadMovements(refreshAvailableYears: true)
         }
     }
 
@@ -1005,9 +1064,9 @@ struct MovementsView: View {
         return lhs.createdAt > rhs.createdAt
     }
 
-    private func startSummaryReload(token: UUID) {
+    private func startSummaryReload(token: UUID, refreshAvailableYears: Bool) {
         summaryReloadTask = Task(priority: .utility) { @MainActor in
-            await reloadMovementSummaryAndRecurringState(token: token)
+            await reloadMovementSummaryAndRecurringState(token: token, refreshAvailableYears: refreshAvailableYears)
         }
     }
 
@@ -1024,62 +1083,52 @@ struct MovementsView: View {
     }
 
     @MainActor
-    private func reloadMovementSummaryAndRecurringState(token: UUID) async {
+    private func reloadMovementSummaryAndRecurringState(token: UUID, refreshAvailableYears: Bool) async {
         var computedSummary = MovementListSummary()
-        var confirmations: [Movement] = []
-        var scannedCount = 0
-        var offset = 0
-        var discoveredYears: Set<Int> = [calendar.component(.year, from: Date()), selectedYear]
+        var refreshedAvailableYears: [Int]?
 
         do {
-            while true {
+            if Task.isCancelled || token != reloadToken { return }
+
+            let summaryMovements = try fetchMovementsForSummary()
+            let confirmations = try fetchRecurringConfirmationMovements()
+
+            if refreshAvailableYears {
+                refreshedAvailableYears = try fetchAvailablePeriodYears()
+            }
+
+            for movement in summaryMovements {
                 if Task.isCancelled || token != reloadToken { return }
 
-                let batch = try fetchMovementBatch(offset: offset, limit: Self.movementSummaryBatchSize)
-                guard !batch.isEmpty else { break }
+                guard matchesActiveFilters(movement) else { continue }
+                computedSummary.movementCount += 1
 
-                scannedCount += batch.count
-                offset += batch.count
-
-                for movement in batch {
-                    discoveredYears.insert(calendar.component(.year, from: movement.occurredAt))
-
-                    if movement.recurringRuleId != nil {
-                        confirmations.append(movement)
-                    }
-
-                    guard matchesActiveFilters(movement) else { continue }
-                    computedSummary.movementCount += 1
-
-                    switch movement.type {
-                    case .income:
-                        computedSummary.totalIncome += movement.statsIncomeAmount
-                    case .expense:
-                        computedSummary.totalExpense += movement.statsExpenseAmount
-                    case .transfer:
-                        break
-                    }
-                }
-
-                if batch.count < Self.movementSummaryBatchSize {
+                switch movement.type {
+                case .income:
+                    computedSummary.totalIncome += movement.statsIncomeAmount
+                case .expense:
+                    computedSummary.totalExpense += movement.statsExpenseAmount
+                case .transfer:
                     break
                 }
-
-                await Task.yield()
             }
 
             guard !Task.isCancelled, token == reloadToken else { return }
             summary = computedSummary
             recurringConfirmationMovements = confirmations
-            hasAnyMovements = scannedCount > 0
-            availablePeriodYears = discoveredYears.sorted(by: >)
+            hasAnyMovements = (currentMovementCount() ?? summaryMovements.count) > 0
+            if let refreshedAvailableYears {
+                availablePeriodYears = refreshedAvailableYears
+            }
             isSummaryLoading = false
         } catch {
             guard !Task.isCancelled, token == reloadToken else { return }
             summary = MovementListSummary()
             recurringConfirmationMovements = []
             hasAnyMovements = false
-            availablePeriodYears = Array(Set([calendar.component(.year, from: Date()), selectedYear])).sorted(by: >)
+            if refreshAvailableYears {
+                availablePeriodYears = Array(Set([calendar.component(.year, from: Date()), selectedYear])).sorted(by: >)
+            }
             isSummaryLoading = false
         }
     }
@@ -1161,6 +1210,40 @@ struct MovementsView: View {
         return try modelContext.fetch(descriptor)
     }
 
+    private func fetchMovementsForSummary() throws -> [Movement] {
+        if let interval = activeDateInterval {
+            let start = interval.start
+            let end = interval.end
+            let descriptor = FetchDescriptor<Movement>(
+                predicate: #Predicate { movement in
+                    movement.occurredAt >= start && movement.occurredAt < end
+                }
+            )
+            return try modelContext.fetch(descriptor)
+        }
+
+        let descriptor = FetchDescriptor<Movement>()
+        return try modelContext.fetch(descriptor)
+    }
+
+    private func fetchRecurringConfirmationMovements() throws -> [Movement] {
+        let descriptor = FetchDescriptor<Movement>(
+            predicate: #Predicate { movement in
+                movement.recurringRuleId != nil
+            }
+        )
+        return try modelContext.fetch(descriptor)
+    }
+
+    private func fetchAvailablePeriodYears() throws -> [Int] {
+        let descriptor = FetchDescriptor<Movement>()
+        let movements = try modelContext.fetch(descriptor)
+        let discoveredYears = movements.reduce(into: Set([calendar.component(.year, from: Date()), selectedYear])) { years, movement in
+            years.insert(calendar.component(.year, from: movement.occurredAt))
+        }
+        return discoveredYears.sorted(by: >)
+    }
+
     private func matchesActiveFilters(_ movement: Movement) -> Bool {
         guard matchesDateFilter(movement) else { return false }
         guard matchesAccountAndTypeFilters(movement) else { return false }
@@ -1171,7 +1254,7 @@ struct MovementsView: View {
 
     private func matchesDateFilter(_ movement: Movement) -> Bool {
         guard let activeDateInterval else { return true }
-        return activeDateInterval.contains(movement.occurredAt)
+        return movement.occurredAt >= activeDateInterval.start && movement.occurredAt < activeDateInterval.end
     }
 
     private func matchesAccountAndTypeFilters(_ movement: Movement) -> Bool {
@@ -1213,6 +1296,14 @@ struct MovementsView: View {
             return
         }
 
+        guard account.isActive else {
+            pending.rule.isActive = false
+            pending.rule.updatedAt = Date()
+            pendingAlertMessage = "La cuenta asociada está archivada. La recurrencia se ha desactivado."
+            showingPendingAlert = true
+            return
+        }
+
         guard !RecurringMovementService.isOccurrenceConfirmed(
             ruleID: pending.rule.id,
             dueDate: pending.dueDate,
@@ -1245,10 +1336,11 @@ struct MovementsView: View {
             modelContext.insert(movement)
             pending.rule.updatedAt = Date()
         }
+        recurringConfirmationMovements.append(movement)
 
         HapticFeedback.success()
         mergeVisibleMovements([movement], preferredVisibleCount: targetVisibleMovementCount(from: loadedMovements.count))
-        refreshSummaryAndRecurringStateSilently()
+        refreshSummaryAndRecurringStateSilently(refreshAvailableYears: true)
     }
 
     private func cancelPendingRecurring(_ recurring: RecurringMovement) {
@@ -1288,9 +1380,9 @@ struct MovementsView: View {
             movement.notes,
             movement.type.displayName,
             movement.category?.name ?? "",
-            movement.account?.name ?? "",
+            movement.account?.name ?? "Cuenta eliminada",
             movement.account?.bankDisplayName ?? "",
-            movement.destinationAccount?.name ?? "",
+            movement.destinationAccount?.name ?? "Cuenta eliminada",
             movement.destinationAccount?.bankDisplayName ?? "",
             movement.occurredAt.asSpanishShortDate(),
             movement.occurredAt.asSpanishDateTime(),
@@ -1325,6 +1417,52 @@ struct MovementsView: View {
         }
     }
 
+    private var selectedAccountFilterTitle: String {
+        guard let selectedAccountFilterID,
+              let account = activeAccounts.first(where: { $0.id == selectedAccountFilterID }) else {
+            return "Todas"
+        }
+
+        return account.name
+    }
+
+    private var activeAdvancedFilterLabel: String {
+        if selectedTypeFilter != .all {
+            return selectedTypeFilter.title
+        }
+
+        return "Todos los tipos de movimientos"
+    }
+
+    private var advancedFiltersCount: Int {
+        (selectedTypeFilter == .all ? 0 : 1) + (selectedTypeFilter == .transfer ? 0 : selectedCategoryFilters.count)
+    }
+
+    @ViewBuilder
+    private var summaryHeaderContent: some View {
+        if isSummaryLoading {
+            MovementSummaryLoadingView()
+        } else {
+            MovementSummaryView(
+                totalIncome: totalIncome,
+                totalExpense: totalExpense,
+                netBalance: netBalance,
+                movementCount: movementCount,
+                currencyCode: appCurrencyCode,
+                hideBalances: hideBalances
+            )
+        }
+    }
+
+    private var accountFilterControl: some View {
+        AccountSelectionMenu(
+            accounts: activeAccounts,
+            selectedAccountID: $selectedAccountFilterID,
+            allowsAllAccounts: true,
+            accessibilityLabel: "Filtrar por cuenta"
+        )
+    }
+
     private func applyCustomPeriod() {
         selectedMonth = customMonthDraft
         selectedYear = customYearDraft
@@ -1333,6 +1471,50 @@ struct MovementsView: View {
             reloadMovements()
         } else {
             selectedDateFilter = .customMonth
+        }
+    }
+
+    private func movementTouchesArchivedAccount(_ movement: Movement) -> Bool {
+        if movement.account?.isArchived == true || movement.destinationAccount?.isArchived == true {
+            return true
+        }
+
+        guard movement.type == .income, let reimbursementForId = movement.reimbursementForId else { return false }
+        return archivedAccountMovementSnapshots.contains { snapshot in
+            snapshot.movementID == reimbursementForId
+            && snapshot.accountID.map { archivedAccountIDs.contains($0) } == true
+        }
+    }
+
+    private func refreshArchivedAccountMovementSnapshots() {
+        let archivedIDs = archivedAccountIDs
+        guard !archivedIDs.isEmpty else {
+            archivedAccountMovementSnapshots = []
+            return
+        }
+
+        var descriptor = FetchDescriptor<Movement>()
+        descriptor.includePendingChanges = true
+
+        do {
+            let fetchedMovements = try modelContext.fetch(descriptor)
+            archivedAccountMovementSnapshots = fetchedMovements.map { movement in
+                MovementArchivedAccountSnapshot(
+                    movementID: movement.id,
+                    accountID: movement.account?.id,
+                    destinationAccountID: movement.destinationAccount?.id,
+                    reimbursementForID: movement.reimbursementForId
+                )
+            }
+        } catch {
+            archivedAccountMovementSnapshots = []
+        }
+    }
+
+    private func clearArchivedAccountFilterIfNeeded() {
+        guard let selectedAccountFilterID else { return }
+        if !activeAccounts.contains(where: { $0.id == selectedAccountFilterID }) {
+            self.selectedAccountFilterID = nil
         }
     }
 
@@ -1367,20 +1549,62 @@ struct MovementsView: View {
 
     private var filtersHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(activePeriodLabel)
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    Text(activeAdvancedFilterLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    showingAdvancedFiltersSheet = true
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        Text("Filtros")
+
+                        if advancedFiltersCount > 0 {
+                            Text("\(advancedFiltersCount)")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.financeAccent, in: Capsule())
+                        }
+                    }
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 9)
+                    .background(Color.financeAccent.opacity(0.13), in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Filtros")
+                .accessibilityValue(activeAdvancedFilterLabel)
+            }
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(quickDateFilterChips, id: \.id) { filter in
-                        MovementFilterChip(
+                        MovementQuickDatePill(
                             title: filter.displayName,
-                            color: .indigo,
                             isSelected: selectedDateFilter == filter,
                             action: { selectedDateFilter = filter }
                         )
                     }
 
-                    MovementFilterChip(
-                        title: MovementListDateFilter.customMonth.displayName,
-                        color: .indigo,
+                    MovementQuickDatePill(
+                        title: selectedDateFilter == .customMonth ? activePeriodLabel : MovementListDateFilter.customMonth.displayName,
+                        systemImage: "calendar.badge.clock",
                         isSelected: selectedDateFilter == .customMonth,
                         action: {
                             prepareCustomPeriodDrafts()
@@ -1388,82 +1612,21 @@ struct MovementsView: View {
                         }
                     )
                 }
-                .padding(.leading, 16)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 8) {
-                Image(systemName: "calendar")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Text(activePeriodLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-
-                Spacer()
-
-                if selectedDateFilter == .customMonth {
-                    Button("Editar") {
-                        prepareCustomPeriodDrafts()
-                        showingCustomPeriodSheet = true
-                    }
-                    .font(.caption)
-                }
-            }
-            .padding(.horizontal, 16)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(MovementListTypeFilter.allCases) { filter in
-                        MovementFilterChip(
-                            title: filter.title,
-                            color: filter.color,
-                            isSelected: selectedTypeFilter == filter,
-                            action: { selectedTypeFilter = filter }
-                        )
-                    }
-                }
-                .padding(.leading, 16)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if selectedTypeFilter != .transfer {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        MovementFilterChip(
-                            title: "Todas",
-                            color: .gray,
-                            isSelected: selectedCategoryFilters.isEmpty,
-                            action: { selectedCategoryFilters.removeAll() }
-                        )
-
-                        ForEach(categoryFilterOptions, id: \.id) { option in
-                            MovementFilterChip(
-                                title: option.title,
-                                color: option.color,
-                                isSelected: selectedCategoryFilters.contains(option.id),
-                                action: { toggleCategoryFilter(option.id) }
-                            )
-                        }
-                    }
-                    .padding(.leading, 16)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
+            .scrollClipDisabled()
         }
-        .padding(.top, 4)
+        .padding(14)
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.hero)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var floatingFiltersHeader: some View {
         filtersHeader
-            .padding(.top, 6)
-            .padding(.bottom, 10)
             .background(
                 Rectangle()
-                    .fill(.ultraThinMaterial)
+                    .fill(.regularMaterial)
                     .overlay(alignment: .bottom) {
                         Divider()
                             .opacity(0.35)
@@ -1497,20 +1660,251 @@ private struct MovementFilterChip: View {
                 .font(.subheadline)
                 .fontWeight(.medium)
                 .foregroundStyle(isSelected ? color : .primary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(
-                    isSelected
-                    ? color.opacity(0.16)
-                    : Color.secondary.opacity(0.12)
-                )
-                .clipShape(Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(isSelected ? color.opacity(0.28) : Color.clear, lineWidth: 1)
-                )
+                .financeGlassPill(tint: color, isSelected: isSelected)
+                .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct MovementQuickDatePill: View {
+    let title: String
+    var systemImage: String = "calendar"
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.caption2.weight(.bold))
+                    .symbolRenderingMode(.hierarchical)
+
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(isSelected ? .white : .primary)
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .background(
+                isSelected
+                    ? LinearGradient(colors: [Color.financeAccent.opacity(0.82), Color.financeAccent], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    : LinearGradient(colors: [Color.secondary.opacity(0.12), Color.secondary.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(isSelected ? Color.white.opacity(0.38) : Color.white.opacity(0.26), lineWidth: 0.75)
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+private struct MovementInlineSectionHeader: View {
+    let title: String
+    var count: Int? = nil
+    var systemImage: String? = nil
+    var tint: Color = .blue
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            HStack(spacing: 7) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(tint)
+                }
+
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
+                    .tracking(0.6)
+                    .foregroundStyle(.primary.opacity(0.82))
+            }
+
+            Spacer(minLength: 12)
+
+            if let count {
+                Text("\(count)")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(tint.opacity(0.18), in: Capsule())
+                    .foregroundStyle(tint)
+            }
+        }
+        .padding(.top, 10)
+        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 6, trailing: 16))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct MovementAdvancedFiltersSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @Binding var selectedTypeFilter: MovementListTypeFilter
+    @Binding var selectedCategoryFilters: Set<MovementCategoryFilter>
+    let categoryOptions: [(id: MovementCategoryFilter, title: String, iconName: String, color: Color)]
+    var onClearCategories: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                MovementInlineSectionHeader(
+                    title: "Tipo de movimiento",
+                    systemImage: "line.3.horizontal.decrease.circle",
+                    tint: .blue
+                )
+
+                Section {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 10)], spacing: 10) {
+                        ForEach(MovementListTypeFilter.allCases) { filter in
+                            MovementAdvancedFilterTile(
+                                title: filter.title,
+                                systemImage: iconName(for: filter),
+                                color: filter.color,
+                                isSelected: selectedTypeFilter == filter
+                            ) {
+                                selectedTypeFilter = filter
+                                if filter == .transfer {
+                                    onClearCategories()
+                                }
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                } footer: {
+                    Text("Las transferencias ocultan categorías porque no tienen categoría asociada.")
+                }
+
+                if selectedTypeFilter != .transfer {
+                    MovementInlineSectionHeader(
+                        title: "Categorías",
+                        systemImage: "tag",
+                        tint: .purple
+                    )
+
+                    Section {
+                        Button {
+                            onClearCategories()
+                        } label: {
+                            HStack {
+                                Label("Todas las categorías", systemImage: "sparkles")
+                                Spacer()
+                                if selectedCategoryFilters.isEmpty {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(.blue)
+                                }
+                            }
+                        }
+
+                        ForEach(categoryOptions, id: \.id) { option in
+                            Button {
+                                if selectedCategoryFilters.contains(option.id) {
+                                    selectedCategoryFilters.remove(option.id)
+                                } else {
+                                    selectedCategoryFilters.insert(option.id)
+                                }
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: option.iconName)
+                                        .font(.subheadline.weight(.semibold))
+                                        .symbolRenderingMode(.hierarchical)
+                                        .foregroundStyle(option.color)
+                                        .frame(width: 30, height: 30)
+                                        .background(option.color.opacity(0.16), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                                    Text(option.title)
+                                        .foregroundStyle(.primary)
+
+                                    Spacer()
+
+                                    if selectedCategoryFilters.contains(option.id) {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundStyle(option.color)
+                                    }
+                                }
+                            }
+                            .accessibilityAddTraits(selectedCategoryFilters.contains(option.id) ? .isSelected : [])
+                        }
+                    }
+                }
+            }
+            .financeGlassListContainer()
+            .navigationTitle("Ajustar filtros")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Restablecer") {
+                        selectedTypeFilter = .all
+                        onClearCategories()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Listo") {
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+        }
+    }
+
+    private func iconName(for filter: MovementListTypeFilter) -> String {
+        switch filter {
+        case .all: return "circle.grid.2x2.fill"
+        case .expense: return "arrow.down.left.circle.fill"
+        case .income: return "arrow.up.right.circle.fill"
+        case .transfer: return "arrow.left.arrow.right.circle.fill"
+        }
+    }
+}
+
+private struct MovementAdvancedFilterTile: View {
+    let title: String
+    let systemImage: String
+    let color: Color
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .font(.title3)
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(color)
+
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 0)
+
+                if isSelected {
+                    Image(systemName: "checkmark")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(color)
+                }
+            }
+            .financeInsetCard(cornerRadius: 18)
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(isSelected ? color.opacity(0.55) : Color.clear, lineWidth: 1.2)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -1526,7 +1920,13 @@ private struct MovementCustomMonthSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Mes") {
+                MovementInlineSectionHeader(
+                    title: "Mes",
+                    systemImage: "calendar",
+                    tint: .blue
+                )
+
+                Section {
                     Picker("Mes", selection: $selectedMonth) {
                         ForEach(monthOptions, id: \.0) { month, name in
                             Text(name).tag(month)
@@ -1534,7 +1934,13 @@ private struct MovementCustomMonthSheet: View {
                     }
                 }
 
-                Section("Año") {
+                MovementInlineSectionHeader(
+                    title: "Año",
+                    systemImage: "calendar.circle",
+                    tint: .indigo
+                )
+
+                Section {
                     Picker("Año", selection: $selectedYear) {
                         ForEach(availableYears, id: \.self) { year in
                             Text(verbatim: String(year)).tag(year)
@@ -1587,7 +1993,13 @@ private struct PendingRecurringPeriodHintRow: View {
 
             Spacer(minLength: 0)
         }
-        .financeInsetCard(cornerRadius: 16)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
         .padding(.vertical, 2)
     }
 }
@@ -1601,38 +2013,22 @@ private struct MovementSummaryView: View {
     let hideBalances: Bool
 
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
                 SummaryPill(title: "Ingresos", value: totalIncome.masked(hideBalances, code: currencyCode), color: .green)
+                Divider().opacity(0.35)
                 SummaryPill(title: "Gastos", value: totalExpense.masked(hideBalances, code: currencyCode), color: .red)
             }
 
-            HStack {
-                Text("Balance")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Divider().opacity(0.25)
 
-                Spacer()
-
-                Text(netBalance.masked(hideBalances, code: currencyCode))
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(netBalance >= 0 ? .green : .red)
-            }
-
-            HStack {
-                Text("Movimientos")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                Text("\(movementCount)")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
+            HStack(spacing: 12) {
+                SummaryPill(title: "Balance", value: netBalance.masked(hideBalances, code: currencyCode), color: netBalance >= 0 ? .green : .red)
+                Divider().opacity(0.35)
+                SummaryPill(title: "Movimientos", value: "\(movementCount)", color: .financeAccent)
             }
         }
-        .padding(12)
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 }
 
@@ -1656,7 +2052,7 @@ private struct MovementSummaryLoadingView: View {
                 .fill(Color.secondary.opacity(0.12))
                 .frame(height: 34)
         }
-        .padding(12)
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
         .redacted(reason: .placeholder)
     }
 }
@@ -1676,52 +2072,27 @@ private struct SummaryPill: View {
         colorScheme == .dark ? .white : .black.opacity(0.96)
     }
 
-    private var backgroundColors: [Color] {
-        if colorScheme == .dark {
-            return [
-                color.opacity(0.28),
-                color.opacity(0.20)
-            ]
-        }
-
-        return [
-            color.opacity(0.56),
-            color.opacity(0.45)
-        ]
-    }
-
-    private var borderColor: Color {
-        colorScheme == .dark ? color.opacity(0.35) : color.opacity(0.78)
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .foregroundStyle(titleColor)
+        HStack(alignment: .center, spacing: 8) {
+            Circle()
+                .fill(color.opacity(colorScheme == .dark ? 0.35 : 0.22))
+                .frame(width: 8, height: 8)
 
-            Text(value)
-                .font(.headline)
-                .fontWeight(.bold)
-                .foregroundStyle(valueColor)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(titleColor)
+
+                Text(value)
+                    .font(.subheadline)
+                    .fontWeight(.bold)
+                    .foregroundStyle(valueColor)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(
-            LinearGradient(
-                colors: backgroundColors,
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(borderColor, lineWidth: colorScheme == .dark ? 1.1 : 1.25)
-        )
     }
 }
 
@@ -1790,7 +2161,8 @@ private struct PendingRecurringMovementRowView: View {
             detailLines: [accountName],
             amountText: amountText,
             trailingPill: MovementTrailingPill(title: statusTitle, color: statusColor),
-            dateText: pending.dueDate.asSpanishShortDate()
+            dateText: pending.dueDate.asSpanishShortDate(),
+            style: .movementListCard
         )
     }
 }
@@ -1813,9 +2185,9 @@ private struct MovementRowView: View, Equatable {
     }
 
     private var accountAndBankText: String {
-        let accountText = movement.account?.name ?? "Sin cuenta"
+        let accountText = movement.account?.name ?? "Cuenta eliminada"
         if movement.type == .transfer {
-            let destinationText = movement.destinationAccount?.name ?? "Sin cuenta destino"
+            let destinationText = movement.destinationAccount?.name ?? "Cuenta eliminada"
             return "\(accountText) -> \(destinationText)"
         }
         return accountText
@@ -1902,7 +2274,8 @@ private struct MovementRowView: View, Equatable {
             amountText: displayAmount,
             amountColor: displayAmountColor,
             trailingInfoText: personalAmountText,
-            dateText: movement.occurredAt.asSpanishShortDate()
+            dateText: movement.occurredAt.asSpanishShortDate(),
+            style: .movementListCard
         )
         .contentTransition(.opacity)
     }

@@ -21,68 +21,63 @@ struct BankManagementView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            Group {
                 if banks.isEmpty {
-                    ContentUnavailableView(
+                    FinanceCenteredEmptyState(
                         "Sin bancos",
                         systemImage: "building.columns",
                         description: Text("Pulsa + para crear tu primer banco")
                     )
-                    .listRowBackground(Color.clear)
                 } else {
-                    ForEach(banks, id: \.id) { bank in
-                        Button {
-                            editingBank = bank
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: bank.iconName)
-                                    .font(.title3)
-                                    .foregroundStyle(.white)
-                                    .frame(width: 34, height: 34)
-                                    .background(bank.color)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(bank.name)
-                                        .font(.body)
-                                        .fontWeight(.medium)
-                                        .foregroundStyle(.primary)
-
-                                    Text("\((bank.accounts ?? []).count) \((bank.accounts ?? []).count == 1 ? "cuenta" : "cuentas")")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer()
-
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(10)
-                            .background(colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.9))
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14)
-                                    .stroke(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.45), lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    List {
+                        ForEach(banks, id: \.id) { bank in
                             Button {
                                 editingBank = bank
                             } label: {
-                                Label("Editar", systemImage: "pencil")
+                                HStack(spacing: 12) {
+                                    Image(systemName: bank.iconName)
+                                        .font(.title3)
+                                        .foregroundStyle(.white)
+                                        .frame(width: 34, height: 34)
+                                        .background(bank.color)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(bank.name)
+                                            .font(.body)
+                                            .fontWeight(.medium)
+                                            .foregroundStyle(.primary)
+
+                                        Text("\((bank.accounts ?? []).count) \((bank.accounts ?? []).count == 1 ? "cuenta" : "cuentas")")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .financeElevatedRow()
                             }
-                            .tint(.blue)
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button {
+                                    editingBank = bank
+                                } label: {
+                                    Label("Editar", systemImage: "pencil")
+                                }
+                                .tint(.financeAccent)
+                            }
                         }
+                        .onDelete(perform: deleteBanks)
                     }
-                    .onDelete(perform: deleteBanks)
+                    .financeGlassListContainer()
                 }
             }
-            .financeGlassListContainer()
             .navigationTitle("Bancos")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -99,6 +94,7 @@ struct BankManagementView: View {
                         Image(systemName: "plus")
                             .financeToolbarIconStyle()
                     }
+                    .accessibilityLabel("Crear banco")
                 }
             }
             .sheet(item: $editingBank) { (bank: Bank) in
@@ -143,13 +139,16 @@ struct BankEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Nombre") {
+                Section {
                     TextField("Nombre del banco", text: $bankName)
                         .textInputAutocapitalization(.words)
                         .autocorrectionDisabled()
+                } header: {
+                    FinanceGlassSectionHeader(title: "Nombre", systemImage: "textformat")
                 }
+                .financeGlassFormSection()
 
-                Section("Icono") {
+                Section {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(BankIcon.allCases) { icon in
                             Button {
@@ -170,9 +169,12 @@ struct BankEditorSheet: View {
                         }
                     }
                     .padding(.vertical, 4)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Icono", systemImage: "square.grid.3x3.fill")
                 }
+                .financeGlassFormSection()
 
-                Section("Color") {
+                Section {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(BankColor.allCases) { color in
                             Button {
@@ -193,9 +195,12 @@ struct BankEditorSheet: View {
                         }
                     }
                     .padding(.vertical, 4)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Color", systemImage: "paintpalette.fill")
                 }
+                .financeGlassFormSection()
 
-                Section("Vista previa") {
+                Section {
                     HStack(spacing: 10) {
                         Image(systemName: selectedIcon.systemName)
                             .font(.title2)
@@ -207,7 +212,10 @@ struct BankEditorSheet: View {
                         Text(bankName.isEmpty ? "Nombre del banco" : bankName)
                             .fontWeight(.medium)
                     }
+                } header: {
+                    FinanceGlassSectionHeader(title: "Vista previa", systemImage: "eye.fill")
                 }
+                .financeGlassFormSection()
             }
             .financeGlassListContainer()
             .navigationTitle(isEditing ? "Editar banco" : "Nuevo banco")

@@ -27,12 +27,19 @@ struct BudgetsSection: View {
     private var budget: Budget? { budgets.first }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
-            HStack {
-                Label("Presupuesto mensual", systemImage: "chart.bar.fill")
-                    .font(.headline)
-                    .foregroundStyle(.primary)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Presupuesto mensual", systemImage: "chart.bar.fill")
+                        .font(.caption.weight(.bold))
+                        .textCase(.uppercase)
+                        .tracking(0.7)
+                        .foregroundStyle(.primary.opacity(0.78))
+
+                    Text("Controla tus gastos por categoria")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 Spacer()
 
@@ -46,12 +53,21 @@ struct BudgetsSection: View {
                         Button(role: .destructive) {
                             showingDeleteConfirm = true
                         } label: {
-                            Label("Eliminar", systemImage: "trash")
+                            Label {
+                                Text("Eliminar")
+                                    .foregroundStyle(.red)
+                            } icon: {
+                                Image(systemName: "trash")
+                                    .foregroundStyle(.red)
+                            }
                         }
+                        .tint(.red)
                     } label: {
                         Image(systemName: "ellipsis.circle")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(.primary)
+                            .frame(width: 36, height: 36)
+                            .background(Color.primary.opacity(0.06), in: Circle())
                     }
                     .accessibilityLabel("Opciones del presupuesto")
                     let _ = budget
@@ -61,7 +77,9 @@ struct BudgetsSection: View {
                     } label: {
                         Image(systemName: "plus.circle.fill")
                             .font(.system(size: 17, weight: .semibold))
-                            .foregroundStyle(.tint)
+                            .foregroundStyle(.primary)
+                            .frame(width: 36, height: 36)
+                            .background(Color.primary.opacity(0.06), in: Circle())
                     }
                     .accessibilityLabel("Crear presupuesto mensual")
                 }
@@ -75,6 +93,12 @@ struct BudgetsSection: View {
                 emptyState
             }
         }
+        .padding(FinanceGlassTokens.Spacing.medium)
+        .background(Color.primary.opacity(0.055), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
         .sheet(isPresented: $showingAddBudget) {
             AddBudgetView(budgetToEdit: budget)
         }
@@ -107,24 +131,27 @@ struct BudgetsSection: View {
             HStack(spacing: 12) {
                 Image(systemName: "plus.circle.dashed")
                     .font(.title2)
-                    .foregroundStyle(.tint)
+                    .foregroundStyle(.primary)
+                    .frame(width: 44, height: 44)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Crea tu presupuesto mensual")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(.primary)
                     Text("Define cuánto puedes gastar y repártelo por categorías.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
             }
             .padding(14)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(colorScheme == .dark ? Color.white.opacity(0.10) : Color.blue.opacity(0.14), lineWidth: 1)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)
@@ -172,7 +199,7 @@ private struct BudgetSummaryCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 16) {
             if isAlerting {
                 HStack(spacing: 8) {
                     Image(systemName: isOverBudget ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
@@ -186,67 +213,71 @@ private struct BudgetSummaryCard: View {
                         .foregroundStyle(.secondary)
                 }
                 .foregroundStyle(isOverBudget ? Color.red : Color.orange)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
                 .background((isOverBudget ? Color.red : Color.orange).opacity(colorScheme == .dark ? 0.16 : 0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(Capsule())
             }
 
-            // Amounts row
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 5) {
                     Text("Gastado este mes")
-                        .font(.caption)
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                     Text(spent.masked(hideBalances, code: currencyCode))
-                        .font(.title3)
-                        .fontWeight(.bold)
+                        .font(.system(size: 28, weight: .medium, design: .rounded))
+                        .tracking(-0.6)
                         .foregroundStyle(progress >= 1 ? .red : .primary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
 
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 2) {
+                VStack(alignment: .trailing, spacing: 4) {
                     Text("Total")
-                        .font(.caption)
+                        .font(.caption2.weight(.semibold))
+                        .textCase(.uppercase)
+                        .tracking(0.5)
                         .foregroundStyle(.secondary)
                     Text(budget.totalAmount.masked(hideBalances, code: currencyCode))
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 17, weight: .medium, design: .rounded))
+                        .tracking(-0.2)
+                        .foregroundStyle(.primary.opacity(0.82))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.62)
                 }
+                .frame(minWidth: 92, maxWidth: 124, alignment: .trailing)
             }
 
-            // Progress bar
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 5)
+                    Capsule()
                         .fill(Color.secondary.opacity(0.15))
-                    RoundedRectangle(cornerRadius: 5)
+                    Capsule()
                         .fill(progressColor)
                         .frame(width: max(0, geo.size.width * progress))
                         .animation(.easeInOut(duration: 0.4), value: progress)
                 }
             }
-            .frame(height: 7)
+            .frame(height: 10)
 
-            // Footer
-            HStack {
+            HStack(spacing: 10) {
                 Text("\(Int(progress * 100)) % consumido")
-                    .font(.caption2)
+                    .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                 Spacer()
                 if remaining > 0 {
                     Text("Quedan \(remaining.masked(hideBalances, code: currencyCode))")
-                        .font(.caption2)
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.secondary)
                 } else if remaining < 0 {
                     Text("Superado \((-remaining).masked(hideBalances, code: currencyCode))")
-                        .font(.caption2)
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.red)
                 } else {
                     Text("Presupuesto agotado")
-                        .font(.caption2)
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(.orange)
                 }
 
@@ -255,22 +286,19 @@ private struct BudgetSummaryCard: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(colorScheme == .dark ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Color.white.opacity(0.84)))
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .padding(16)
+        .background(Color.primary.opacity(colorScheme == .dark ? 0.075 : 0.045), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(
                     isOverBudget
                         ? Color.red.opacity(0.4)
                         : (isAlerting
                             ? Color.orange.opacity(colorScheme == .dark ? 0.4 : 0.28)
-                            : (colorScheme == .dark ? Color.white.opacity(0.10) : Color.blue.opacity(0.14))),
+                            : Color.primary.opacity(0.07)),
                     lineWidth: 1
                 )
         )
-        .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 5)
     }
 }
 

@@ -19,6 +19,7 @@ struct MovementDetailView: View {
 
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
+    @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
 
     let movement: Movement
     let currencyCode: String
@@ -27,6 +28,7 @@ struct MovementDetailView: View {
     @State private var showingEditSheet = false
     @State private var relatedMovementToView: RelatedMovementSelection?
     @State private var hasAnimatedIn = false
+    @State private var showingArchivedAccountAlert = false
 
     private var linkedReimbursements: [Movement] {
         guard movement.type == .expense else { return [] }
@@ -57,11 +59,11 @@ struct MovementDetailView: View {
     }
 
     private var accountName: String {
-        movement.account?.name ?? "Sin cuenta"
+        movement.account?.name ?? "Cuenta eliminada"
     }
 
     private var accountBankName: String {
-        movement.account?.bankDisplayName ?? "Sin banco"
+        movement.account?.bankDisplayName ?? "Cuenta eliminada"
     }
 
     private var expectedReimbursement: Decimal {
@@ -87,6 +89,27 @@ struct MovementDetailView: View {
     private var shouldShowReimbursementTracking: Bool {
         guard expectedReimbursement > 0 else { return false }
         return movement.personalAmount != 0 || !linkedReimbursements.isEmpty
+    }
+
+    private var activeAccounts: [BankAccount] {
+        accounts.filter(\.isActive)
+    }
+
+    private var touchesArchivedAccount: Bool {
+        if movement.account?.isArchived == true || movement.destinationAccount?.isArchived == true {
+            return true
+        }
+
+        guard movement.type == .income, let reimbursementForId = movement.reimbursementForId else { return false }
+        return movements.first(where: { $0.id == reimbursementForId })?.account?.isArchived == true
+    }
+
+    private var quickReimbursementAccount: BankAccount? {
+        activeAccounts.first { account in
+            guard movement.account?.isArchived == true else { return true }
+            guard let expenseAccountID = movement.account?.id else { return true }
+            return account.id != expenseAccountID
+        }
     }
 
     private var statusBadge: (title: String, color: Color) {
@@ -147,7 +170,7 @@ struct MovementDetailView: View {
                 .padding(.bottom, 20)
             }
             .scrollIndicators(.hidden)
-            .background(pageBackground.ignoresSafeArea())
+            .financeGlassPageBackground()
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -155,25 +178,27 @@ struct MovementDetailView: View {
                         dismiss()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 17, weight: .semibold))
+                            .financeToolbarIconStyle()
                     }
                     .accessibilityLabel("Cerrar")
                 }
 
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingEditSheet = true
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 17, weight: .semibold))
+                if !touchesArchivedAccount {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showingEditSheet = true
+                        } label: {
+                            Image(systemName: "pencil")
+                                .financeToolbarIconStyle()
+                        }
+                        .accessibilityLabel("Editar")
                     }
-                    .accessibilityLabel("Editar")
                 }
             }
             .sheet(isPresented: $showingQuickReimbursementSheet) {
                 AddMovementView(
                     preselectedType: .income,
-                    preselectedAccountID: movement.account?.id,
+                    preselectedAccountID: quickReimbursementAccount?.id,
                     prefilledConcept: "Reembolso: \(movement.concept)",
                     linkedReimbursementExpenseID: movement.id
                 )
@@ -186,6 +211,11 @@ struct MovementDetailView: View {
                     movement: selection.movement,
                     currencyCode: currencyCode
                 )
+            }
+            .alert("No se puede registrar el reembolso", isPresented: $showingArchivedAccountAlert) {
+                Button("Aceptar", role: .cancel) {}
+            } message: {
+                Text("Necesitas otra cuenta activa distinta para registrar el ingreso del reembolso.")
             }
             .onAppear {
                 guard !hasAnimatedIn else { return }
@@ -325,8 +355,8 @@ struct MovementDetailView: View {
         detailCard {
             sectionTitle("Transferencia")
 
-            infoRow(title: "Desde", value: movement.account?.name ?? "Sin cuenta")
-            infoRow(title: "Hacia", value: movement.destinationAccount?.name ?? "Sin cuenta destino")
+            infoRow(title: "Desde", value: movement.account?.name ?? "Cuenta eliminada")
+            infoRow(title: "Hacia", value: movement.destinationAccount?.name ?? "Cuenta eliminada")
             infoRow(title: "Importe", value: movement.amount.asCurrency(code: currencyCode), valueColor: .blue)
         }
     }
@@ -371,7 +401,11 @@ struct MovementDetailView: View {
                     systemImage: "plus.circle.fill",
                     tint: .blue
                 ) {
-                    showingQuickReimbursementSheet = true
+                    if quickReimbursementAccount == nil {
+                        showingArchivedAccountAlert = true
+                    } else {
+                        showingQuickReimbursementSheet = true
+                    }
                 }
             }
 
@@ -477,35 +511,9 @@ struct MovementDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             content()
         }
-        .padding(14)
+        .padding(2)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.55), lineWidth: 1)
-        )
-        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.22 : 0.06), radius: 14, x: 0, y: 8)
-    }
-
-    private var pageBackground: LinearGradient {
-        if colorScheme == .dark {
-            return LinearGradient(
-                colors: [Color.black, Color(red: 0.07, green: 0.08, blue: 0.11)],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-
-        return LinearGradient(
-            colors: [Color(red: 0.93, green: 0.95, blue: 0.99), Color.white],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-
-    private var cardBackground: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : Color.white.opacity(0.95)
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 
     private func sectionTitle(_ title: String) -> some View {
@@ -534,32 +542,8 @@ struct MovementDetailView: View {
     private func actionButton(title: String, systemImage: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .foregroundStyle(tint)
-                .background(
-                    Capsule()
-                        .fill(.ultraThinMaterial)
-                )
-                .overlay {
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.16), Color.clear],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                }
-                .overlay {
-                    Capsule()
-                        .stroke(tint.opacity(colorScheme == .dark ? 0.38 : 0.28), lineWidth: 1)
-                }
-                .clipShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .financeGlassSecondaryAction(tint: tint)
     }
 
 }

@@ -163,6 +163,10 @@ struct MovementStatsView: View {
 
     private var calendar: Calendar { .current }
 
+    private var activeAccounts: [BankAccount] {
+        accounts.filter(\.isActive)
+    }
+
     private var availableYears: [Int] {
         let movementYears = Set(movements.map { calendar.component(.year, from: $0.occurredAt) })
         let snapshotYears = Set(snapshots.map { calendar.component(.year, from: $0.snapshotDate) })
@@ -225,11 +229,11 @@ struct MovementStatsView: View {
     }
 
     private var investmentAccounts: [BankAccount] {
-        accounts.filter { $0.accountType == .investment }
+        activeAccounts.filter { $0.accountType == .investment }
     }
 
     private var filteredInvestmentSnapshots: [InvestmentSnapshot] {
-        let investmentSnapshots = snapshots.filter { $0.account?.accountType == .investment }
+        let investmentSnapshots = snapshots.filter { $0.account?.accountType == .investment && $0.account?.isActive == true }
         guard let activeInterval else { return investmentSnapshots }
         return investmentSnapshots.filter { activeInterval.contains($0.snapshotDate) }
     }
@@ -572,7 +576,7 @@ struct MovementStatsView: View {
     }
 
     private var patrimonyEvolutionPoints: [PatrimonySeriesPoint] {
-        guard !accounts.isEmpty else { return [] }
+        guard !activeAccounts.isEmpty else { return [] }
 
         let interval = monthlyAnalysisInterval
         var pointDates = monthStarts(in: interval)
@@ -705,6 +709,8 @@ struct MovementStatsView: View {
                         showingWrappedHistory = true
                     } label: {
                         Label("Wrapped", systemImage: "sparkles.rectangle.stack")
+                            .labelStyle(.iconOnly)
+                            .financeToolbarIconStyle()
                     }
                     .disabled(latestWrappedMonth == nil)
                     .accessibilityLabel("Abrir resumen mensual")
@@ -744,12 +750,14 @@ struct MovementStatsView: View {
             }
         }
         .pickerStyle(.segmented)
+        .padding(4)
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.row)
     }
 
     @ViewBuilder
     private var movementsContent: some View {
         if movements.isEmpty {
-            ContentUnavailableView(
+            FinanceEmptyStateContent(
                 "Sin movimientos",
                 systemImage: "arrow.left.arrow.right.circle",
                 description: Text("Registra movimientos en la pestaña Movimientos para ver estadísticas")
@@ -801,7 +809,7 @@ struct MovementStatsView: View {
     @ViewBuilder
     private var investmentsContent: some View {
         if investmentAccounts.isEmpty {
-            ContentUnavailableView(
+            FinanceEmptyStateContent(
                 "Sin cuentas de inversión",
                 systemImage: "chart.line.uptrend.xyaxis",
                 description: Text("Crea una cuenta de tipo Inversión para visualizar evolución y rentabilidad")
@@ -810,7 +818,7 @@ struct MovementStatsView: View {
             .padding(.top, 36)
         } else if investmentSeries.isEmpty {
             VStack(spacing: 12) {
-                ContentUnavailableView(
+                FinanceEmptyStateContent(
                     "Sin datos para este periodo",
                     systemImage: "calendar.badge.exclamationmark",
                     description: Text("Prueba otro periodo o registra snapshots de inversión para las fechas seleccionadas")
@@ -836,8 +844,7 @@ struct MovementStatsView: View {
 
     private var periodSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Periodo", systemImage: "calendar")
-                .font(.headline)
+            FinanceGlassSectionHeader(title: "Periodo", systemImage: "calendar", subtitle: "Filtra la ventana temporal")
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
@@ -872,6 +879,7 @@ struct MovementStatsView: View {
                 }
             }
         }
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 
     private var activePeriodLabel: String {
@@ -957,13 +965,7 @@ struct MovementStatsView: View {
                 StatTile(title: "Movimientos", value: "\(movementCount)", tint: .blue)
             }
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
-        )
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 
     @ViewBuilder
@@ -977,13 +979,7 @@ struct MovementStatsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .padding(16)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
-            )
+            .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
         } else {
             VStack(alignment: .leading, spacing: 12) {
                 Label("Comparativa entre periodos", systemImage: "rectangle.split.2x1")
@@ -1039,13 +1035,7 @@ struct MovementStatsView: View {
                     )
                 }
             }
-            .padding(16)
-            .background(.regularMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
-            )
+            .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
         }
     }
 
@@ -1059,7 +1049,7 @@ struct MovementStatsView: View {
                 .foregroundStyle(.secondary)
 
             if monthlyBalancePoints.allSatisfy({ $0.income == 0 && $0.expense == 0 }) {
-                ContentUnavailableView(
+                FinanceEmptyStateContent(
                     "Sin datos para este periodo",
                     systemImage: "chart.bar.doc.horizontal",
                     description: Text("Registra ingresos o gastos para visualizar el balance mensual.")
@@ -1127,13 +1117,7 @@ struct MovementStatsView: View {
                 }
             }
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
-        )
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 
     private var patrimonyEvolutionCard: some View {
@@ -1146,7 +1130,7 @@ struct MovementStatsView: View {
                 .foregroundStyle(.secondary)
 
             if patrimonyEvolutionPoints.isEmpty {
-                ContentUnavailableView(
+                FinanceEmptyStateContent(
                     "Sin patrimonio para mostrar",
                     systemImage: "chart.line.uptrend.xyaxis",
                     description: Text("Crea al menos una cuenta para calcular la evolución del patrimonio.")
@@ -1270,13 +1254,7 @@ struct MovementStatsView: View {
                 }
             }
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
-        )
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 
     private var investmentSummaryCard: some View {
@@ -1295,13 +1273,7 @@ struct MovementStatsView: View {
                 )
             }
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
-        )
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 
     private var investmentChartCard: some View {
@@ -1429,13 +1401,7 @@ struct MovementStatsView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 14))
             }
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
-        )
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 
     private var investmentBreakdownCard: some View {
@@ -1476,13 +1442,7 @@ struct MovementStatsView: View {
                 }
             }
         }
-        .padding(16)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(colorScheme == .dark ? Color.white.opacity(0.08) : Color.blue.opacity(0.12), lineWidth: 1)
-        )
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 
     private func investmentSelectionRow(color: Color, title: String, value: String) -> some View {
@@ -1636,7 +1596,7 @@ struct MovementStatsView: View {
     }
 
     private func patrimonyTotal(at date: Date) -> Decimal {
-        accounts.reduce(Decimal(0)) { partial, account in
+        activeAccounts.reduce(Decimal(0)) { partial, account in
             partial + historicalBalance(of: account, at: date)
         }
     }
@@ -1842,32 +1802,41 @@ private struct CustomPeriodSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Tipo") {
+                Section {
                     Picker("Tipo", selection: $mode) {
                         ForEach(CustomPeriodMode.allCases) { mode in
                             Text(mode.displayName).tag(mode)
                         }
                     }
                     .pickerStyle(.segmented)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Tipo", systemImage: "calendar.badge.clock")
                 }
+                .financeGlassFormSection()
 
                 if mode == .month {
-                    Section("Mes") {
+                    Section {
                         Picker("Mes", selection: $selectedMonth) {
                             ForEach(monthOptions, id: \.0) { month, name in
                                 Text(name).tag(month)
                             }
                         }
+                    } header: {
+                        FinanceGlassSectionHeader(title: "Mes", systemImage: "calendar")
                     }
+                    .financeGlassFormSection()
                 }
 
-                Section("Año") {
+                Section {
                     Picker("Año", selection: $selectedYear) {
                         ForEach(availableYears, id: \.self) { year in
                             Text(verbatim: String(year)).tag(year)
                         }
                     }
+                } header: {
+                    FinanceGlassSectionHeader(title: "Año", systemImage: "calendar.circle")
                 }
+                .financeGlassFormSection()
             }
             .financeGlassListContainer()
             .navigationTitle("Periodo personalizado")

@@ -43,6 +43,10 @@ struct AddAccountView: View {
         isEditing ? "Editar cuenta" : "Nueva cuenta"
     }
 
+    private var selectedAccent: Color {
+        selectedBank?.color ?? accountType.color
+    }
+
     /// Bancos filtrados por el texto de búsqueda.
     private var filteredBanks: [Bank] {
         if bankSearchText.isEmpty {
@@ -61,25 +65,43 @@ struct AddAccountView: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    AccountDraftHero(
+                        name: $name,
+                        placeholder: navigationTitle,
+                        bankName: selectedBank?.name ?? "Elige banco",
+                        type: accountType,
+                        accent: selectedAccent,
+                        iconName: selectedBank?.iconName ?? accountType.icon
+                    )
+                }
+                .financeGlassClearListRow()
+
                 // Banco
-                Section("Banco") {
+                Section {
                     if let bank = selectedBank {
                         // Banco seleccionado - mostrar con opción de cambiar
-                        HStack(spacing: 10) {
+                        HStack(spacing: 12) {
                             Image(systemName: bank.iconName)
-                                .font(.title3)
+                                .font(.headline)
                                 .foregroundStyle(.white)
-                                .frame(width: 32, height: 32)
+                                .frame(width: 38, height: 38)
                                 .background(bank.color)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
-                            Text(bank.name)
-                                .fontWeight(.medium)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(bank.name)
+                                    .fontWeight(.semibold)
+                                Text("Banco seleccionado")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                             Spacer()
                             Button("Cambiar") {
                                 selectedBank = nil
                                 bankSearchText = ""
                             }
                             .font(.caption)
+                            .buttonStyle(.borderless)
                         }
                     } else {
                         // Campo de búsqueda / selección de banco
@@ -87,22 +109,18 @@ struct AddAccountView: View {
                             .textInputAutocapitalization(.words)
                             .autocorrectionDisabled()
 
-                        // Lista de bancos existentes filtrados
-                        ForEach(filteredBanks) { bank in
-                            Button {
-                                selectedBank = bank
-                                bankSearchText = ""
-                            } label: {
-                                HStack(spacing: 10) {
-                                    Image(systemName: bank.iconName)
-                                        .font(.body)
-                                        .foregroundStyle(.white)
-                                        .frame(width: 28, height: 28)
-                                        .background(bank.color)
-                                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                                    Text(bank.name)
-                                        .foregroundStyle(.primary)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 132), spacing: 10)], spacing: 10) {
+                            ForEach(filteredBanks.prefix(12)) { bank in
+                                Button {
+                                    selectedBank = bank
+                                    bankSearchText = ""
+                                } label: {
+                                    CompactBankChoice(bank: bank, isSelected: selectedBank?.id == bank.id)
                                 }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(bank.name)
+                                .accessibilityValue(selectedBank?.id == bank.id ? "Seleccionado" : "No seleccionado")
+                                .accessibilityAddTraits(selectedBank?.id == bank.id ? .isSelected : [])
                             }
                         }
 
@@ -121,56 +139,92 @@ struct AddAccountView: View {
                             }
                         }
                     }
+                } header: {
+                    FinanceGlassSectionHeader(title: "Banco", systemImage: "building.columns", subtitle: "Elige una entidad existente o crea una nueva")
                 }
+                .financeGlassFormSection()
 
                 // Datos de la cuenta
-                Section("Información de la cuenta") {
-                    TextField("Nombre de la cuenta", text: $name)
-                        .textInputAutocapitalization(.words)
+                Section {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Tipo de cuenta")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
 
-                    Picker("Tipo de cuenta", selection: $accountType) {
-                        ForEach(AccountType.allCases) { type in
-                            Label(type.displayName, systemImage: type.icon)
-                                .tag(type)
+                        VStack(spacing: 10) {
+                            ForEach(AccountType.allCases) { type in
+                                Button {
+                                    accountType = type
+                                } label: {
+                                    AccountTypeChoice(type: type, isSelected: accountType == type)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel(type.displayName)
+                                .accessibilityValue(accountType == type ? "Seleccionado" : "No seleccionado")
+                                .accessibilityAddTraits(accountType == type ? .isSelected : [])
+                            }
                         }
                     }
+                    .financeInsetCard(cornerRadius: FinanceGlassTokens.Radius.row)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Información", systemImage: accountType.icon, subtitle: "Tipo de producto financiero")
                 }
+                .financeGlassFormSection()
 
                 // Saldo (solo para cuentas no inversión)
                 if accountType != .investment {
-                    Section("Saldo") {
-                        HStack {
-                            TextField("0,00", text: $balanceText)
-                                .keyboardType(.decimalPad)
-                            Text(appCurrencyCode)
-                                .foregroundStyle(.secondary)
+                    Section {
+                        FinanceGlassField(title: "Saldo inicial", systemImage: "creditcard", tint: accountType.color) {
+                            HStack {
+                                TextField("0,00", text: $balanceText)
+                                    .keyboardType(.decimalPad)
+                                    .font(.title2.weight(.bold))
+                                Text(appCurrencyCode)
+                                    .foregroundStyle(.secondary)
+                                    .font(.headline)
+                            }
                         }
+                    } header: {
+                        FinanceGlassSectionHeader(title: "Saldo", systemImage: "creditcard", subtitle: "Importe inicial de la cuenta")
                     }
+                    .financeGlassFormSection()
                 }
 
                 if accountType == .investment {
-                    Section("Inversión") {
-                        HStack {
-                            TextField("Cantidad invertida", text: $investedAmountText)
-                                .keyboardType(.decimalPad)
-                            Text(appCurrencyCode)
-                                .foregroundStyle(.secondary)
+                    Section {
+                        FinanceGlassField(title: "Cantidad invertida", systemImage: "tray.and.arrow.down.fill", tint: .purple) {
+                            HStack {
+                                TextField("Cantidad invertida", text: $investedAmountText)
+                                    .keyboardType(.decimalPad)
+                                    .font(.headline)
+                                Text(appCurrencyCode)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
 
-                        HStack {
-                            TextField("Valor de mercado", text: $marketValueText)
-                                .keyboardType(.decimalPad)
-                            Text(appCurrencyCode)
-                                .foregroundStyle(.secondary)
+                        FinanceGlassField(title: "Valor de mercado", systemImage: "chart.line.uptrend.xyaxis", tint: .blue) {
+                            HStack {
+                                TextField("Valor de mercado", text: $marketValueText)
+                                    .keyboardType(.decimalPad)
+                                    .font(.headline)
+                                Text(appCurrencyCode)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                    } header: {
+                        FinanceGlassSectionHeader(title: "Inversión", systemImage: "chart.line.uptrend.xyaxis", subtitle: "Base invertida y valoración actual")
                     }
+                    .financeGlassFormSection()
                 }
 
                 // Notas opcionales
-                Section("Notas (opcional)") {
+                Section {
                     TextField("Añade notas sobre esta cuenta...", text: $notes, axis: .vertical)
                         .lineLimit(3...6)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Notas", systemImage: "note.text", subtitle: "Opcional")
                 }
+                .financeGlassFormSection()
             }
             .financeGlassListContainer()
             .navigationTitle(navigationTitle)
@@ -356,6 +410,95 @@ struct AddAccountView: View {
     }
 }
 
+private struct AccountDraftHero: View {
+    @Binding var name: String
+    let placeholder: String
+    let bankName: String
+    let type: AccountType
+    let accent: Color
+    let iconName: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 16) {
+            Image(systemName: iconName)
+                .font(.system(size: 25, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 62, height: 62)
+                .background(LinearGradient(colors: [accent, type.color.opacity(0.78)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(type.displayName)
+                    .font(.caption.weight(.bold))
+                    .textCase(.uppercase)
+                    .tracking(0.6)
+                    .foregroundStyle(accent)
+                TextField(placeholder, text: $name, axis: .vertical)
+                    .textInputAutocapitalization(.words)
+                    .font(.title3.weight(.bold))
+                    .lineLimit(1...2)
+                    .tint(accent)
+                Text(bankName)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+        }
+        .financeGlassColorCard(
+            gradient: LinearGradient(colors: [accent.opacity(0.20), type.color.opacity(0.10), Color.white.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            cornerRadius: FinanceGlassTokens.Radius.hero
+        )
+    }
+}
+
+private struct CompactBankChoice: View {
+    let bank: Bank
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: bank.iconName)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(bank.color, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            Text(bank.name)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Spacer(minLength: 0)
+        }
+        .padding(9)
+        .background(isSelected ? bank.color.opacity(0.16) : Color.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(isSelected ? bank.color.opacity(0.45) : Color.secondary.opacity(0.16), lineWidth: 1))
+    }
+}
+
+private struct AccountTypeChoice: View {
+    let type: AccountType
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: type.icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(isSelected ? .white : type.color)
+                .frame(width: 30, height: 30)
+                .background(isSelected ? type.color : type.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            Text(type.displayName)
+                .font(.caption.weight(.semibold))
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(9)
+        .background(isSelected ? type.color.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(isSelected ? type.color.opacity(0.45) : Color.secondary.opacity(0.16), lineWidth: 1))
+    }
+}
+
 // MARK: - Sheet para crear un nuevo banco
 
 /// Formulario modal para crear un banco nuevo con nombre, icono y color.
@@ -373,12 +516,15 @@ struct CreateBankSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Nombre del banco") {
+                Section {
                     TextField("Nombre", text: $bankName)
                         .textInputAutocapitalization(.words)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Nombre", systemImage: "textformat")
                 }
+                .financeGlassFormSection()
 
-                Section("Icono") {
+                Section {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(BankIcon.allCases) { icon in
                             Button {
@@ -399,9 +545,12 @@ struct CreateBankSheet: View {
                         }
                     }
                     .padding(.vertical, 4)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Icono", systemImage: "square.grid.3x3.fill")
                 }
+                .financeGlassFormSection()
 
-                Section("Color") {
+                Section {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(BankColor.allCases) { bankColor in
                             Button {
@@ -424,10 +573,13 @@ struct CreateBankSheet: View {
                         }
                     }
                     .padding(.vertical, 4)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Color", systemImage: "paintpalette.fill")
                 }
+                .financeGlassFormSection()
 
                 // Vista previa
-                Section("Vista previa") {
+                Section {
                     HStack(spacing: 10) {
                         Image(systemName: selectedIcon.systemName)
                             .font(.title2)
@@ -438,7 +590,10 @@ struct CreateBankSheet: View {
                         Text(bankName.isEmpty ? "Nombre del banco" : bankName)
                             .fontWeight(.medium)
                     }
+                } header: {
+                    FinanceGlassSectionHeader(title: "Vista previa", systemImage: "eye.fill")
                 }
+                .financeGlassFormSection()
             }
             .financeGlassListContainer()
             .navigationTitle("Nuevo banco")

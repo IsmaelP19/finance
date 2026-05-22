@@ -36,7 +36,7 @@ struct WrappedAccessBannerCard: View {
                         .fontWeight(.bold)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Color.orange.opacity(0.9))
+                        .background(Color.financeAccent)
                         .foregroundStyle(.white)
                         .clipShape(Capsule())
                 } else {
@@ -50,8 +50,8 @@ struct WrappedAccessBannerCard: View {
             .background(
                 LinearGradient(
                     colors: hasPendingWrapped
-                        ? [Color(red: 0.90, green: 0.45, blue: 0.20), Color(red: 0.22, green: 0.40, blue: 0.88)]
-                        : [Color(red: 0.18, green: 0.33, blue: 0.79), Color(red: 0.23, green: 0.52, blue: 0.90)],
+                        ? [Color.financeAccent.opacity(0.82), Color.financeAccent]
+                        : [Color.financeAccent.opacity(0.78), Color.financeAccent],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )

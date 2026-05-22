@@ -21,68 +21,63 @@ struct CategoryManagementView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            Group {
                 if categories.isEmpty {
-                    ContentUnavailableView(
+                    FinanceCenteredEmptyState(
                         "Sin categorías",
                         systemImage: "tag",
                         description: Text("Pulsa + para crear tu primera categoría")
                     )
-                    .listRowBackground(Color.clear)
                 } else {
-                    ForEach(categories, id: \.id) { category in
-                        Button {
-                            editingCategory = category
-                        } label: {
-                            HStack(spacing: 12) {
-                                Image(systemName: category.iconName)
-                                    .font(.title3)
-                                    .foregroundStyle(.white)
-                                    .frame(width: 34, height: 34)
-                                    .background(category.color)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(category.name)
-                                        .font(.body)
-                                        .fontWeight(.medium)
-                                        .foregroundStyle(.primary)
-
-                                    Text(movementCountText(for: category))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer()
-
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .padding(10)
-                            .background(colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.9))
-                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 14)
-                                    .stroke(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.45), lineWidth: 1)
-                            )
-                        }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                    List {
+                        ForEach(categories, id: \.id) { category in
                             Button {
                                 editingCategory = category
                             } label: {
-                                Label("Editar", systemImage: "pencil")
+                                HStack(spacing: 12) {
+                                    Image(systemName: category.iconName)
+                                        .font(.title3)
+                                        .foregroundStyle(.white)
+                                        .frame(width: 34, height: 34)
+                                        .background(category.color)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(category.name)
+                                            .font(.body)
+                                            .fontWeight(.medium)
+                                            .foregroundStyle(.primary)
+
+                                        Text(movementCountText(for: category))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer()
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .financeElevatedRow()
                             }
-                            .tint(.blue)
+                            .buttonStyle(.plain)
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                Button {
+                                    editingCategory = category
+                                } label: {
+                                    Label("Editar", systemImage: "pencil")
+                                }
+                                .tint(.financeAccent)
+                            }
                         }
+                        .onDelete(perform: deleteCategories)
                     }
-                    .onDelete(perform: deleteCategories)
+                    .financeGlassListContainer()
                 }
             }
-            .financeGlassListContainer()
             .navigationTitle("Categorías")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -99,6 +94,7 @@ struct CategoryManagementView: View {
                         Image(systemName: "plus")
                             .financeToolbarIconStyle()
                     }
+                    .accessibilityLabel("Crear categoría")
                 }
             }
             .sheet(item: $editingCategory) { (category: MovementCategory) in
@@ -148,11 +144,14 @@ struct CategoryEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Nombre") {
+                Section {
                     TextField("Nombre de la categoría", text: $categoryName)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Nombre", systemImage: "textformat")
                 }
+                .financeGlassFormSection()
 
-                Section("Icono") {
+                Section {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(CategoryIcon.allCases) { icon in
                             Button {
@@ -173,9 +172,12 @@ struct CategoryEditorSheet: View {
                         }
                     }
                     .padding(.vertical, 4)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Icono", systemImage: "square.grid.3x3.fill")
                 }
+                .financeGlassFormSection()
 
-                Section("Color") {
+                Section {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(CategoryColor.allCases) { color in
                             Button {
@@ -196,9 +198,12 @@ struct CategoryEditorSheet: View {
                         }
                     }
                     .padding(.vertical, 4)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Color", systemImage: "paintpalette.fill")
                 }
+                .financeGlassFormSection()
 
-                Section("Vista previa") {
+                Section {
                     HStack(spacing: 10) {
                         Image(systemName: selectedIcon.systemName)
                             .font(.title2)
@@ -210,7 +215,10 @@ struct CategoryEditorSheet: View {
                         Text(categoryName.isEmpty ? "Nombre de la categoría" : categoryName)
                             .fontWeight(.medium)
                     }
+                } header: {
+                    FinanceGlassSectionHeader(title: "Vista previa", systemImage: "eye.fill")
                 }
+                .financeGlassFormSection()
             }
             .financeGlassListContainer()
             .navigationTitle(isEditing ? "Editar categoría" : "Nueva categoría")

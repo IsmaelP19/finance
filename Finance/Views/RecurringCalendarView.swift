@@ -208,7 +208,7 @@ struct RecurringCalendarView: View {
         let selectedWindowStart = recurringCalendar.date(byAdding: .month, value: -6, to: monthStart) ?? monthStart
         let selectedWindowEnd = recurringCalendar.date(byAdding: .month, value: 18, to: monthStart) ?? monthStart
 
-        let activeRules = recurringMovements.filter { $0.isActive && $0.type != .transfer }
+        let activeRules = recurringMovements.filter { $0.isActive && $0.type != .transfer && $0.account?.isActive == true }
         let earliestRuleStart = activeRules
             .map { recurringCalendar.startOfDay(for: $0.startDate) }
             .min()
@@ -261,7 +261,10 @@ struct RecurringCalendarView: View {
                         decorations: decoratedDates
                     )
                     .frame(height: calendarBlockHeight)
-                    .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                    .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
+                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
 #else
                     DatePicker(
                         "Fecha",
@@ -274,9 +277,7 @@ struct RecurringCalendarView: View {
 
                 Section {
                     RecurringCalendarLegendCard()
-                    .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                    .financeGlassClearListRow()
                 }
 
                 Section {
@@ -288,19 +289,26 @@ struct RecurringCalendarView: View {
                         currencyCode: appCurrencyCode,
                         hideBalances: hideBalances
                     )
-                    .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
+                    .financeGlassClearListRow()
                 }
+
+                RecurringCalendarSectionHeader(
+                    title: "Cobros y pagos del día",
+                    subtitle: selectedDateHeaderTitle,
+                    trailingText: selectedDateOccurrences.isEmpty ? nil : "\(selectedDateOccurrences.count) previstos",
+                    detailText: selectedDateOccurrences.isEmpty
+                        ? ""
+                        : "\(selectedDatePendingCount) pendientes · \(selectedDateConfirmedCount) confirmados"
+                )
 
                 Section {
                     if selectedDateOccurrences.isEmpty {
-                        ContentUnavailableView(
+                        FinanceEmptyStateContent(
                             "Sin movimientos para este día",
                             systemImage: "calendar.badge.exclamationmark",
                             description: Text("Cambia el día o vuelve a hoy para revisar otros cobros y pagos recurrentes.")
                         )
-                        .listRowBackground(Color.clear)
+                        .financeGlassClearListRow()
                     } else {
                         ForEach(selectedDateOccurrences) { occurrence in
                             RecurringCalendarRow(
@@ -309,8 +317,7 @@ struct RecurringCalendarView: View {
                                 hideBalances: hideBalances,
                                 status: status(for: occurrence)
                             )
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
+                            .financeGlassClearListRow()
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 if !occurrence.isConfirmed {
                                     Button {
@@ -332,25 +339,23 @@ struct RecurringCalendarView: View {
                             }
                         }
                     }
-                } header: {
-                    RecurringCalendarSectionHeader(
-                        title: "Cobros y pagos del día",
-                        subtitle: selectedDateHeaderTitle,
-                        trailingText: selectedDateOccurrences.isEmpty ? nil : "\(selectedDateOccurrences.count) previstos",
-                        detailText: selectedDateOccurrences.isEmpty
-                            ? ""
-                            : "\(selectedDatePendingCount) pendientes · \(selectedDateConfirmedCount) confirmados"
-                    )
                 }
+
+                RecurringCalendarSectionHeader(
+                    title: "Próximos pagos recurrentes",
+                    subtitle: "Agenda inmediata",
+                    trailingText: upcomingOccurrences.isEmpty ? nil : "\(nextUpcomingPreviewCount) visibles",
+                    detailText: upcomingOccurrences.isEmpty ? "" : "Mostrando los siguientes movimientos pendientes"
+                )
 
                 Section {
                     if upcomingOccurrences.isEmpty {
-                        ContentUnavailableView(
+                        FinanceEmptyStateContent(
                             "Sin próximos vencimientos",
                             systemImage: "checkmark.circle",
                             description: Text("No hay pagos recurrentes pendientes en los próximos 90 días.")
                         )
-                        .listRowBackground(Color.clear)
+                        .financeGlassClearListRow()
                     } else {
                         ForEach(upcomingOccurrences.prefix(12)) { occurrence in
                             RecurringCalendarRow(
@@ -359,8 +364,7 @@ struct RecurringCalendarView: View {
                                 hideBalances: hideBalances,
                                 status: status(for: occurrence)
                             )
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
+                            .financeGlassClearListRow()
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button {
                                     confirmOccurrence(occurrence)
@@ -379,13 +383,6 @@ struct RecurringCalendarView: View {
                             }
                         }
                     }
-                } header: {
-                    RecurringCalendarSectionHeader(
-                        title: "Próximos pagos recurrentes",
-                        subtitle: "Agenda inmediata",
-                        trailingText: upcomingOccurrences.isEmpty ? nil : "\(nextUpcomingPreviewCount) visibles",
-                        detailText: upcomingOccurrences.isEmpty ? "" : "Mostrando los siguientes movimientos pendientes"
-                    )
                 }
             }
             .financeGlassListContainer()
@@ -433,6 +430,7 @@ struct RecurringCalendarView: View {
                             setCalendarHeightMonthDate(todayMonth)
                         }
                         .font(.subheadline.weight(.semibold))
+                        .financeGlassPill(tint: .blue, isSelected: false)
                     }
                 }
             }
@@ -447,7 +445,7 @@ struct RecurringCalendarView: View {
     private func occurrences(in interval: DateInterval, includeConfirmed: Bool) -> [RecurringCalendarOccurrence] {
         var results: [RecurringCalendarOccurrence] = []
 
-        for rule in recurringMovements where rule.isActive && rule.type != .transfer {
+        for rule in recurringMovements where rule.isActive && rule.type != .transfer && rule.account?.isActive == true {
             let dueDates = RecurringMovementService.dueDates(of: rule, in: interval, calendar: recurringCalendar)
 
             for dueDate in dueDates {
@@ -503,6 +501,14 @@ struct RecurringCalendarView: View {
 
         guard let account = occurrence.rule.account else {
             actionAlertMessage = "La cuenta asociada ya no está disponible. Edita la recurrencia para continuar."
+            showingActionAlert = true
+            return
+        }
+
+        guard account.isActive else {
+            occurrence.rule.isActive = false
+            occurrence.rule.updatedAt = Date()
+            actionAlertMessage = "La cuenta asociada está archivada. La recurrencia se ha desactivado."
             showingActionAlert = true
             return
         }
@@ -606,14 +612,7 @@ private struct RecurringCalendarLegendCard: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Capsule(style: .continuous)
-                .fill(colorScheme == .dark ? Color.white.opacity(0.06) : Color.white.opacity(0.90))
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.20) : Color.black.opacity(0.10), lineWidth: 1)
-        )
+        .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.row)
     }
 
     private func legendItem(color: Color, title: String) -> some View {
@@ -673,6 +672,10 @@ private struct RecurringCalendarSectionHeader: View {
         }
         .textCase(nil)
         .padding(.top, 6)
+        .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 4, trailing: 16))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .accessibilityElement(children: .combine)
     }
 }
 

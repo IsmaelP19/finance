@@ -62,6 +62,14 @@ struct AddMovementView: View {
         movementToEdit != nil
     }
 
+    private var movementTint: Color {
+        switch movementType {
+        case .expense: return .red
+        case .income: return .green
+        case .transfer: return .blue
+        }
+    }
+
     init(
         movementToEdit: Movement? = nil,
         preselectedType: MovementType? = nil,
@@ -84,7 +92,7 @@ struct AddMovementView: View {
     }
 
     private var accountsSortedByBankThenName: [BankAccount] {
-        accounts.sorted { lhs, rhs in
+        activeAccounts.sorted { lhs, rhs in
             let bankComparison = lhs.bankDisplayName.localizedCaseInsensitiveCompare(rhs.bankDisplayName)
             if bankComparison != .orderedSame {
                 return bankComparison == .orderedAscending
@@ -97,6 +105,10 @@ struct AddMovementView: View {
 
             return lhs.id.uuidString < rhs.id.uuidString
         }
+    }
+
+    private var activeAccounts: [BankAccount] {
+        accounts.filter(\.isActive)
     }
 
     private var groupedAccountsByBank: [AccountBankGroup] {
@@ -112,6 +124,28 @@ struct AddMovementView: View {
             .sorted { lhs, rhs in
                 lhs.bankName.localizedCaseInsensitiveCompare(rhs.bankName) == .orderedAscending
             }
+    }
+
+    private var selectedAccountIDBinding: Binding<UUID?> {
+        Binding(
+            get: { selectedAccount?.id },
+            set: { newID in
+                selectedAccount = newID.flatMap { id in
+                    activeAccounts.first { $0.id == id }
+                }
+            }
+        )
+    }
+
+    private var selectedDestinationAccountIDBinding: Binding<UUID?> {
+        Binding(
+            get: { selectedDestinationAccount?.id },
+            set: { newID in
+                selectedDestinationAccount = newID.flatMap { id in
+                    activeAccounts.first { $0.id == id }
+                }
+            }
+        )
     }
 
     private var canCreateNewCategory: Bool {
@@ -180,41 +214,51 @@ struct AddMovementView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Cuenta") {
-                    if accounts.isEmpty {
+                Section {
+                    MovementDraftHero(
+                        title: $concept,
+                        amountText: $amountText,
+                        type: movementType,
+                        currencyCode: appCurrencyCode,
+                        accountName: selectedAccount?.name ?? "Sin cuenta",
+                        categoryName: movementType == .transfer ? "Transferencia" : (selectedCategory?.name ?? "Sin categoría"),
+                        tint: movementTint
+                    )
+                }
+                .financeGlassClearListRow()
+
+                Section {
+                    if activeAccounts.isEmpty {
                         Text("No hay cuentas disponibles. Crea una cuenta antes de registrar movimientos.")
                             .foregroundStyle(.secondary)
                     } else {
-                        Picker("Cuenta origen", selection: $selectedAccount) {
-                            ForEach(groupedAccountsByBank) { bankGroup in
-                                Section(bankGroup.bankName) {
-                                    ForEach(bankGroup.accounts, id: \.id) { account in
-                                        Text(account.name)
-                                            .tag(Optional(account))
-                                    }
-                                }
-                            }
-                        }
+                        AccountSelectionMenu(
+                            title: movementType == .transfer ? "Origen" : "Cuenta",
+                            accounts: activeAccounts,
+                            selectedAccountID: selectedAccountIDBinding,
+                            leadingSystemImage: movementType == .transfer ? "arrow.up.right.circle.fill" : "creditcard.fill",
+                            leadingTint: movementTint,
+                            accessibilityLabel: "Seleccionar cuenta origen"
+                        )
 
                         if movementType == .transfer {
-                            Picker("Cuenta destino", selection: $selectedDestinationAccount) {
-                                Text("Selecciona una cuenta")
-                                    .tag(nil as BankAccount?)
-
-                                ForEach(groupedAccountsByBank) { bankGroup in
-                                    Section(bankGroup.bankName) {
-                                        ForEach(bankGroup.accounts, id: \.id) { account in
-                                            Text(account.name)
-                                                .tag(Optional(account))
-                                        }
-                                    }
-                                }
-                            }
+                            AccountSelectionMenu(
+                                title: "Destino",
+                                accounts: activeAccounts,
+                                selectedAccountID: selectedDestinationAccountIDBinding,
+                                placeholder: "Selecciona destino",
+                                leadingSystemImage: "arrow.down.left.circle.fill",
+                                leadingTint: .blue,
+                                accessibilityLabel: "Seleccionar cuenta destino"
+                            )
                         }
                     }
+                } header: {
+                    FinanceGlassSectionHeader(title: "Cuenta", systemImage: movementType == .transfer ? "arrow.left.arrow.right" : "creditcard", subtitle: movementType == .transfer ? "Origen y destino del traspaso" : "Cuenta que asumirá el movimiento")
                 }
+                .financeGlassFormSection()
 
-                Section("Tipo") {
+                Section {
                     Picker("Tipo", selection: $movementType) {
                         ForEach(MovementType.allCases) { type in
                             Label(type.displayName, systemImage: type.icon)
@@ -222,32 +266,26 @@ struct AddMovementView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Tipo", systemImage: movementType.icon, subtitle: "Define cómo impacta en tu saldo")
                 }
-
-                Section("Detalle") {
-                    TextField("Concepto", text: $concept)
-                        .textInputAutocapitalization(.sentences)
-
-                    HStack {
-                        TextField("0,00", text: $amountText)
-                            .keyboardType(.decimalPad)
-
-                        Text(appCurrencyCode)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+                .financeGlassFormSection()
 
                 if movementType == .expense && canConfigureOwnershipFields {
-                    Section("Gasto compartido") {
+                    Section {
                         Toggle("Definir mi gasto", isOn: $isSharedExpense)
+                            .tint(movementTint)
 
                         if isSharedExpense {
-                            HStack {
-                                TextField("Mi parte", text: $personalAmountText)
-                                    .keyboardType(.decimalPad)
+                            FinanceGlassField(title: "Mi parte", systemImage: "person.fill", tint: .orange) {
+                                HStack {
+                                    TextField("Mi parte", text: $personalAmountText)
+                                        .keyboardType(.decimalPad)
+                                        .font(.headline)
 
-                                Text(appCurrencyCode)
-                                    .foregroundStyle(.secondary)
+                                    Text(appCurrencyCode)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
 
                             if draftSharedExpenseTotal > 0 {
@@ -320,11 +358,14 @@ struct AddMovementView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.orange)
                         }
+                    } header: {
+                        FinanceGlassSectionHeader(title: "Gasto compartido", systemImage: "person.2.fill", subtitle: "Controla tu parte y reembolsos")
                     }
+                    .financeGlassFormSection()
                 }
 
                 if movementType == .income && canConfigureOwnershipFields && isReimbursementIncome {
-                    Section("Reembolso") {
+                    Section {
                         if let selectedReimbursementExpense {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Gasto vinculado")
@@ -359,69 +400,79 @@ struct AddMovementView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                    } header: {
+                        FinanceGlassSectionHeader(title: "Reembolso", systemImage: "arrow.down.circle.fill", subtitle: "Ingreso vinculado a un gasto")
                     }
+                    .financeGlassFormSection()
                 }
 
                 if movementType != .transfer {
-                    Section("Categoría") {
-                    if let category = selectedCategory {
-                        HStack {
-                            CategoryChipView(
-                                name: category.name,
-                                iconName: category.iconName,
-                                color: category.color
-                            )
-                            Spacer()
-                            Button("Cambiar") {
-                                selectedCategory = nil
-                                categorySearchText = ""
-                            }
-                            .font(.caption)
-                        }
-                    } else {
-                        TextField("Buscar o crear categoría...", text: $categorySearchText)
-                            .textInputAutocapitalization(.words)
-                            .autocorrectionDisabled()
-
-                        ForEach(filteredCategories, id: \.id) { category in
-                            Button {
-                                selectedCategory = category
-                                categorySearchText = ""
-                            } label: {
+                    Section {
+                        if let category = selectedCategory {
+                            HStack {
                                 CategoryChipView(
                                     name: category.name,
                                     iconName: category.iconName,
                                     color: category.color
                                 )
+                                Spacer()
+                                Button("Cambiar") {
+                                    selectedCategory = nil
+                                    categorySearchText = ""
+                                }
+                                .font(.caption)
                             }
-                        }
+                        } else {
+                            TextField("Buscar o crear categoría...", text: $categorySearchText)
+                                .textInputAutocapitalization(.words)
+                                .autocorrectionDisabled()
 
-                        if canCreateNewCategory {
-                            Button {
-                                newCategoryName = categorySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-                                isCreatingNewCategory = true
-                            } label: {
-                                HStack(spacing: 8) {
-                                    Image(systemName: "plus.circle.fill")
-                                        .foregroundStyle(.green)
-                                    Text("Crear \"\(categorySearchText.trimmingCharacters(in: .whitespacesAndNewlines))\"")
-                                        .foregroundStyle(.primary)
+                            ForEach(filteredCategories, id: \.id) { category in
+                                Button {
+                                    selectedCategory = category
+                                    categorySearchText = ""
+                                } label: {
+                                    CategoryChipView(
+                                        name: category.name,
+                                        iconName: category.iconName,
+                                        color: category.color
+                                    )
+                                }
+                            }
+
+                            if canCreateNewCategory {
+                                Button {
+                                    newCategoryName = categorySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    isCreatingNewCategory = true
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "plus.circle.fill")
+                                            .foregroundStyle(.green)
+                                        Text("Crear \"\(categorySearchText.trimmingCharacters(in: .whitespacesAndNewlines))\"")
+                                            .foregroundStyle(.primary)
+                                    }
                                 }
                             }
                         }
+                    } header: {
+                        FinanceGlassSectionHeader(title: "Categoría", systemImage: selectedCategory?.iconName ?? "tag", subtitle: "Organiza tus estadísticas")
                     }
-                }
+                    .financeGlassFormSection()
                 }
 
                 if !isRecurring || isEditing {
-                    Section("Fecha") {
+                    Section {
                         DatePicker("Fecha del movimiento", selection: $occurredAt, displayedComponents: [.date, .hourAndMinute])
+                    } header: {
+                        FinanceGlassSectionHeader(title: "Fecha", systemImage: "calendar", subtitle: "Cuándo ocurrió")
                     }
+                    .financeGlassFormSection()
                 }
 
                 if movementType != .transfer {
-                    Section("Recurrencia") {
+                    Section {
                         Toggle("Marcar como recurrente", isOn: $isRecurring)
+                            .tint(movementTint)
 
                         if isRecurring {
                             Picker("Frecuencia", selection: $recurringFrequency) {
@@ -452,30 +503,50 @@ struct AddMovementView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
+                    } header: {
+                        FinanceGlassSectionHeader(title: "Recurrencia", systemImage: "repeat", subtitle: "Convierte pagos periódicos en pendientes")
                     }
+                    .financeGlassFormSection()
                 }
 
-                Section("Notas (opcional)") {
+                Section {
                     TextField("Añade una nota...", text: $notes, axis: .vertical)
                         .lineLimit(2...5)
+                } header: {
+                    FinanceGlassSectionHeader(title: "Notas", systemImage: "note.text", subtitle: "Opcional")
                 }
+                .financeGlassFormSection()
             }
             .financeGlassListContainer()
             .navigationTitle(isEditing ? "Editar movimiento" : "Nuevo movimiento")
             .navigationBarTitleDisplayMode(.inline)
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 12) {
+                    Button("Cancelar") { dismiss() }
+                        .financeGlassSecondaryAction(tint: .secondary)
+
+                    Button {
+                        saveMovement()
+                    } label: {
+                        Label(isEditing ? "Actualizar" : "Guardar", systemImage: "checkmark")
+                    }
+                    .financeGlassPrimaryAction(tint: movementTint)
+                    .disabled(activeAccounts.isEmpty)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 10)
+                .padding(.bottom, 8)
+                .background(.ultraThinMaterial)
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancelar") {
+                    Button {
                         dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .financeToolbarIconStyle()
                     }
-                }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(isEditing ? "Actualizar" : "Guardar") {
-                        saveMovement()
-                    }
-                    .fontWeight(.semibold)
-                    .disabled(accounts.isEmpty)
+                    .accessibilityLabel("Cerrar")
                 }
             }
             .onAppear(perform: setupDefaults)
@@ -534,7 +605,7 @@ struct AddMovementView: View {
                 if let movementToEdit {
                     AddMovementView(
                         preselectedType: .income,
-                        preselectedAccountID: selectedAccount?.id ?? movementToEdit.account?.id,
+                        preselectedAccountID: activeReimbursementAccount(for: movementToEdit)?.id,
                         prefilledConcept: "Reembolso: \(movementToEdit.concept)",
                         linkedReimbursementExpenseID: movementToEdit.id
                     )
@@ -615,7 +686,7 @@ struct AddMovementView: View {
         }
 
         if let preselectedAccountID,
-           let matchingAccount = accountsSortedByBankThenName.first(where: { $0.id == preselectedAccountID }) {
+            let matchingAccount = accountsSortedByBankThenName.first(where: { $0.id == preselectedAccountID }) {
             selectedAccount = matchingAccount
         }
 
@@ -626,7 +697,7 @@ struct AddMovementView: View {
             selectedCategory = linkedExpense.category
 
             if selectedAccount == nil {
-                selectedAccount = linkedExpense.account
+                selectedAccount = activeReimbursementAccount(for: linkedExpense)
             }
 
             if concept.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -673,45 +744,72 @@ struct AddMovementView: View {
     }
 
     private func saveMovement() {
+        CrashReportService.shared.recordBreadcrumb("Guardando movimiento de tipo \(movementType.displayName)")
+        recordSaveDiagnostic("start")
+
+        recordSaveDiagnostic("resolve_account_before")
         guard let selectedAccount else {
+            recordSaveDiagnostic("resolve_account_failed")
             validationMessage = "Selecciona una cuenta."
+            showingValidationAlert = true
+            return
+        }
+        recordSaveDiagnostic("resolve_account_after", accountID: selectedAccount.id)
+
+        if let movementToEdit, movementTouchesArchivedAccount(movementToEdit) {
+            validationMessage = "No se puede editar un movimiento asociado a una cuenta archivada. Sus movimientos se conservan solo como histórico."
+            showingValidationAlert = true
+            return
+        }
+
+        guard selectedAccount.isActive else {
+            validationMessage = "Selecciona una cuenta activa. Las cuentas archivadas solo se conservan como histórico."
             showingValidationAlert = true
             return
         }
 
         let trimmedConcept = concept.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedConcept.isEmpty else {
+            recordSaveDiagnostic("validate_concept_failed", accountID: selectedAccount.id)
             validationMessage = "El concepto es obligatorio."
             showingValidationAlert = true
             return
         }
 
         if movementType != .transfer {
+            recordSaveDiagnostic("resolve_category_before", accountID: selectedAccount.id)
             guard selectedCategory != nil else {
+                recordSaveDiagnostic("resolve_category_failed", accountID: selectedAccount.id)
                 validationMessage = "Selecciona o crea una categoría."
                 showingValidationAlert = true
                 return
             }
+            recordSaveDiagnostic("resolve_category_after", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
         }
 
+        recordSaveDiagnostic("parse_amount_before", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
         let amount = parseAmount()
         guard amount > 0 else {
+            recordSaveDiagnostic("parse_amount_failed", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
             validationMessage = "El importe debe ser mayor que cero."
             showingValidationAlert = true
             return
         }
+        recordSaveDiagnostic("parse_amount_after", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
 
         let personalAmountForStats: Decimal?
         if movementType == .expense && isSharedExpense && canConfigureOwnershipFields {
             let personalAmount = parseAmount(from: personalAmountText)
 
             guard personalAmount >= 0 else {
+                recordSaveDiagnostic("parse_personal_amount_negative", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
                 validationMessage = "Tu parte no puede ser negativa."
                 showingValidationAlert = true
                 return
             }
 
             guard personalAmount <= amount else {
+                recordSaveDiagnostic("parse_personal_amount_exceeds_total", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
                 validationMessage = "Tu parte no puede superar el importe total del gasto."
                 showingValidationAlert = true
                 return
@@ -728,12 +826,24 @@ struct AddMovementView: View {
 
         let reimbursementForID: UUID?
         if movementType == .income && isReimbursementIncome && canConfigureOwnershipFields {
+            recordSaveDiagnostic("resolve_reimbursement_before", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
             if let linkedExpense = selectedReimbursementExpense {
                 reimbursementForID = linkedExpense.id
-            } else if let existingReimbursementForID = movementToEdit?.reimbursementForId {
+            } else if let existingReimbursementForID = movementToEdit?.reimbursementForId,
+                      movements.contains(where: { $0.id == existingReimbursementForID && $0.type == .expense }) {
                 reimbursementForID = existingReimbursementForID
             } else {
+                recordSaveDiagnostic("resolve_reimbursement_failed", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
                 validationMessage = "No se pudo resolver el gasto vinculado para este reembolso."
+                showingValidationAlert = true
+                return
+            }
+            recordSaveDiagnostic("resolve_reimbursement_after", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
+
+            if let linkedExpense = selectedReimbursementExpense,
+               linkedExpense.account?.isArchived == true,
+               linkedExpense.account?.id == selectedAccount.id {
+                validationMessage = "El reembolso de un gasto de una cuenta archivada debe registrarse en otra cuenta activa distinta."
                 showingValidationAlert = true
                 return
             }
@@ -743,12 +853,20 @@ struct AddMovementView: View {
 
         if movementType == .transfer {
             guard let selectedDestinationAccount else {
+                recordSaveDiagnostic("resolve_destination_account_failed", accountID: selectedAccount.id)
                 validationMessage = "Selecciona una cuenta destino para la transferencia."
                 showingValidationAlert = true
                 return
             }
 
+            guard selectedDestinationAccount.isActive else {
+                validationMessage = "Selecciona una cuenta destino activa."
+                showingValidationAlert = true
+                return
+            }
+
             guard selectedDestinationAccount.id != selectedAccount.id else {
+                recordSaveDiagnostic("resolve_destination_account_same_as_source", accountID: selectedAccount.id)
                 validationMessage = "La cuenta origen y destino no pueden ser la misma."
                 showingValidationAlert = true
                 return
@@ -763,6 +881,7 @@ struct AddMovementView: View {
             let normalizedEnd = recurringHasEndDate ? Calendar.current.startOfDay(for: recurringEndDate) : nil
 
             if let normalizedEnd, normalizedEnd < normalizedStart {
+                recordSaveDiagnostic("validate_recurring_end_failed", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
                 validationMessage = "La fecha de fin no puede ser anterior al inicio."
                 showingValidationAlert = true
                 return
@@ -794,20 +913,28 @@ struct AddMovementView: View {
                 isActive: true
             )
 
+            recordSaveDiagnostic("insert_recurring_before", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
             modelContext.insert(recurringMovement)
-            dismiss()
+            recordSaveDiagnostic("insert_recurring_after", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
+            saveContextAndDismiss()
             return
         }
 
+        let editedMovementWasExpense = movementToEdit?.type == .expense
+        var movementForBudgetReevaluation: Movement?
+
         if let movementToEdit {
+            recordSaveDiagnostic("update_existing_before", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
             revertMovementImpact(movementToEdit)
 
+            recordSaveDiagnostic("apply_impact_before", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
             let resultingBalance = applyMovementImpact(
                 type: movementType,
                 amount: amount,
                 sourceAccount: selectedAccount,
                 destinationAccount: movementType == .transfer ? selectedDestinationAccount : nil
             )
+            recordSaveDiagnostic("apply_impact_after", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
 
             movementToEdit.concept = trimmedConcept
             movementToEdit.amount = amount
@@ -872,16 +999,18 @@ struct AddMovementView: View {
             }
 
             movementToEdit.updatedAt = Date()
-
-            reevaluateBudgetNotifications()
+            recordSaveDiagnostic("update_existing_after", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
         } else {
+            recordSaveDiagnostic("apply_impact_before", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
             let resultingBalance = applyMovementImpact(
                 type: movementType,
                 amount: amount,
                 sourceAccount: selectedAccount,
                 destinationAccount: movementType == .transfer ? selectedDestinationAccount : nil
             )
+            recordSaveDiagnostic("apply_impact_after", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
 
+            recordSaveDiagnostic("create_movement_before", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
             let movement = Movement(
                 concept: trimmedConcept,
                 amount: amount,
@@ -896,19 +1025,107 @@ struct AddMovementView: View {
                 reimbursementForId: movementType == .income ? reimbursementForID : nil
             )
             
+            recordSaveDiagnostic("insert_movement_before", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
             modelContext.insert(movement)
+            recordSaveDiagnostic("insert_movement_after", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
 
-            reevaluateBudgetNotifications(appending: movement)
+            if movementType == .expense {
+                movementForBudgetReevaluation = movement
+            }
         }
 
-        dismiss()
+        saveContextAndDismiss(
+            reevaluateBudgetsAfterSave: movementType == .expense || editedMovementWasExpense,
+            budgetMovementToAppendAfterSave: movementForBudgetReevaluation
+        )
+    }
+
+    private func saveContextAndDismiss(
+        reevaluateBudgetsAfterSave: Bool = false,
+        budgetMovementToAppendAfterSave: Movement? = nil
+    ) {
+        do {
+            recordSaveDiagnostic("modelContext_save_before")
+            try modelContext.save()
+            recordSaveDiagnostic("modelContext_save_after")
+
+            if reevaluateBudgetsAfterSave {
+                recordSaveDiagnostic("budget_reevaluate_before")
+                reevaluateBudgetNotifications(appending: budgetMovementToAppendAfterSave)
+                recordSaveDiagnostic("budget_reevaluate_after")
+            } else {
+                recordSaveDiagnostic("budget_reevaluate_skipped")
+            }
+
+            dismiss()
+        } catch {
+            recordSaveDiagnostic("modelContext_save_failed", error: error)
+            validationMessage = "No se pudo guardar el movimiento: \(error.localizedDescription)"
+            showingValidationAlert = true
+        }
+    }
+
+    private func recordSaveDiagnostic(
+        _ checkpoint: String,
+        accountID: UUID? = nil,
+        categoryID: UUID? = nil,
+        reimbursementForID: UUID? = nil,
+        error: Error? = nil
+    ) {
+        var parts = [
+            "AddMovement.save",
+            "checkpoint=\(checkpoint)",
+            "type=\(movementType.rawValue)",
+            "edit=\(isEditing)",
+            "rec=\(isRecurring)",
+            "shared=\(isSharedExpense)",
+            "reimb=\(isReimbursementIncome)",
+            "counts=\(accounts.count)/\(categories.count)/\(movements.count)",
+            "amountEmpty=\(amountText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)",
+            "personalEmpty=\(personalAmountText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)"
+        ]
+
+        if let movementID = movementToEdit?.id {
+            parts.append("movement=\(shortID(movementID))")
+        }
+        if let selectedAccountID = selectedAccount?.id {
+            parts.append("selectedAccount=\(shortID(selectedAccountID))")
+        }
+        if movementType == .transfer, let selectedDestinationAccountID = selectedDestinationAccount?.id {
+            parts.append("selectedDestination=\(shortID(selectedDestinationAccountID))")
+        }
+        if let selectedCategoryID = selectedCategory?.id {
+            parts.append("selectedCategory=\(shortID(selectedCategoryID))")
+        }
+        if let selectedReimbursementExpenseID = selectedReimbursementExpense?.id {
+            parts.append("selectedReimbExpense=\(shortID(selectedReimbursementExpenseID))")
+        }
+        if let accountID {
+            parts.append("account=\(shortID(accountID))")
+        }
+        if let categoryID {
+            parts.append("category=\(shortID(categoryID))")
+        }
+        if let reimbursementForID {
+            parts.append("reimbursementFor=\(shortID(reimbursementForID))")
+        }
+        if let error {
+            parts.append("errorType=\(type(of: error))")
+            parts.append("error=\(error.localizedDescription)")
+        }
+
+        CrashReportService.shared.recordDiagnosticEvent(parts.joined(separator: " "))
+    }
+
+    private func shortID(_ id: UUID) -> String {
+        String(id.uuidString.prefix(8))
     }
 
     private func reevaluateBudgetNotifications(appending movement: Movement? = nil) {
-        guard let activeBudget = budgets.first else { return }
+        guard let activeBudget = budgets.first(where: { $0.isActive }) else { return }
 
         var updatedMovements = movements
-        if let movement {
+        if let movement, !updatedMovements.contains(where: { $0.id == movement.id }) {
             updatedMovements.append(movement)
         }
 
@@ -980,6 +1197,25 @@ struct AddMovementView: View {
         }
     }
 
+    private func activeReimbursementAccount(for expense: Movement) -> BankAccount? {
+        activeAccounts.sorted { lhs, rhs in
+            lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
+        .first { account in
+            guard expense.account?.isArchived == true, let archivedExpenseAccountID = expense.account?.id else { return true }
+            return account.id != archivedExpenseAccountID
+        }
+    }
+
+    private func movementTouchesArchivedAccount(_ movement: Movement) -> Bool {
+        if movement.account?.isArchived == true || movement.destinationAccount?.isArchived == true {
+            return true
+        }
+
+        guard movement.type == .income, let reimbursementForId = movement.reimbursementForId else { return false }
+        return movements.first(where: { $0.id == reimbursementForId })?.account?.isArchived == true
+    }
+
     private func unlinkReimbursementsLinkedToExpense(expenseID: UUID) {
         for movement in movements where movement.type == .income && movement.reimbursementForId == expenseID {
             movement.reimbursementForId = nil
@@ -990,6 +1226,68 @@ struct AddMovementView: View {
     private func linkedRecurringRule(for movement: Movement) -> RecurringMovement? {
         guard let recurringRuleId = movement.recurringRuleId else { return nil }
         return recurringMovements.first(where: { $0.id == recurringRuleId })
+    }
+}
+
+private struct MovementDraftHero: View {
+    @Binding var title: String
+    @Binding var amountText: String
+    let type: MovementType
+    let currencyCode: String
+    let accountName: String
+    let categoryName: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(type.displayName)
+                        .font(.caption.weight(.bold))
+                        .textCase(.uppercase)
+                        .tracking(0.6)
+                        .foregroundStyle(tint)
+                    TextField("Concepto del movimiento", text: $title, axis: .vertical)
+                        .textInputAutocapitalization(.sentences)
+                        .font(.title3.weight(.bold))
+                        .lineLimit(1...2)
+                        .tint(tint)
+                }
+
+                Spacer()
+
+                FinanceGlassIconBadge(systemName: type.icon, tint: tint, size: 46)
+            }
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                TextField("0,00", text: $amountText)
+                    .keyboardType(.decimalPad)
+                    .font(.system(size: 36, weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.72)
+                    .tint(tint)
+
+                Text(currencyCode)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 10) {
+                Label(accountName, systemImage: "creditcard")
+                Label(categoryName, systemImage: type == .transfer ? "arrow.left.arrow.right" : "tag")
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .financeGlassColorCard(
+            gradient: LinearGradient(
+                colors: [tint.opacity(0.20), Color.blue.opacity(0.10), Color.white.opacity(0.05)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            cornerRadius: FinanceGlassTokens.Radius.hero
+        )
     }
 }
 
@@ -1011,11 +1309,15 @@ private struct CreateMovementCategorySheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Nombre de la categoría") {
+                Section {
                     TextField("Nombre", text: $categoryName)
                 }
+                header: {
+                    FinanceGlassSectionHeader(title: "Nombre de la categoría", systemImage: "textformat", subtitle: "Cómo aparecerá en tus movimientos")
+                }
+                .financeGlassFormSection()
 
-                Section("Icono") {
+                Section {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(CategoryIcon.allCases) { icon in
                             Button {
@@ -1037,8 +1339,12 @@ private struct CreateMovementCategorySheet: View {
                     }
                     .padding(.vertical, 4)
                 }
+                header: {
+                    FinanceGlassSectionHeader(title: "Icono", systemImage: "square.grid.3x3", subtitle: "Identifica la categoría de un vistazo")
+                }
+                .financeGlassFormSection()
 
-                Section("Color") {
+                Section {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
                         ForEach(CategoryColor.allCases) { color in
                             Button {
@@ -1060,6 +1366,10 @@ private struct CreateMovementCategorySheet: View {
                     }
                     .padding(.vertical, 4)
                 }
+                header: {
+                    FinanceGlassSectionHeader(title: "Color", systemImage: "paintpalette", subtitle: "Acento visual para gráficos y listados")
+                }
+                .financeGlassFormSection()
             }
             .financeGlassListContainer()
             .navigationTitle("Nueva categoría")

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import UIKit
 
 /// Vista raíz de la aplicación con navegación inferior por pestañas.
 struct ContentView: View {
@@ -29,6 +30,8 @@ struct ContentView: View {
     @State private var showingSyncErrorAlert = false
     @State private var syncErrorMessage = ""
     @State private var showingQuickAddExpense = false
+    @State private var pendingCrashReport: CrashReport?
+    @State private var showingCrashReportAlert = false
 
     private var pendingRecurringCount: Int {
         RecurringMovementService.pendingMovements(
@@ -36,6 +39,15 @@ struct ContentView: View {
             confirmedMovements: movements,
             horizonDays: 5
         ).count
+    }
+
+    private var activeAccounts: [BankAccount] {
+        accounts.filter(\.isActive)
+    }
+
+    private var crashReportAlertMessage: String {
+        guard let pendingCrashReport else { return "" }
+        return "\(pendingCrashReport.summary)\n\nEl diagnóstico completo se guarda localmente en la app. Puedes copiarlo ahora para revisarlo o compartirlo."
     }
 
     var body: some View {
@@ -66,18 +78,17 @@ struct ContentView: View {
                     Label("Ajustes", systemImage: "gearshape.fill")
                 }
         }
+        .tint(.financeAccent)
+        .font(FinanceGlassTokens.Typography.appDefaultFont)
+        .fontDesign(FinanceGlassTokens.Typography.appDesign)
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .background(FinanceGlassBackground().ignoresSafeArea())
         .task {
-            refreshSyncState()
-            MonthlyWrappedService.configureMonthlyReminder()
+            performStartupTasks()
         }
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
-                refreshSyncState()
-                MonthlyWrappedService.configureMonthlyReminder()
-            }
+            handleScenePhaseChange(newPhase)
         }
         .alert("Backup más reciente disponible", isPresented: $showingSyncImportPrompt) {
             Button("Ahora no", role: .cancel) {
@@ -97,6 +108,16 @@ struct ContentView: View {
         } message: {
             Text(syncErrorMessage)
         }
+        .alert("La app se cerró inesperadamente", isPresented: $showingCrashReportAlert) {
+            Button("Copiar diagnóstico") {
+                copyPendingCrashReportAndDismiss()
+            }
+            Button("Aceptar", role: .cancel) {
+                dismissPendingCrashReport()
+            }
+        } message: {
+            Text(crashReportAlertMessage)
+        }
         .sheet(isPresented: $showingQuickAddExpense) {
             AddMovementView(preselectedType: .expense)
         }
@@ -107,10 +128,13 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            hasAccountsSnapshot = !accounts.isEmpty
+            hasAccountsSnapshot = !activeAccounts.isEmpty
         }
-        .onChange(of: accounts.count) { _, newCount in
-            hasAccountsSnapshot = newCount > 0
+        .onChange(of: accounts.count) { _, _ in
+            hasAccountsSnapshot = !activeAccounts.isEmpty
+        }
+        .onChange(of: accounts.map(\.isArchived)) { _, _ in
+            hasAccountsSnapshot = !activeAccounts.isEmpty
         }
     }
 
@@ -123,6 +147,49 @@ struct ContentView: View {
 
         pendingSyncExportDate = latest.exportDate
         showingSyncImportPrompt = true
+    }
+
+    private func presentPendingCrashReportIfNeeded() {
+        guard pendingCrashReport == nil else { return }
+        guard let report = CrashReportService.shared.pendingReport() else { return }
+
+        pendingCrashReport = report
+        showingCrashReportAlert = true
+    }
+
+    private func copyPendingCrashReportAndDismiss() {
+        if let pendingCrashReport {
+            UIPasteboard.general.string = pendingCrashReport.details
+        }
+
+        dismissPendingCrashReport()
+    }
+
+    private func dismissPendingCrashReport() {
+        CrashReportService.shared.markPendingReportSeen()
+        pendingCrashReport = nil
+    }
+
+    private func performStartupTasks() {
+        presentPendingCrashReportIfNeeded()
+
+        guard !showingCrashReportAlert else { return }
+        refreshSyncState()
+        MonthlyWrappedService.configureMonthlyReminder()
+    }
+
+    private func handleScenePhaseChange(_ newPhase: ScenePhase) {
+        if newPhase == .background {
+            CrashReportService.shared.markSessionClean()
+            return
+        }
+
+        guard newPhase == .active else { return }
+
+        CrashReportService.shared.markSessionRunning()
+        presentPendingCrashReportIfNeeded()
+        refreshSyncState()
+        MonthlyWrappedService.configureMonthlyReminder()
     }
 
     private func refreshSyncState() {
@@ -190,6 +257,7 @@ struct ContentView: View {
     }
 
     private func deleteAllData() {
+        CrashReportService.shared.recordBreadcrumb("ContentView.deleteAllData")
         withAnimation {
             for movement in movements {
                 modelContext.delete(movement)
@@ -219,6 +287,8 @@ struct ContentView: View {
                 modelContext.delete(bank)
             }
         }
+
+        try? modelContext.save()
     }
 }
 

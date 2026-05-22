@@ -60,6 +60,7 @@ enum RecurringMovementService {
 
         for rule in rules {
             guard rule.isActive, rule.type != .transfer else { continue }
+            guard rule.account?.isActive == true else { continue }
 
             let dueDates = dueDates(of: rule, in: pendingInterval, calendar: calendar)
 

@@ -7,7 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3AF1000A300000000000AA01 /* FinanceWidgetExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 3AF10001300000000000AA01 /* FinanceWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		3AF1000A300000000000AA01 /* FinanceWidgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 3AF10001300000000000AA01 /* FinanceWidgetExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -35,15 +35,15 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		3AF10009300000000000AA01 /* Embed App Extensions */ = {
+		3AF10009300000000000AA01 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				3AF1000A300000000000AA01 /* FinanceWidgetExtension.appex in Embed App Extensions */,
+				3AF1000A300000000000AA01 /* FinanceWidgetExtension.appex in Embed Foundation Extensions */,
 			);
-			name = "Embed App Extensions";
+			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -165,7 +165,7 @@
 				3A977ED82F3D202100B908C9 /* Sources */,
 				3A977ED92F3D202100B908C9 /* Frameworks */,
 				3A977EDA2F3D202100B908C9 /* Resources */,
-				3AF10009300000000000AA01 /* Embed App Extensions */,
+				3AF10009300000000000AA01 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
@@ -258,7 +258,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2620;
-				LastUpgradeCheck = 2630;
+				LastUpgradeCheck = 2650;
 				TargetAttributes = {
 					3A977EDB2F3D202100B908C9 = {
 						CreatedOnToolsVersion = 26.2;

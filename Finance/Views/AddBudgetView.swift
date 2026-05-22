@@ -136,10 +136,11 @@ struct AddBudgetView: View {
             }
             .padding(.vertical, 4)
         } header: {
-            Text("Presupuesto total mensual")
+            FinanceGlassSectionHeader(title: "Presupuesto total", systemImage: "wallet.pass.fill", subtitle: "Importe global mensual")
         } footer: {
             Text("Importe global que tienes disponible para gastar este mes.")
         }
+        .financeGlassFormSection()
     }
 
     private var allocationSection: some View {
@@ -186,12 +187,13 @@ struct AddBudgetView: View {
             }
 
         } header: {
-            Text("Distribución por categorías")
+            FinanceGlassSectionHeader(title: "Distribución", systemImage: "chart.pie.fill", subtitle: "Asigna el total por categorías")
         } footer: {
             if parsedTotal != nil {
                 allocationFooterText
             }
         }
+        .financeGlassFormSection()
     }
 
     @ViewBuilder
@@ -254,19 +256,25 @@ struct AddBudgetView: View {
     }
 
     private var notificationsSection: some View {
-        Section("Notificaciones por categoría") {
+        Section {
             Toggle("Aviso al 80 %", isOn: $notifyAt80)
             Toggle("Aviso al 100 %", isOn: $notifyAt100)
             Text("Recibirás una notificación cuando el gasto real de cada categoría alcance estos umbrales respecto a su asignación.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        } header: {
+            FinanceGlassSectionHeader(title: "Notificaciones", systemImage: "bell.badge.fill", subtitle: "Alertas por categoría")
         }
+        .financeGlassFormSection()
     }
 
     private var statusSection: some View {
-        Section("Estado") {
+        Section {
             Toggle("Presupuesto activo", isOn: $isActive)
+        } header: {
+            FinanceGlassSectionHeader(title: "Estado", systemImage: isActive ? "checkmark.seal.fill" : "pause.circle.fill")
         }
+        .financeGlassFormSection()
     }
 
     // MARK: - Category picker sheet
@@ -281,6 +289,7 @@ struct AddBudgetView: View {
                     Label(cat.name, systemImage: cat.iconName)
                         .foregroundStyle(.primary)
                 }
+                .financeGlassFormSection()
             }
             .financeGlassListContainer()
             .navigationTitle("Seleccionar categoría")

@@ -15,7 +15,6 @@ enum AppCurrency {
         ("EUR", "Euro"),
         ("USD", "Dólar estadounidense"),
         ("GBP", "Libra esterlina"),
-        ("CHF", "Franco suizo"),
         ("JPY", "Yen japonés")
     ]
 
@@ -33,7 +32,6 @@ enum AppCurrency {
         case "EUR": return "€"
         case "USD": return "$"
         case "GBP": return "£"
-        case "CHF": return "CHF"
         case "JPY": return "¥"
         default:
             let formatter = NumberFormatter()

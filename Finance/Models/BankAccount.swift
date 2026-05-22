@@ -22,6 +22,8 @@ final class BankAccount {
     var investedAmount: Decimal?
     var marketValue: Decimal?
     var marketValueUpdatedAt: Date?
+    var isArchived: Bool = false
+    var archivedAt: Date? = nil
     var createdAt: Date
     var updatedAt: Date
 
@@ -32,6 +34,11 @@ final class BankAccount {
     /// Si se elimina la cuenta, se eliminan también sus movimientos.
     @Relationship(deleteRule: .cascade, inverse: \Movement.account)
     var movements: [Movement]?
+
+    /// Relación inversa: transferencias que tienen esta cuenta como destino.
+    /// Al eliminar la cuenta destino se conserva el movimiento y se deja sin destino.
+    @Relationship(deleteRule: .nullify, inverse: \Movement.destinationAccount)
+    var destinationMovements: [Movement]?
 
     /// Relación inversa: snapshots de inversión asociados a esta cuenta.
     @Relationship(deleteRule: .cascade, inverse: \InvestmentSnapshot.account)
@@ -50,6 +57,10 @@ final class BankAccount {
 
     var isInvestmentAccount: Bool {
         accountType == .investment
+    }
+
+    var isActive: Bool {
+        !isArchived
     }
 
     var effectiveInvestedAmount: Decimal {
@@ -90,8 +101,16 @@ final class BankAccount {
         self.investedAmount = investedAmount
         self.marketValue = marketValue
         self.marketValueUpdatedAt = marketValueUpdatedAt
+        self.isArchived = false
+        self.archivedAt = nil
         self.createdAt = Date()
         self.updatedAt = Date()
+    }
+
+    func archive(at date: Date = Date()) {
+        isArchived = true
+        archivedAt = archivedAt ?? date
+        updatedAt = date
     }
 }
 
@@ -110,6 +129,8 @@ struct BankAccountDTO: Codable {
     let investedAmount: Decimal?
     let marketValue: Decimal?
     let marketValueUpdatedAt: Date?
+    let isArchived: Bool
+    let archivedAt: Date?
     let createdAt: Date
     let updatedAt: Date
 
@@ -124,6 +145,8 @@ struct BankAccountDTO: Codable {
         case investedAmount
         case marketValue
         case marketValueUpdatedAt
+        case isArchived
+        case archivedAt
         case createdAt
         case updatedAt
     }
@@ -139,6 +162,8 @@ struct BankAccountDTO: Codable {
         self.investedAmount = account.investedAmount
         self.marketValue = account.marketValue
         self.marketValueUpdatedAt = account.marketValueUpdatedAt
+        self.isArchived = account.isArchived
+        self.archivedAt = account.archivedAt
         self.createdAt = account.createdAt
         self.updatedAt = account.updatedAt
     }
@@ -155,6 +180,8 @@ struct BankAccountDTO: Codable {
         investedAmount = try container.decodeIfPresent(Decimal.self, forKey: .investedAmount)
         marketValue = try container.decodeIfPresent(Decimal.self, forKey: .marketValue)
         marketValueUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .marketValueUpdatedAt)
+        isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+        archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
     }
@@ -174,6 +201,8 @@ struct BankAccountDTO: Codable {
             marketValueUpdatedAt: marketValueUpdatedAt
         )
         account.id = id
+        account.isArchived = isArchived
+        account.archivedAt = archivedAt
         account.createdAt = createdAt
         account.updatedAt = updatedAt
         return account

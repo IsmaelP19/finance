@@ -69,13 +69,14 @@ struct InvestmentPerformanceCard: View {
         .financeGlassColorCard(
             gradient: LinearGradient(
                 colors: [
-                    Color.green.opacity(colorScheme == .dark ? 0.19 : 0.13),
-                    Color.teal.opacity(colorScheme == .dark ? 0.15 : 0.10)
+                    Color.green.opacity(colorScheme == .dark ? 0.24 : 0.16),
+                    Color.teal.opacity(colorScheme == .dark ? 0.18 : 0.11),
+                    Color.mint.opacity(colorScheme == .dark ? 0.12 : 0.08)
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
-            cornerRadius: 20
+            cornerRadius: FinanceGlassTokens.Radius.hero
         )
         .padding(.horizontal)
     }

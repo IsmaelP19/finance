@@ -14,35 +14,61 @@ struct TotalBalanceCard: View {
     let totalBalance: Decimal
     let accountCount: Int
     let currencyCode: String
+    var title: String = "Patrimonio"
+    var subtitle: String = "Vista global de tus cuentas"
+    var systemImage: String = "building.columns"
+    var tint: Color = .indigo
+    var horizontalPadding: Bool = true
+
+    private var accountCountText: String {
+        "\(accountCount) \(accountCount == 1 ? "cuenta conectada" : "cuentas conectadas")"
+    }
+
+    private var cardGradient: LinearGradient {
+        LinearGradient(
+            colors: [
+                Color.indigo.opacity(colorScheme == .dark ? 0.30 : 0.18),
+                Color.blue.opacity(colorScheme == .dark ? 0.20 : 0.12),
+                Color.teal.opacity(colorScheme == .dark ? 0.14 : 0.09)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
 
     var body: some View {
-        VStack(spacing: 8) {
-            Text("Patrimonio total")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                FinanceGlassIconBadge(systemName: systemImage, tint: tint, size: 38)
+            }
 
-            Text(totalBalance.masked(hideBalances, code: currencyCode))
-                .font(.system(size: 32, weight: .bold, design: .rounded))
-                .foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(totalBalance.masked(hideBalances, code: currencyCode))
+                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                    .minimumScaleFactor(0.78)
+                    .foregroundStyle(.primary)
 
-            Text("\(accountCount) \(accountCount == 1 ? "cuenta" : "cuentas")")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                Label(accountCountText, systemImage: "sparkles")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 24)
-        .padding(.horizontal, 16)
+        .padding(.vertical, 18)
+        .padding(.horizontal, 18)
         .financeGlassColorCard(
-            gradient: LinearGradient(
-                colors: [
-                    Color.blue.opacity(colorScheme == .dark ? 0.28 : 0.18),
-                    Color.indigo.opacity(colorScheme == .dark ? 0.20 : 0.12)
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            cornerRadius: 20
+            gradient: cardGradient,
+            cornerRadius: FinanceGlassTokens.Radius.hero
         )
-        .padding(.horizontal)
+        .padding(.horizontal, horizontalPadding ? 16 : 0)
     }
 }

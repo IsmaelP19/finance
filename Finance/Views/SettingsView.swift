@@ -11,6 +11,7 @@ import UniformTypeIdentifiers
 
 /// Ajustes de la aplicacion: bancos, importacion/exportacion y borrado total.
 struct SettingsView: View {
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.modelContext) private var modelContext
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
@@ -47,157 +48,184 @@ struct SettingsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
-                Section("Moneda") {
-                    Picker("Moneda global", selection: $appCurrencyCode) {
-                        ForEach(AppCurrency.supported, id: \.code) { option in
-                            Text("\(option.name) (\(option.code))")
-                                .tag(option.code)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    settingsSubtitle
+
+                    SettingsPanel(title: "Moneda", subtitle: "Preferencia global", systemImage: "eurosign.circle.fill") {
+                        Picker(selection: $appCurrencyCode) {
+                            ForEach(AppCurrency.supported, id: \.code) { option in
+                                Text("\(AppCurrency.symbol(for: option.code))  \(option.code)")
+                                    .tag(option.code)
+                            }
+                        } label: {
+                            SettingsCurrencyControlLabel(selectedCode: appCurrencyCode)
                         }
+                        .pickerStyle(.menu)
+
+                        SettingsFootnote("Se aplica de forma global a toda la app. No se realiza conversión automática.")
                     }
 
-                    Text("Se aplica de forma global a toda la app. No se realiza conversión automática.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                    SettingsPanel(title: "Organización", subtitle: "Bancos y categorías", systemImage: "square.grid.2x2.fill") {
+                        Button {
+                            showingBankManagement = true
+                        } label: {
+                            SettingsActionLabel(title: "Gestionar bancos", systemImage: "building.columns")
+                        }
+                        .buttonStyle(.plain)
 
-                Section("Organización") {
-                    Button {
-                        showingBankManagement = true
-                    } label: {
-                        Label("Gestionar bancos", systemImage: "building.columns")
+                        SettingsDivider()
+
+                        Button {
+                            showingCategoryManagement = true
+                        } label: {
+                            SettingsActionLabel(title: "Gestionar categorías", systemImage: "tag")
+                        }
+                        .buttonStyle(.plain)
                     }
 
-                    Button {
-                        showingCategoryManagement = true
-                    } label: {
-                        Label("Gestionar categorías", systemImage: "tag")
-                    }
-                }
+                    SettingsPanel(title: "Datos", subtitle: "Exportación, importación y borrado", systemImage: "externaldrive.fill") {
+                        Button {
+                            exportData()
+                        } label: {
+                            SettingsActionLabel(title: "Exportar datos", systemImage: "square.and.arrow.up")
+                        }
+                        .buttonStyle(.plain)
 
-                Section("Datos") {
-                    Button {
-                        exportData()
-                    } label: {
-                        Label("Exportar datos", systemImage: "square.and.arrow.up")
-                    }
+                        SettingsDivider()
 
-                    ImportDataButton(showingImportPicker: $showingImportPicker) { result in
-                        handleImportSelection(result: result)
-                    }
+                        ImportDataButton(showingImportPicker: $showingImportPicker) { result in
+                            handleImportSelection(result: result)
+                        }
 
-                    Button(role: .destructive) {
-                        showingDeleteAllConfirmation = true
-                    } label: {
-                        Label("Eliminar todos los datos", systemImage: "trash")
-                            .foregroundStyle(.red)
-                    }
-                }
+                        SettingsDivider()
 
-                Section("Sincronización manual") {
-                    Button {
-                        showingSyncFolderPicker = true
-                    } label: {
-                        Label("Configurar carpeta iCloud Drive", systemImage: "folder.badge.plus")
-                    }
-                    .fileImporter(
-                        isPresented: $showingSyncFolderPicker,
-                        allowedContentTypes: [.folder],
-                        allowsMultipleSelection: false
-                    ) { result in
-                        handleSyncFolderSelection(result: result)
+                        Button(role: .destructive) {
+                            showingDeleteAllConfirmation = true
+                        } label: {
+                            SettingsActionLabel(title: "Eliminar todos los datos", systemImage: "trash", tint: .red)
+                        }
+                        .buttonStyle(.plain)
                     }
 
-                    HStack {
-                        Label("Carpeta", systemImage: "folder")
-                        Spacer()
-                        Text(syncFolderName)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                    SettingsPanel(title: "Sincronización manual", subtitle: "Backups en iCloud Drive", systemImage: "icloud.fill") {
+                        Button {
+                            showingSyncFolderPicker = true
+                        } label: {
+                            SettingsActionLabel(title: "Configurar carpeta iCloud Drive", systemImage: "folder.badge.plus")
+                        }
+                        .buttonStyle(.plain)
+                        .fileImporter(
+                            isPresented: $showingSyncFolderPicker,
+                            allowedContentTypes: [.folder],
+                            allowsMultipleSelection: false
+                        ) { result in
+                            handleSyncFolderSelection(result: result)
+                        }
+
+                        SettingsDivider()
+
+                        SettingsValueRow(title: "Carpeta", value: syncFolderName, systemImage: "folder")
+
+                        SettingsDivider()
+
+                        Button {
+                            exportToICloudDrive()
+                        } label: {
+                            SettingsActionLabel(title: "Exportar a iCloud Drive", systemImage: "icloud.and.arrow.up")
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!ManualSyncService.isConfigured)
+
+                        SettingsDivider()
+
+                        Button(role: .destructive) {
+                            showingSyncImportConfirmation = true
+                        } label: {
+                            SettingsActionLabel(title: "Importar última copia de iCloud", systemImage: "icloud.and.arrow.down", tint: .red)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!ManualSyncService.isConfigured)
                     }
 
-                    Button {
-                        exportToICloudDrive()
-                    } label: {
-                        Label("Exportar a iCloud Drive", systemImage: "icloud.and.arrow.up")
+                    SettingsPanel(title: "Backup automático", subtitle: "Copia diaria programada", systemImage: "clock.arrow.circlepath") {
+                        Toggle(isOn: $autoBackupEnabled) {
+                            SettingsControlLabel(title: "Backup diario", subtitle: "Programa una copia de seguridad", systemImage: "arrow.triangle.2.circlepath")
+                        }
+
+                        SettingsDivider()
+
+                        DatePicker(
+                            selection: Binding(
+                                get: {
+                                    Calendar.current.date(
+                                        bySettingHour: autoBackupHour,
+                                        minute: autoBackupMinute,
+                                        second: 0,
+                                        of: Date()
+                                    ) ?? Date()
+                                },
+                                set: { newDate in
+                                    autoBackupHour = Calendar.current.component(.hour, from: newDate)
+                                    autoBackupMinute = Calendar.current.component(.minute, from: newDate)
+                                }
+                            ),
+                            displayedComponents: .hourAndMinute
+                        ) {
+                            SettingsControlLabel(title: "Hora", subtitle: "Best effort de iOS", systemImage: "clock")
+                        }
+                        .disabled(!autoBackupEnabled)
+
+                        SettingsFootnote("Se ejecuta en modo best effort. iOS puede retrasar la ejecución exacta con la app cerrada.")
                     }
-                    .disabled(!ManualSyncService.isConfigured)
 
-                    Button(role: .destructive) {
-                        showingSyncImportConfirmation = true
-                    } label: {
-                        Label("Importar última copia de iCloud", systemImage: "icloud.and.arrow.down")
-                            .foregroundStyle(.red)
+                    SettingsPanel(title: "Recordatorio inversión", subtitle: "Aviso de mercado", systemImage: "chart.line.uptrend.xyaxis") {
+                        Toggle(isOn: $investmentReminderEnabled) {
+                            SettingsControlLabel(title: "Recordatorio diario", subtitle: "De lunes a viernes", systemImage: "bell")
+                        }
+
+                        SettingsDivider()
+
+                        DatePicker(
+                            selection: Binding(
+                                get: {
+                                    Calendar.current.date(
+                                        bySettingHour: investmentReminderHour,
+                                        minute: investmentReminderMinute,
+                                        second: 0,
+                                        of: Date()
+                                    ) ?? Date()
+                                },
+                                set: { newDate in
+                                    investmentReminderHour = Calendar.current.component(.hour, from: newDate)
+                                    investmentReminderMinute = Calendar.current.component(.minute, from: newDate)
+                                }
+                            ),
+                            displayedComponents: .hourAndMinute
+                        ) {
+                            SettingsControlLabel(title: "Hora", subtitle: "Notificación diaria", systemImage: "clock")
+                        }
+                        .disabled(!investmentReminderEnabled)
                     }
-                    .disabled(!ManualSyncService.isConfigured)
-                }
 
-                Section("Backup automático") {
-                    Toggle("Backup diario", isOn: $autoBackupEnabled)
-
-                    DatePicker(
-                        "Hora",
-                        selection: Binding(
-                            get: {
-                                Calendar.current.date(
-                                    bySettingHour: autoBackupHour,
-                                    minute: autoBackupMinute,
-                                    second: 0,
-                                    of: Date()
-                                ) ?? Date()
-                            },
-                            set: { newDate in
-                                autoBackupHour = Calendar.current.component(.hour, from: newDate)
-                                autoBackupMinute = Calendar.current.component(.minute, from: newDate)
-                            }
-                        ),
-                        displayedComponents: .hourAndMinute
-                    )
-                    .disabled(!autoBackupEnabled)
-
-                    Text("Se ejecuta en modo best effort. iOS puede retrasar la ejecución exacta con la app cerrada.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Recordatorio inversión") {
-                    Toggle("Recordatorio diario (L-V)", isOn: $investmentReminderEnabled)
-
-                    DatePicker(
-                        "Hora",
-                        selection: Binding(
-                            get: {
-                                Calendar.current.date(
-                                    bySettingHour: investmentReminderHour,
-                                    minute: investmentReminderMinute,
-                                    second: 0,
-                                    of: Date()
-                                ) ?? Date()
-                            },
-                            set: { newDate in
-                                investmentReminderHour = Calendar.current.component(.hour, from: newDate)
-                                investmentReminderMinute = Calendar.current.component(.minute, from: newDate)
-                            }
-                        ),
-                        displayedComponents: .hourAndMinute
-                    )
-                    .disabled(!investmentReminderEnabled)
-                }
-
-                HStack {
-                    Spacer()
                     Text("v\(AppVersion.current)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                    Spacer()
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.05), in: Capsule())
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 2)
                 }
-                .listRowInsets(EdgeInsets(top: 18, leading: 0, bottom: 8, trailing: 0))
-                .listRowSeparator(.hidden)
-                .listRowBackground(Color.clear)
-
+                .padding(.horizontal, 20)
+                .padding(.top, 18)
+                .padding(.bottom, 32)
+                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
-            .financeGlassListContainer()
+            .background(settingsBackground.ignoresSafeArea())
             .navigationTitle("Ajustes")
+            .navigationBarTitleDisplayMode(.large)
             .sheet(isPresented: $showingBankManagement) {
                 BankManagementView()
             }
@@ -282,6 +310,52 @@ struct SettingsView: View {
         }
     }
 
+    private var settingsBackground: some View {
+        ZStack {
+            LinearGradient(
+                colors: colorScheme == .dark
+                    ? [
+                        Color(red: 0.015, green: 0.018, blue: 0.028),
+                        Color(red: 0.035, green: 0.055, blue: 0.075),
+                        Color(red: 0.07, green: 0.07, blue: 0.11)
+                    ]
+                    : [
+                        Color(red: 0.91, green: 0.955, blue: 1.0),
+                        Color(red: 0.965, green: 0.982, blue: 1.0),
+                        Color(red: 0.985, green: 0.99, blue: 0.975)
+                    ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            Circle()
+                .fill(Color.blue.opacity(colorScheme == .dark ? 0.18 : 0.14))
+                .frame(width: 320, height: 320)
+                .blur(radius: 80)
+                .offset(x: -170, y: -280)
+
+            Circle()
+                .fill(Color.indigo.opacity(colorScheme == .dark ? 0.14 : 0.10))
+                .frame(width: 260, height: 260)
+                .blur(radius: 86)
+                .offset(x: 180, y: -120)
+
+            Circle()
+                .fill(Color.teal.opacity(colorScheme == .dark ? 0.08 : 0.09))
+                .frame(width: 360, height: 360)
+                .blur(radius: 96)
+                .offset(x: 120, y: 420)
+        }
+    }
+
+    private var settingsSubtitle: some View {
+        Text("Configura la base de tu finanza sin perder claridad.")
+            .financeDisplaySubtitle(size: FinanceGlassTokens.Typography.bodySize, tracking: FinanceGlassTokens.Typography.bodyTracking)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 2)
+    }
+
     private func exportData() {
         do {
             try DataExportService.exportData(
@@ -321,11 +395,11 @@ struct SettingsView: View {
         defer { url.stopAccessingSecurityScopedResource() }
 
         do {
-            if replaceExistingData {
-                deleteAllData(showSuccessAlert: false)
-            }
-
             let importResult = try DataExportService.importData(from: url)
+
+            if replaceExistingData {
+                guard deleteAllData(showSuccessAlert: false) else { return }
+            }
 
             for bank in importResult.banks {
                 modelContext.insert(bank)
@@ -364,7 +438,10 @@ struct SettingsView: View {
         }
     }
 
-    private func deleteAllData(showSuccessAlert: Bool) {
+    @discardableResult
+    private func deleteAllData(showSuccessAlert: Bool) -> Bool {
+        CrashReportService.shared.recordBreadcrumb("SettingsView.deleteAllData")
+
         withAnimation {
             for movement in movements {
                 modelContext.delete(movement)
@@ -395,11 +472,22 @@ struct SettingsView: View {
             }
         }
 
+        do {
+            try modelContext.save()
+        } catch {
+            showError("Error al eliminar los datos: \(error.localizedDescription)")
+            return false
+        }
+
         if showSuccessAlert {
             alertTitle = "Datos eliminados"
             alertMessage = "Se eliminaron todos los datos de la aplicacion."
-            showingAlert = true
+            DispatchQueue.main.async {
+                showingAlert = true
+            }
         }
+
+        return true
     }
 
     private func showError(_ message: String) {
@@ -466,7 +554,7 @@ struct SettingsView: View {
         do {
             let (importResult, exportDate) = try ManualSyncService.importLatestBackup()
 
-            deleteAllData(showSuccessAlert: false)
+            guard deleteAllData(showSuccessAlert: false) else { return }
 
             for bank in importResult.banks {
                 modelContext.insert(bank)
@@ -535,6 +623,225 @@ struct SettingsView: View {
     }
 }
 
+private struct SettingsPanel<Content: View>: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let content: () -> Content
+
+    init(title: String, subtitle: String, systemImage: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.subtitle = subtitle
+        self.systemImage = systemImage
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.title3.weight(.medium))
+                        .tracking(-0.2)
+                        .foregroundStyle(.primary)
+
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+
+            VStack(spacing: 0) {
+                content()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(panelBackground, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        }
+    }
+
+    private var panelBackground: Color {
+        colorScheme == .dark ? Color.white.opacity(0.055) : Color.black.opacity(0.035)
+    }
+}
+
+private struct SettingsActionLabel: View {
+    @Environment(\.isEnabled) private var isEnabled
+
+    let title: String
+    let systemImage: String
+    var tint: Color = .primary
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SettingsIcon(systemImage: systemImage, tint: tint)
+
+            Text(title)
+                .font(.body.weight(.medium))
+                .foregroundStyle(tint)
+                .multilineTextAlignment(.leading)
+
+            Spacer(minLength: 12)
+
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.vertical, 13)
+        .contentShape(Rectangle())
+        .opacity(isEnabled ? 1 : 0.38)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct SettingsControlLabel: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SettingsIcon(systemImage: systemImage, tint: .primary)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .multilineTextAlignment(.leading)
+        }
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct SettingsCurrencyControlLabel: View {
+    let selectedCode: String
+
+    private var selectedCurrencyText: String {
+        "\(AppCurrency.symbol(for: selectedCode))  \(selectedCode)"
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SettingsCurrencyIcon(code: selectedCode)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Moneda global")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(.primary)
+
+                Text(selectedCurrencyText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .multilineTextAlignment(.leading)
+        }
+        .padding(.vertical, 12)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct SettingsValueRow: View {
+    let title: String
+    let value: String
+    let systemImage: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            SettingsIcon(systemImage: systemImage, tint: .primary)
+
+            Text(title)
+                .font(.body.weight(.medium))
+                .foregroundStyle(.primary)
+
+            Spacer(minLength: 12)
+
+            Text(value)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .padding(.vertical, 13)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct SettingsFootnote: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.top, 2)
+            .padding(.bottom, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct SettingsDivider: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.08))
+            .frame(height: 0.5)
+            .padding(.leading, 46)
+    }
+}
+
+private struct SettingsIcon: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        Image(systemName: systemImage)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 34, height: 34)
+            .background(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.045), in: Circle())
+    }
+}
+
+private struct SettingsCurrencyIcon: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let code: String
+
+    var body: some View {
+        Text(AppCurrency.symbol(for: code))
+            .font(.system(size: 17, weight: .semibold, design: .rounded))
+            .foregroundStyle(.primary)
+            .minimumScaleFactor(0.65)
+            .lineLimit(1)
+            .frame(width: 34, height: 34)
+            .background(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.045), in: Circle())
+            .accessibilityHidden(true)
+    }
+}
+
 // MARK: - Import Data Button
 
 /// Vista independiente que encapsula el botón de importar datos y su `.fileImporter`.
@@ -548,8 +855,9 @@ private struct ImportDataButton: View {
         Button {
             showingImportPicker = true
         } label: {
-            Label("Importar datos", systemImage: "square.and.arrow.down")
+            SettingsActionLabel(title: "Importar datos", systemImage: "square.and.arrow.down")
         }
+        .buttonStyle(.plain)
         .fileImporter(
             isPresented: $showingImportPicker,
             allowedContentTypes: [.json],
