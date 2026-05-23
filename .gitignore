@@ -116,3 +116,8 @@ Temporary Items
 
 # IDEs
 .qodo/
+
+# Others
+.codegraph/
+.cursor/
+

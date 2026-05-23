@@ -62,6 +62,16 @@ struct AddMovementView: View {
         movementToEdit != nil
     }
 
+    private var editorNavigationTitle: String {
+        if isEditing {
+            return "Editar movimiento"
+        }
+        if linkedReimbursementExpenseID != nil {
+            return "Registrar reembolso"
+        }
+        return "Nuevo movimiento"
+    }
+
     private var movementTint: Color {
         switch movementType {
         case .expense: return .red
@@ -162,6 +172,18 @@ struct AddMovementView: View {
         linkedReimbursementExpenseID != nil || movementToEdit?.reimbursementForId != nil
     }
 
+    private var isLinkedReimbursementContext: Bool {
+        linkedReimbursementExpenseID != nil || movementToEdit?.reimbursementForId != nil
+    }
+
+    private var allowsRecurringConfiguration: Bool {
+        movementType != .transfer && !isLinkedReimbursementContext
+    }
+
+    private var isMovementTypeLocked: Bool {
+        isLinkedReimbursementContext
+    }
+
     private var linkedReimbursementsForEditedExpense: [Movement] {
         guard let movementToEdit, movementToEdit.type == .expense else { return [] }
         return movements
@@ -218,307 +240,232 @@ struct AddMovementView: View {
                     MovementDraftHero(
                         title: $concept,
                         amountText: $amountText,
-                        type: movementType,
+                        type: $movementType,
+                        isMovementTypeLocked: isMovementTypeLocked,
+                        selectedAccount: $selectedAccount,
+                        selectedDestinationAccount: $selectedDestinationAccount,
+                        selectedCategory: $selectedCategory,
+                        accountGroups: groupedAccountsByBank,
+                        categories: categories,
                         currencyCode: appCurrencyCode,
-                        accountName: selectedAccount?.name ?? "Sin cuenta",
-                        categoryName: movementType == .transfer ? "Transferencia" : (selectedCategory?.name ?? "Sin categoría"),
-                        tint: movementTint
+                        tint: movementTint,
+                        onCreateCategory: {
+                            newCategoryName = ""
+                            categorySearchText = ""
+                            isCreatingNewCategory = true
+                        }
                     )
                 }
                 .financeGlassClearListRow()
 
-                Section {
-                    if activeAccounts.isEmpty {
-                        Text("No hay cuentas disponibles. Crea una cuenta antes de registrar movimientos.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        AccountSelectionMenu(
-                            title: movementType == .transfer ? "Origen" : "Cuenta",
-                            accounts: activeAccounts,
-                            selectedAccountID: selectedAccountIDBinding,
-                            leadingSystemImage: movementType == .transfer ? "arrow.up.right.circle.fill" : "creditcard.fill",
-                            leadingTint: movementTint,
-                            accessibilityLabel: "Seleccionar cuenta origen"
-                        )
-
-                        if movementType == .transfer {
-                            AccountSelectionMenu(
-                                title: "Destino",
-                                accounts: activeAccounts,
-                                selectedAccountID: selectedDestinationAccountIDBinding,
-                                placeholder: "Selecciona destino",
-                                leadingSystemImage: "arrow.down.left.circle.fill",
-                                leadingTint: .blue,
-                                accessibilityLabel: "Seleccionar cuenta destino"
-                            )
-                        }
-                    }
-                } header: {
-                    FinanceGlassSectionHeader(title: "Cuenta", systemImage: movementType == .transfer ? "arrow.left.arrow.right" : "creditcard", subtitle: movementType == .transfer ? "Origen y destino del traspaso" : "Cuenta que asumirá el movimiento")
-                }
-                .financeGlassFormSection()
-
-                Section {
-                    Picker("Tipo", selection: $movementType) {
-                        ForEach(MovementType.allCases) { type in
-                            Label(type.displayName, systemImage: type.icon)
-                                .tag(type)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                } header: {
-                    FinanceGlassSectionHeader(title: "Tipo", systemImage: movementType.icon, subtitle: "Define cómo impacta en tu saldo")
-                }
-                .financeGlassFormSection()
-
                 if movementType == .expense && canConfigureOwnershipFields {
                     Section {
-                        Toggle("Definir mi gasto", isOn: $isSharedExpense)
-                            .tint(movementTint)
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Definir mi gasto", isOn: $isSharedExpense)
+                                .tint(movementTint)
 
-                        if isSharedExpense {
-                            FinanceGlassField(title: "Mi parte", systemImage: "person.fill", tint: .orange) {
-                                HStack {
-                                    TextField("Mi parte", text: $personalAmountText)
-                                        .keyboardType(.decimalPad)
-                                        .font(.headline)
+                            if isSharedExpense {
+                                MovementEditorInlineAmountRow(
+                                    label: "Mi parte",
+                                    text: $personalAmountText,
+                                    currencyCode: appCurrencyCode,
+                                    tint: movementTint
+                                )
 
-                                    Text(appCurrencyCode)
+                                if draftSharedExpenseTotal > 0 {
+                                    Text("Total: \(draftSharedExpenseTotal.asCurrency(code: appCurrencyCode)) · Mi parte: \(draftSharedExpensePersonalAmount.asCurrency(code: appCurrencyCode))")
+                                        .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
-                            }
 
-                            if draftSharedExpenseTotal > 0 {
-                                Text("Total: \(draftSharedExpenseTotal.asCurrency(code: appCurrencyCode)) · Mi parte: \(draftSharedExpensePersonalAmount.asCurrency(code: appCurrencyCode))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            if willUnlinkReimbursementsOnSave {
-                                Text("Al guardar, \(linkedReimbursementsForEditedExpense.count) \(linkedReimbursementsForEditedExpense.count == 1 ? "reembolso" : "reembolsos") dejarán de estar vinculados y pasarán a ingresos normales.")
-                                    .font(.caption2)
-                                    .foregroundStyle(.orange)
-                            }
-
-                            if isEditing {
-                                if expectedReimbursementForDraftExpense > 0 {
-                                    ProgressView(
-                                        value: min((recoveredAmountForEditedExpense as NSDecimalNumber).doubleValue, (expectedReimbursementForDraftExpense as NSDecimalNumber).doubleValue),
-                                        total: max((expectedReimbursementForDraftExpense as NSDecimalNumber).doubleValue, 0.0001)
-                                    )
-                                    .tint(isReimbursementFullyRecovered ? .green : .blue)
-
-                                    Text("Recuperado: \(recoveredAmountForEditedExpense.asCurrency(code: appCurrencyCode)) de \(expectedReimbursementForDraftExpense.asCurrency(code: appCurrencyCode))")
-                                        .font(.caption)
-                                        .foregroundStyle(isReimbursementFullyRecovered ? .green : .secondary)
-
-                                    Text("Pendiente: \(pendingReimbursementForEditedExpense.asCurrency(code: appCurrencyCode))")
-                                        .font(.caption)
-                                        .foregroundStyle(isReimbursementFullyRecovered ? .green : .secondary)
-
-                                    if reimbursementOverageForEditedExpense > 0 {
-                                        Text("Extra recibido: \(reimbursementOverageForEditedExpense.asCurrency(code: appCurrencyCode))")
-                                            .font(.caption)
-                                            .foregroundStyle(.green)
-                                    }
-
-                                    Button {
-                                        showingQuickReimbursementSheet = true
-                                    } label: {
-                                        Label("Registrar reembolso", systemImage: "plus.circle")
-                                    }
+                                if willUnlinkReimbursementsOnSave {
+                                    Text("Al guardar, \(linkedReimbursementsForEditedExpense.count) \(linkedReimbursementsForEditedExpense.count == 1 ? "reembolso" : "reembolsos") dejarán de estar vinculados y pasarán a ingresos normales.")
+                                        .font(.caption2)
+                                        .foregroundStyle(.orange)
                                 }
 
-                                if !linkedReimbursementsForEditedExpense.isEmpty {
-                                    ForEach(linkedReimbursementsForEditedExpense.prefix(5), id: \.id) { reimbursement in
-                                        HStack {
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(reimbursement.concept)
-                                                    .font(.subheadline)
-                                                    .lineLimit(1)
-                                                Text(reimbursement.occurredAt.asSpanishShortDate())
-                                                    .font(.caption2)
-                                                    .foregroundStyle(.secondary)
-                                            }
+                                if isEditing {
+                                    if expectedReimbursementForDraftExpense > 0 {
+                                        Divider()
 
-                                            Spacer()
+                                        ProgressView(
+                                            value: min((recoveredAmountForEditedExpense as NSDecimalNumber).doubleValue, (expectedReimbursementForDraftExpense as NSDecimalNumber).doubleValue),
+                                            total: max((expectedReimbursementForDraftExpense as NSDecimalNumber).doubleValue, 0.0001)
+                                        )
+                                        .tint(isReimbursementFullyRecovered ? .green : .blue)
 
-                                            Text(reimbursement.amount.asCurrency(code: appCurrencyCode))
+                                        Text("Recuperado: \(recoveredAmountForEditedExpense.asCurrency(code: appCurrencyCode)) de \(expectedReimbursementForDraftExpense.asCurrency(code: appCurrencyCode))")
+                                            .font(.caption)
+                                            .foregroundStyle(isReimbursementFullyRecovered ? .green : .secondary)
+
+                                        Text("Pendiente: \(pendingReimbursementForEditedExpense.asCurrency(code: appCurrencyCode))")
+                                            .font(.caption)
+                                            .foregroundStyle(isReimbursementFullyRecovered ? .green : .secondary)
+
+                                        if reimbursementOverageForEditedExpense > 0 {
+                                            Text("Extra recibido: \(reimbursementOverageForEditedExpense.asCurrency(code: appCurrencyCode))")
                                                 .font(.caption)
-                                                .fontWeight(.semibold)
                                                 .foregroundStyle(.green)
+                                        }
+
+                                        Button {
+                                            showingQuickReimbursementSheet = true
+                                        } label: {
+                                            HStack(spacing: 8) {
+                                                Image(systemName: "plus.circle.fill")
+                                                Text("Registrar reembolso")
+                                                    .fontWeight(.semibold)
+                                            }
+                                            .font(.subheadline)
+                                            .foregroundStyle(Color.financeAccent)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.vertical, 4)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("Registrar reembolso")
+                                    }
+
+                                    if !linkedReimbursementsForEditedExpense.isEmpty {
+                                        ForEach(linkedReimbursementsForEditedExpense.prefix(5), id: \.id) { reimbursement in
+                                            HStack {
+                                                VStack(alignment: .leading, spacing: 2) {
+                                                    Text(reimbursement.concept)
+                                                        .font(.subheadline)
+                                                        .lineLimit(1)
+                                                    Text(reimbursement.occurredAt.asSpanishShortDate())
+                                                        .font(.caption2)
+                                                        .foregroundStyle(.secondary)
+                                                }
+
+                                                Spacer()
+
+                                                Text(reimbursement.amount.asCurrency(code: appCurrencyCode))
+                                                    .font(.caption)
+                                                    .fontWeight(.semibold)
+                                                    .foregroundStyle(.green)
+                                            }
                                         }
                                     }
                                 }
                             }
-                        }
 
-                        if !isSharedExpense, isEditing, !linkedReimbursementsForEditedExpense.isEmpty {
-                            Text("Al guardar, \(linkedReimbursementsForEditedExpense.count) \(linkedReimbursementsForEditedExpense.count == 1 ? "reembolso" : "reembolsos") dejarán de estar vinculados y pasarán a ingresos normales.")
-                                .font(.caption2)
-                                .foregroundStyle(.orange)
+                            if !isSharedExpense, isEditing, !linkedReimbursementsForEditedExpense.isEmpty {
+                                Text("Al guardar, \(linkedReimbursementsForEditedExpense.count) \(linkedReimbursementsForEditedExpense.count == 1 ? "reembolso" : "reembolsos") dejarán de estar vinculados y pasarán a ingresos normales.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                            }
                         }
+                        .padding(.vertical, 4)
                     } header: {
-                        FinanceGlassSectionHeader(title: "Gasto compartido", systemImage: "person.2.fill", subtitle: "Controla tu parte y reembolsos")
+                        MovementEditorSectionHeader(title: "Gasto compartido", systemImage: "person.2.fill", subtitle: "Controla tu parte y reembolsos", tint: .financeAccent)
                     }
-                    .financeGlassFormSection()
+                    .movementEditorDetailSection()
                 }
 
                 if movementType == .income && canConfigureOwnershipFields && isReimbursementIncome {
                     Section {
-                        if let selectedReimbursementExpense {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("Gasto vinculado")
+                        VStack(alignment: .leading, spacing: 8) {
+                            if let selectedReimbursementExpense {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Gasto vinculado")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+
+                                    HStack(alignment: .center) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(selectedReimbursementExpense.concept)
+                                                .font(.subheadline.weight(.medium))
+                                            Text(selectedReimbursementExpense.occurredAt.asSpanishShortDate())
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+
+                                        Spacer(minLength: 12)
+
+                                        Text(selectedReimbursementExpense.amount.asCurrency(code: appCurrencyCode))
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(.red)
+                                    }
+                                }
+
+                                Text("Este vínculo se define desde el gasto con \"Registrar reembolso\".")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Este reembolso está vinculado a un gasto que ya no se encuentra.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-
-                                HStack {
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(selectedReimbursementExpense.concept)
-                                            .font(.subheadline)
-                                            .fontWeight(.medium)
-                                        Text(selectedReimbursementExpense.occurredAt.asSpanishShortDate())
-                                            .font(.caption2)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Spacer()
-
-                                    Text(selectedReimbursementExpense.amount.asCurrency(code: appCurrencyCode))
-                                        .font(.caption)
-                                        .fontWeight(.semibold)
-                                        .foregroundStyle(.red)
-                                }
-                            }
-                            .padding(.vertical, 4)
-
-                            Text("Este vínculo se define desde el gasto con \"Registrar reembolso\".")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        } else {
-                            Text("Este reembolso está vinculado a un gasto que ya no se encuentra.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } header: {
-                        FinanceGlassSectionHeader(title: "Reembolso", systemImage: "arrow.down.circle.fill", subtitle: "Ingreso vinculado a un gasto")
-                    }
-                    .financeGlassFormSection()
-                }
-
-                if movementType != .transfer {
-                    Section {
-                        if let category = selectedCategory {
-                            HStack {
-                                CategoryChipView(
-                                    name: category.name,
-                                    iconName: category.iconName,
-                                    color: category.color
-                                )
-                                Spacer()
-                                Button("Cambiar") {
-                                    selectedCategory = nil
-                                    categorySearchText = ""
-                                }
-                                .font(.caption)
-                            }
-                        } else {
-                            TextField("Buscar o crear categoría...", text: $categorySearchText)
-                                .textInputAutocapitalization(.words)
-                                .autocorrectionDisabled()
-
-                            ForEach(filteredCategories, id: \.id) { category in
-                                Button {
-                                    selectedCategory = category
-                                    categorySearchText = ""
-                                } label: {
-                                    CategoryChipView(
-                                        name: category.name,
-                                        iconName: category.iconName,
-                                        color: category.color
-                                    )
-                                }
-                            }
-
-                            if canCreateNewCategory {
-                                Button {
-                                    newCategoryName = categorySearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    isCreatingNewCategory = true
-                                } label: {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "plus.circle.fill")
-                                            .foregroundStyle(.green)
-                                        Text("Crear \"\(categorySearchText.trimmingCharacters(in: .whitespacesAndNewlines))\"")
-                                            .foregroundStyle(.primary)
-                                    }
-                                }
                             }
                         }
+                        .padding(.vertical, 4)
                     } header: {
-                        FinanceGlassSectionHeader(title: "Categoría", systemImage: selectedCategory?.iconName ?? "tag", subtitle: "Organiza tus estadísticas")
+                        MovementEditorSectionHeader(title: "Reembolso", systemImage: "arrow.down.circle.fill", subtitle: "Ingreso vinculado a un gasto", tint: .financeAccent)
                     }
-                    .financeGlassFormSection()
+                    .movementEditorDetailSection()
                 }
 
                 if !isRecurring || isEditing {
                     Section {
                         DatePicker("Fecha del movimiento", selection: $occurredAt, displayedComponents: [.date, .hourAndMinute])
                     } header: {
-                        FinanceGlassSectionHeader(title: "Fecha", systemImage: "calendar", subtitle: "Cuándo ocurrió")
+                        MovementEditorSectionHeader(title: "Fecha", systemImage: "calendar", subtitle: "Cuándo ocurrió", tint: .financeAccent)
                     }
-                    .financeGlassFormSection()
+                    .movementEditorDetailSection()
                 }
 
-                if movementType != .transfer {
+                if allowsRecurringConfiguration {
                     Section {
-                        Toggle("Marcar como recurrente", isOn: $isRecurring)
-                            .tint(movementTint)
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Marcar como recurrente", isOn: $isRecurring)
+                                .tint(movementTint)
 
-                        if isRecurring {
-                            Picker("Frecuencia", selection: $recurringFrequency) {
-                                ForEach(RecurringMovementFrequency.allCases) { frequency in
-                                    Text(frequency.displayName)
-                                        .tag(frequency)
+                            if isRecurring {
+                                Picker("Frecuencia", selection: $recurringFrequency) {
+                                    ForEach(RecurringMovementFrequency.allCases) { frequency in
+                                        Text(frequency.displayName)
+                                            .tag(frequency)
+                                    }
                                 }
-                            }
 
-                            DatePicker(
-                                "Primer cobro/pago",
-                                selection: $recurringStartDate,
-                                displayedComponents: .date
-                            )
-
-                            Toggle("Fecha de fin", isOn: $recurringHasEndDate)
-
-                            if recurringHasEndDate {
                                 DatePicker(
-                                    "Fin",
-                                    selection: $recurringEndDate,
-                                    in: recurringStartDate...,
+                                    "Primer cobro/pago",
+                                    selection: $recurringStartDate,
                                     displayedComponents: .date
                                 )
-                            }
 
-                            Text("Se guardará como pendiente recurrente. No afectará al saldo hasta confirmar el cobro/pago.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                                Toggle("Fecha de fin", isOn: $recurringHasEndDate)
+
+                                if recurringHasEndDate {
+                                    DatePicker(
+                                        "Fin",
+                                        selection: $recurringEndDate,
+                                        in: recurringStartDate...,
+                                        displayedComponents: .date
+                                    )
+                                }
+
+                                Text("Se guardará como pendiente recurrente. No afectará al saldo hasta confirmar el cobro/pago.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                        .padding(.vertical, 4)
                     } header: {
-                        FinanceGlassSectionHeader(title: "Recurrencia", systemImage: "repeat", subtitle: "Convierte pagos periódicos en pendientes")
+                        MovementEditorSectionHeader(title: "Recurrencia", systemImage: "repeat", subtitle: "Convierte pagos periódicos en pendientes", tint: .financeAccent)
                     }
-                    .financeGlassFormSection()
+                    .movementEditorDetailSection()
                 }
 
                 Section {
                     TextField("Añade una nota...", text: $notes, axis: .vertical)
                         .lineLimit(2...5)
                 } header: {
-                    FinanceGlassSectionHeader(title: "Notas", systemImage: "note.text", subtitle: "Opcional")
+                    MovementEditorSectionHeader(title: "Notas", systemImage: "note.text", subtitle: "Opcional", tint: .financeAccent)
                 }
-                .financeGlassFormSection()
+                .movementEditorDetailSection()
             }
             .financeGlassListContainer()
-            .navigationTitle(isEditing ? "Editar movimiento" : "Nuevo movimiento")
+            .navigationTitle(editorNavigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .safeAreaInset(edge: .bottom) {
                 HStack(spacing: 12) {
@@ -591,6 +538,11 @@ struct AddMovementView: View {
                 }
             }
             .onChange(of: selectedAccount?.id) { _, _ in
+                if movementType == .transfer {
+                    ensureTransferAccountsAreDifferent()
+                }
+            }
+            .onChange(of: selectedDestinationAccount?.id) { _, _ in
                 if movementType == .transfer {
                     ensureTransferAccountsAreDifferent()
                 }
@@ -671,6 +623,11 @@ struct AddMovementView: View {
                 recurringEndDate = recurringStartDate
             }
 
+            if isLinkedReimbursementContext {
+                movementType = .income
+                isRecurring = false
+            }
+
             didLoadExistingData = true
             return
         }
@@ -703,6 +660,9 @@ struct AddMovementView: View {
             if concept.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 concept = "Reembolso: \(linkedExpense.concept)"
             }
+
+            movementType = .income
+            isRecurring = false
         }
 
         if selectedAccount == nil {
@@ -744,6 +704,10 @@ struct AddMovementView: View {
     }
 
     private func saveMovement() {
+        if isLinkedReimbursementContext {
+            movementType = .income
+        }
+
         CrashReportService.shared.recordBreadcrumb("Guardando movimiento de tipo \(movementType.displayName)")
         recordSaveDiagnostic("start")
 
@@ -876,7 +840,7 @@ struct AddMovementView: View {
         let notes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
         let recurringConfiguration: (startDate: Date, endDate: Date?, anchorDay: Int)?
 
-        if isRecurring && movementType != .transfer {
+        if isRecurring && allowsRecurringConfiguration {
             let normalizedStart = Calendar.current.startOfDay(for: recurringStartDate)
             let normalizedEnd = recurringHasEndDate ? Calendar.current.startOfDay(for: recurringEndDate) : nil
 
@@ -896,7 +860,7 @@ struct AddMovementView: View {
             recurringConfiguration = nil
         }
 
-        if isRecurring && !isEditing {
+        if isRecurring && !isEditing && allowsRecurringConfiguration {
             guard let recurringConfiguration else { return }
 
             let recurringMovement = RecurringMovement(
@@ -1232,21 +1196,39 @@ struct AddMovementView: View {
 private struct MovementDraftHero: View {
     @Binding var title: String
     @Binding var amountText: String
-    let type: MovementType
+    @Binding var type: MovementType
+    var isMovementTypeLocked: Bool = false
+    @Binding var selectedAccount: BankAccount?
+    @Binding var selectedDestinationAccount: BankAccount?
+    @Binding var selectedCategory: MovementCategory?
+    let accountGroups: [AccountBankGroup]
+    let categories: [MovementCategory]
     let currencyCode: String
-    let accountName: String
-    let categoryName: String
     let tint: Color
+    var onCreateCategory: () -> Void
+
+    private var accountName: String {
+        selectedAccount?.name ?? "Sin cuenta"
+    }
+
+    private var destinationAccountName: String {
+        selectedDestinationAccount?.name ?? "Sin destino"
+    }
+
+    private var categoryName: String {
+        selectedCategory?.name ?? "Sin categoría"
+    }
+
+    private var accounts: [BankAccount] {
+        accountGroups.flatMap(\.accounts)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(type.displayName)
-                        .font(.caption.weight(.bold))
-                        .textCase(.uppercase)
-                        .tracking(0.6)
-                        .foregroundStyle(tint)
+                    typeSelector
+
                     TextField("Concepto del movimiento", text: $title, axis: .vertical)
                         .textInputAutocapitalization(.sentences)
                         .font(.title3.weight(.bold))
@@ -1266,28 +1248,267 @@ private struct MovementDraftHero: View {
                     .minimumScaleFactor(0.72)
                     .tint(tint)
 
-                Text(currencyCode)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                CurrencySymbolLabel(code: currencyCode, companion: .hero)
             }
 
-            HStack(spacing: 10) {
-                Label(accountName, systemImage: "creditcard")
-                Label(categoryName, systemImage: type == .transfer ? "arrow.left.arrow.right" : "tag")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) {
+                    accountSelector
+
+                    if type == .transfer {
+                        destinationAccountSelector
+                    } else {
+                        categorySelector
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    accountSelector
+
+                    if type == .transfer {
+                        destinationAccountSelector
+                    } else {
+                        categorySelector
+                    }
+                }
             }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .financeGlassColorCard(
             gradient: LinearGradient(
-                colors: [tint.opacity(0.20), Color.blue.opacity(0.10), Color.white.opacity(0.05)],
+                colors: [tint.opacity(0.20), Color.financeAccent.opacity(0.10), Color.white.opacity(0.05)],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             ),
             cornerRadius: FinanceGlassTokens.Radius.hero
         )
+    }
+
+    @ViewBuilder
+    private var typeSelector: some View {
+        if isMovementTypeLocked {
+            Text(MovementType.income.displayName)
+                .font(.caption.weight(.bold))
+                .textCase(.uppercase)
+                .tracking(0.6)
+                .foregroundStyle(tint)
+                .accessibilityLabel("Tipo de movimiento")
+                .accessibilityValue(MovementType.income.displayName)
+                .accessibilityHint("No editable en un reembolso vinculado")
+        } else {
+            Menu {
+                ForEach(MovementType.allCases) { option in
+                    Button {
+                        type = option
+                    } label: {
+                        Label(option.displayName, systemImage: option.icon)
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Text(type.displayName)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.bold))
+                }
+                .font(.caption.weight(.bold))
+                .textCase(.uppercase)
+                .tracking(0.6)
+                .foregroundStyle(tint)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Tipo de movimiento")
+            .accessibilityValue(type.displayName)
+        }
+    }
+
+    private var accountSelector: some View {
+        Menu {
+            ForEach(accountGroups) { group in
+                Section(group.bankName) {
+                    ForEach(group.accounts, id: \.id) { account in
+                        Button {
+                            selectedAccount = account
+                        } label: {
+                            Label(account.name, systemImage: account.id == selectedAccount?.id ? "checkmark" : accountIconName(for: account))
+                        }
+                    }
+                }
+            }
+        } label: {
+            quickSelectorLabel(title: accountName, systemImage: type == .transfer ? "arrow.up.right.circle" : "creditcard")
+        }
+        .disabled(accounts.isEmpty)
+        .buttonStyle(.plain)
+        .accessibilityLabel(type == .transfer ? "Cuenta origen" : "Cuenta")
+        .accessibilityValue(accountName)
+    }
+
+    private var destinationAccountSelector: some View {
+        Menu {
+            ForEach(accountGroups) { group in
+                let destinationAccounts = group.accounts.filter { $0.id != selectedAccount?.id }
+                if !destinationAccounts.isEmpty {
+                    Section(group.bankName) {
+                        ForEach(destinationAccounts, id: \.id) { account in
+                            Button {
+                                selectedDestinationAccount = account
+                            } label: {
+                                Label(account.name, systemImage: account.id == selectedDestinationAccount?.id ? "checkmark" : accountIconName(for: account))
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            quickSelectorLabel(title: destinationAccountName, systemImage: "arrow.down.left.circle")
+        }
+        .disabled(accounts.isEmpty)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Cuenta destino")
+        .accessibilityValue(destinationAccountName)
+    }
+
+    private var categorySelector: some View {
+        Menu {
+            ForEach(categories, id: \.id) { category in
+                Button {
+                    selectedCategory = category
+                } label: {
+                    Label(category.name, systemImage: category.id == selectedCategory?.id ? "checkmark" : category.iconName)
+                }
+            }
+
+            Divider()
+
+            Button {
+                onCreateCategory()
+            } label: {
+                Label("Crear categoría", systemImage: "plus.circle")
+            }
+        } label: {
+            quickSelectorLabel(title: categoryName, systemImage: selectedCategory?.iconName ?? "tag")
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Categoría")
+        .accessibilityValue(categoryName)
+    }
+
+    private func quickSelectorLabel(title: String, systemImage: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.caption2.weight(.bold))
+            Text(title)
+                .lineLimit(1)
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.bold))
+                .opacity(0.62)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(Color.white.opacity(0.08), in: Capsule())
+        .contentShape(Capsule())
+    }
+
+    private func accountIconName(for account: BankAccount) -> String {
+        account.isInvestmentAccount ? "chart.line.uptrend.xyaxis" : "building.columns"
+    }
+}
+
+private struct MovementEditorInlineAmountRow: View {
+    let label: String
+    @Binding var text: String
+    let currencyCode: String
+    let tint: Color
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .fixedSize()
+
+            TextField(label, text: $text)
+                .keyboardType(.decimalPad)
+                .font(.title3.weight(.bold))
+                .multilineTextAlignment(.trailing)
+                .tint(tint)
+
+            CurrencySymbolLabel(code: currencyCode, companion: .inline)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(label)
+        .accessibilityValue("\(text) \(AppCurrency.displayName(for: currencyCode))")
+    }
+}
+
+private struct MovementEditorSectionHeader: View {
+    let title: String
+    let systemImage: String
+    let subtitle: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 7) {
+                Image(systemName: systemImage)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(tint)
+
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                    .foregroundStyle(.primary.opacity(0.82))
+            }
+
+            Text(subtitle)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.top, 8)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+private struct MovementEditorDetailSectionModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var surface: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.035)
+            : Color.black.opacity(0.025)
+    }
+
+    private var stroke: Color {
+        colorScheme == .dark
+            ? Color.white.opacity(0.04)
+            : Color.black.opacity(0.03)
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
+            .listRowSeparator(.hidden)
+            .listRowBackground(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .strokeBorder(stroke, lineWidth: 1)
+                    )
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+            )
+    }
+}
+
+private extension View {
+    func movementEditorDetailSection() -> some View {
+        modifier(MovementEditorDetailSectionModifier())
     }
 }
 

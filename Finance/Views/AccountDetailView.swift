@@ -394,8 +394,7 @@ private struct InvestmentValueUpdateSheet: View {
                     HStack {
                         TextField("0,00", text: $valueText)
                             .keyboardType(.decimalPad)
-                        Text(currencyCode)
-                            .foregroundStyle(.secondary)
+                        CurrencySymbolLabel(code: currencyCode, companion: .body)
                     }
                 } header: {
                     FinanceGlassSectionHeader(title: title, systemImage: "eurosign.circle.fill")

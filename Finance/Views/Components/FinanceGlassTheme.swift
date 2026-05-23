@@ -401,6 +401,46 @@ struct FinanceGlassIconBadge: View {
     }
 }
 
+struct CurrencySymbolLabel: View {
+    enum AmountFieldCompanion {
+        case hero
+        case inline
+        case title2
+        case headline
+        case body
+        case caption
+        case standard
+
+        var font: Font {
+            switch self {
+            case .hero:
+                return .system(size: 22, weight: .semibold, design: .rounded)
+            case .inline, .title2:
+                return .title3.weight(.semibold)
+            case .headline:
+                return .headline.weight(.semibold)
+            case .body:
+                return .body.weight(.semibold)
+            case .caption:
+                return .subheadline.weight(.semibold)
+            case .standard:
+                return .subheadline.weight(.semibold)
+            }
+        }
+    }
+
+    let code: String
+    var companion: AmountFieldCompanion = .standard
+    var foregroundStyle: Color = .secondary
+
+    var body: some View {
+        Text(AppCurrency.symbol(for: code))
+            .font(companion.font)
+            .foregroundStyle(foregroundStyle)
+            .accessibilityLabel(AppCurrency.displayName(for: code))
+    }
+}
+
 private struct FinanceGlassCardModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     let cornerRadius: CGFloat

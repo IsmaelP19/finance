@@ -179,9 +179,7 @@ struct AddAccountView: View {
                                 TextField("0,00", text: $balanceText)
                                     .keyboardType(.decimalPad)
                                     .font(.title2.weight(.bold))
-                                Text(appCurrencyCode)
-                                    .foregroundStyle(.secondary)
-                                    .font(.headline)
+                                CurrencySymbolLabel(code: appCurrencyCode, companion: .title2)
                             }
                         }
                     } header: {
@@ -197,8 +195,7 @@ struct AddAccountView: View {
                                 TextField("Cantidad invertida", text: $investedAmountText)
                                     .keyboardType(.decimalPad)
                                     .font(.headline)
-                                Text(appCurrencyCode)
-                                    .foregroundStyle(.secondary)
+                                CurrencySymbolLabel(code: appCurrencyCode, companion: .headline)
                             }
                         }
 
@@ -207,8 +204,7 @@ struct AddAccountView: View {
                                 TextField("Valor de mercado", text: $marketValueText)
                                     .keyboardType(.decimalPad)
                                     .font(.headline)
-                                Text(appCurrencyCode)
-                                    .foregroundStyle(.secondary)
+                                CurrencySymbolLabel(code: appCurrencyCode, companion: .headline)
                             }
                         }
                     } header: {

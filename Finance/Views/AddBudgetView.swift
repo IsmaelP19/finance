@@ -130,9 +130,7 @@ struct AddBudgetView: View {
                     .keyboardType(.decimalPad)
                     .font(.title2)
                     .fontWeight(.semibold)
-                Text(appCurrencyCode)
-                    .foregroundStyle(.secondary)
-                    .font(.title2)
+                CurrencySymbolLabel(code: appCurrencyCode, companion: .title2)
             }
             .padding(.vertical, 4)
         } header: {
@@ -167,9 +165,7 @@ struct AddBudgetView: View {
                         .multilineTextAlignment(.trailing)
                         .frame(width: 90)
 
-                    Text(appCurrencyCode)
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
+                    CurrencySymbolLabel(code: appCurrencyCode, companion: .caption)
                 }
             }
             .onDelete { indexSet in
