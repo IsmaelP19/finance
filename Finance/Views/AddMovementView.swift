@@ -8,12 +8,6 @@
 import SwiftUI
 import SwiftData
 
-private struct AccountBankGroup: Identifiable {
-    let id: String
-    let bankName: String
-    let accounts: [BankAccount]
-}
-
 /// Formulario para crear movimientos (gasto o ingreso).
 struct AddMovementView: View {
     @Environment(\.modelContext) private var modelContext
@@ -47,6 +41,8 @@ struct AddMovementView: View {
     @State private var isReimbursementIncome = false
     @State private var selectedReimbursementExpense: Movement?
     @State private var showingQuickReimbursementSheet = false
+    @State private var cachedAccountGroups: [MovementAccountBankGroup] = []
+    @FocusState private var heroFocusedField: MovementDraftHeroField?
 
     @State private var showingValidationAlert = false
     @State private var validationMessage = ""
@@ -121,19 +117,27 @@ struct AddMovementView: View {
         accounts.filter(\.isActive)
     }
 
-    private var groupedAccountsByBank: [AccountBankGroup] {
-        let grouped = Dictionary(grouping: accountsSortedByBankThenName) { account in
+    private var accountGroupingSignature: String {
+        accountsSortedByBankThenName.map(\.id.uuidString).joined(separator: "|")
+    }
+
+    private func buildAccountGroups(from sortedAccounts: [BankAccount]) -> [MovementAccountBankGroup] {
+        let grouped = Dictionary(grouping: sortedAccounts) { account in
             account.bank?.id.uuidString ?? "no-bank"
         }
 
         return grouped
             .compactMap { key, groupedAccounts in
                 guard let first = groupedAccounts.first else { return nil }
-                return AccountBankGroup(id: key, bankName: first.bankDisplayName, accounts: groupedAccounts)
+                return MovementAccountBankGroup(id: key, bankName: first.bankDisplayName, accounts: groupedAccounts)
             }
             .sorted { lhs, rhs in
                 lhs.bankName.localizedCaseInsensitiveCompare(rhs.bankName) == .orderedAscending
             }
+    }
+
+    private func refreshCachedAccountGroups() {
+        cachedAccountGroups = buildAccountGroups(from: accountsSortedByBankThenName)
     }
 
     private var selectedAccountIDBinding: Binding<UUID?> {
@@ -244,11 +248,12 @@ struct AddMovementView: View {
                         isMovementTypeLocked: isMovementTypeLocked,
                         selectedAccount: $selectedAccount,
                         selectedDestinationAccount: $selectedDestinationAccount,
-                        selectedCategory: $selectedCategory,
-                        accountGroups: groupedAccountsByBank,
-                        categories: categories,
-                        currencyCode: appCurrencyCode,
-                        tint: movementTint,
+                    selectedCategory: $selectedCategory,
+                    categories: categories,
+                    hasActiveAccounts: !activeAccounts.isEmpty,
+                    currencyCode: appCurrencyCode,
+                    tint: movementTint,
+                    focusedField: $heroFocusedField,
                         onCreateCategory: {
                             newCategoryName = ""
                             categorySearchText = ""
@@ -465,26 +470,10 @@ struct AddMovementView: View {
                 .movementEditorDetailSection()
             }
             .financeGlassListContainer()
+            .scrollDismissesKeyboard(.interactively)
+            .financeGlassPageBackground()
             .navigationTitle(editorNavigationTitle)
             .navigationBarTitleDisplayMode(.inline)
-            .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 12) {
-                    Button("Cancelar") { dismiss() }
-                        .financeGlassSecondaryAction(tint: .secondary)
-
-                    Button {
-                        saveMovement()
-                    } label: {
-                        Label(isEditing ? "Actualizar" : "Guardar", systemImage: "checkmark")
-                    }
-                    .financeGlassPrimaryAction(tint: movementTint)
-                    .disabled(activeAccounts.isEmpty)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
-                .background(.ultraThinMaterial)
-            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button {
@@ -495,8 +484,34 @@ struct AddMovementView: View {
                     }
                     .accessibilityLabel("Cerrar")
                 }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        saveMovement()
+                    } label: {
+                        Label(isEditing ? "Actualizar" : "Guardar", systemImage: "checkmark")
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(activeAccounts.isEmpty)
+                    .accessibilityLabel(isEditing ? "Actualizar movimiento" : "Guardar movimiento")
+                }
+
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Listo") {
+                        heroFocusedField = nil
+                    }
+                    .fontWeight(.semibold)
+                }
             }
-            .onAppear(perform: setupDefaults)
+            .movementEditorSheetPresentation(isEditing: isEditing)
+            .onAppear {
+                refreshCachedAccountGroups()
+                setupDefaults()
+            }
+            .onChange(of: accountGroupingSignature) { _, _ in
+                refreshCachedAccountGroups()
+            }
             .onChange(of: movementType) { _, newValue in
                 if newValue == .transfer {
                     selectedCategory = nil
@@ -576,7 +591,7 @@ struct AddMovementView: View {
             selectedAccount = movementToEdit.account
             selectedDestinationAccount = movementToEdit.destinationAccount
             movementType = movementToEdit.type
-            amountText = formatAmountForEditing(movementToEdit.amount)
+            amountText = movementToEdit.amount.asEditableAmount()
             concept = movementToEdit.concept
             selectedCategory = movementToEdit.category
             occurredAt = movementToEdit.occurredAt
@@ -588,7 +603,7 @@ struct AddMovementView: View {
                personalAmount <= movementToEdit.amount {
                 isSharedExpense = personalAmount < movementToEdit.amount
                 if isSharedExpense {
-                    personalAmountText = formatAmountForEditing(personalAmount)
+                    personalAmountText = personalAmount.asEditableAmount()
                 }
             } else {
                 isSharedExpense = false
@@ -680,21 +695,15 @@ struct AddMovementView: View {
         recurringEndDate = recurringStartDate
 
         ensureTransferAccountsAreDifferent()
+        refreshCachedAccountGroups()
     }
 
     private func parseAmount(from text: String) -> Decimal {
-        let cleaned = text
-            .replacingOccurrences(of: " ", with: "")
-            .replacingOccurrences(of: ",", with: ".")
-        return Decimal(string: cleaned) ?? 0
+        EditableAmount.parse(text) ?? 0
     }
 
     private func parseAmount() -> Decimal {
         parseAmount(from: amountText)
-    }
-
-    private func formatAmountForEditing(_ amount: Decimal) -> String {
-        NSDecimalNumber(decimal: amount).stringValue.replacingOccurrences(of: ".", with: ",")
     }
 
     private func normalizedPersonalAmountForExpense(totalAmount: Decimal, rawPersonalAmount: Decimal?) -> Decimal? {
@@ -1193,6 +1202,11 @@ struct AddMovementView: View {
     }
 }
 
+enum MovementDraftHeroField: Hashable {
+    case concept
+    case amount
+}
+
 private struct MovementDraftHero: View {
     @Binding var title: String
     @Binding var amountText: String
@@ -1201,27 +1215,28 @@ private struct MovementDraftHero: View {
     @Binding var selectedAccount: BankAccount?
     @Binding var selectedDestinationAccount: BankAccount?
     @Binding var selectedCategory: MovementCategory?
-    let accountGroups: [AccountBankGroup]
     let categories: [MovementCategory]
+    let hasActiveAccounts: Bool
     let currencyCode: String
     let tint: Color
+    var focusedField: FocusState<MovementDraftHeroField?>.Binding
     var onCreateCategory: () -> Void
 
-    private var accountName: String {
-        selectedAccount?.name ?? "Sin cuenta"
-    }
-
-    private var destinationAccountName: String {
-        selectedDestinationAccount?.name ?? "Sin destino"
-    }
-
-    private var categoryName: String {
-        selectedCategory?.name ?? "Sin categoría"
-    }
-
-    private var accounts: [BankAccount] {
-        accountGroups.flatMap(\.accounts)
-    }
+    @State private var accountLabel = "Sin cuenta"
+    @State private var destinationAccountLabel = "Sin destino"
+    @State private var categoryLabel = "Sin categoría"
+    @State private var categoryIconName = "tag"
+    @State private var categoryTint: Color = .secondary
+    @State private var isShowingCategoryPicker = false
+    @State private var accountBankLabel = ""
+    @State private var accountIconName = "creditcard"
+    @State private var accountTint: Color = .financeAccent
+    @State private var isShowingAccountPicker = false
+    @State private var destinationBankLabel = ""
+    @State private var destinationIconName = "arrow.down.left.circle"
+    @State private var destinationTint: Color = .financeAccent
+    @State private var isShowingDestinationAccountPicker = false
+    @State private var isShowingTypePicker = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1234,6 +1249,7 @@ private struct MovementDraftHero: View {
                         .font(.title3.weight(.bold))
                         .lineLimit(1...2)
                         .tint(tint)
+                        .focused(focusedField, equals: .concept)
                 }
 
                 Spacer()
@@ -1247,29 +1263,21 @@ private struct MovementDraftHero: View {
                     .font(.system(size: 36, weight: .bold, design: .rounded))
                     .minimumScaleFactor(0.72)
                     .tint(tint)
+                    .focused(focusedField, equals: .amount)
 
                 CurrencySymbolLabel(code: currencyCode, companion: .hero)
             }
 
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) {
-                    accountSelector
+            HStack(spacing: 10) {
+                accountSelector
+                    .frame(maxWidth: .infinity)
 
-                    if type == .transfer {
-                        destinationAccountSelector
-                    } else {
-                        categorySelector
-                    }
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    accountSelector
-
-                    if type == .transfer {
-                        destinationAccountSelector
-                    } else {
-                        categorySelector
-                    }
+                if type == .transfer {
+                    destinationAccountSelector
+                        .frame(maxWidth: .infinity)
+                } else {
+                    categorySelector
+                        .frame(maxWidth: .infinity)
                 }
             }
         }
@@ -1282,138 +1290,170 @@ private struct MovementDraftHero: View {
             ),
             cornerRadius: FinanceGlassTokens.Radius.hero
         )
+        .onAppear(perform: syncSelectorLabels)
+        .onChange(of: selectedAccount?.id) { _, _ in syncSelectorLabels() }
+        .onChange(of: selectedDestinationAccount?.id) { _, _ in syncSelectorLabels() }
+        .onChange(of: selectedCategory?.id) { _, _ in syncSelectorLabels() }
+        .sheet(isPresented: $isShowingCategoryPicker) {
+            MovementCategoryPickerSheet(
+                selection: $selectedCategory,
+                onCreateCategory: onCreateCategory
+            )
+        }
+        .sheet(isPresented: $isShowingAccountPicker) {
+            MovementAccountPickerSheet(
+                selection: $selectedAccount,
+                navigationTitle: type == .transfer ? "Cuenta origen" : "Cuenta"
+            )
+        }
+        .sheet(isPresented: $isShowingDestinationAccountPicker) {
+            MovementAccountPickerSheet(
+                selection: $selectedDestinationAccount,
+                navigationTitle: "Cuenta destino",
+                excludingAccountID: selectedAccount?.id
+            )
+        }
+        .sheet(isPresented: $isShowingTypePicker) {
+            MovementTypePickerSheet(selection: $type)
+        }
+    }
+
+    private func syncSelectorLabels() {
+        if let selectedAccount {
+            accountLabel = selectedAccount.name
+            accountBankLabel = selectedAccount.bankDisplayName
+            accountIconName = selectedAccount.isInvestmentAccount ? "chart.line.uptrend.xyaxis" : "creditcard"
+            accountTint = selectedAccount.accountType.color
+        } else {
+            accountLabel = "Sin cuenta"
+            accountBankLabel = ""
+            accountIconName = "creditcard"
+            accountTint = .financeAccent
+        }
+
+        if let selectedDestinationAccount {
+            destinationAccountLabel = selectedDestinationAccount.name
+            destinationBankLabel = selectedDestinationAccount.bankDisplayName
+            destinationIconName = "arrow.down.left.circle"
+            destinationTint = selectedDestinationAccount.accountType.color
+        } else {
+            destinationAccountLabel = "Sin destino"
+            destinationBankLabel = ""
+            destinationIconName = "arrow.down.left.circle"
+            destinationTint = .financeAccent
+        }
+
+        categoryLabel = selectedCategory?.name ?? "Sin categoría"
+        categoryIconName = selectedCategory?.iconName ?? "tag"
+        categoryTint = selectedCategory?.color ?? .secondary
     }
 
     @ViewBuilder
     private var typeSelector: some View {
         if isMovementTypeLocked {
-            Text(MovementType.income.displayName)
-                .font(.caption.weight(.bold))
-                .textCase(.uppercase)
-                .tracking(0.6)
-                .foregroundStyle(tint)
+            movementTypeChip(
+                type: .income,
+                showsChevron: false
+            )
                 .accessibilityLabel("Tipo de movimiento")
                 .accessibilityValue(MovementType.income.displayName)
                 .accessibilityHint("No editable en un reembolso vinculado")
         } else {
-            Menu {
-                ForEach(MovementType.allCases) { option in
-                    Button {
-                        type = option
-                    } label: {
-                        Label(option.displayName, systemImage: option.icon)
-                    }
-                }
+            Button {
+                isShowingTypePicker = true
             } label: {
-                HStack(spacing: 6) {
-                    Text(type.displayName)
-                    Image(systemName: "chevron.down")
-                        .font(.caption2.weight(.bold))
-                }
-                .font(.caption.weight(.bold))
-                .textCase(.uppercase)
-                .tracking(0.6)
-                .foregroundStyle(tint)
-                .contentShape(Capsule())
+                movementTypeChip(type: type, showsChevron: true)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Tipo de movimiento")
             .accessibilityValue(type.displayName)
+            .accessibilityHint("Abre la pantalla de selección de tipo")
         }
     }
 
-    private var accountSelector: some View {
-        Menu {
-            ForEach(accountGroups) { group in
-                Section(group.bankName) {
-                    ForEach(group.accounts, id: \.id) { account in
-                        Button {
-                            selectedAccount = account
-                        } label: {
-                            Label(account.name, systemImage: account.id == selectedAccount?.id ? "checkmark" : accountIconName(for: account))
-                        }
-                    }
-                }
+    private func movementTypeChip(type: MovementType, showsChevron: Bool) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: type.icon)
+                .font(.caption.weight(.semibold))
+            Text(type.displayName)
+            if showsChevron {
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.bold))
             }
-        } label: {
-            quickSelectorLabel(title: accountName, systemImage: type == .transfer ? "arrow.up.right.circle" : "creditcard")
         }
-        .disabled(accounts.isEmpty)
-        .buttonStyle(.plain)
-        .accessibilityLabel(type == .transfer ? "Cuenta origen" : "Cuenta")
-        .accessibilityValue(accountName)
-    }
-
-    private var destinationAccountSelector: some View {
-        Menu {
-            ForEach(accountGroups) { group in
-                let destinationAccounts = group.accounts.filter { $0.id != selectedAccount?.id }
-                if !destinationAccounts.isEmpty {
-                    Section(group.bankName) {
-                        ForEach(destinationAccounts, id: \.id) { account in
-                            Button {
-                                selectedDestinationAccount = account
-                            } label: {
-                                Label(account.name, systemImage: account.id == selectedDestinationAccount?.id ? "checkmark" : accountIconName(for: account))
-                            }
-                        }
-                    }
-                }
-            }
-        } label: {
-            quickSelectorLabel(title: destinationAccountName, systemImage: "arrow.down.left.circle")
-        }
-        .disabled(accounts.isEmpty)
-        .buttonStyle(.plain)
-        .accessibilityLabel("Cuenta destino")
-        .accessibilityValue(destinationAccountName)
-    }
-
-    private var categorySelector: some View {
-        Menu {
-            ForEach(categories, id: \.id) { category in
-                Button {
-                    selectedCategory = category
-                } label: {
-                    Label(category.name, systemImage: category.id == selectedCategory?.id ? "checkmark" : category.iconName)
-                }
-            }
-
-            Divider()
-
-            Button {
-                onCreateCategory()
-            } label: {
-                Label("Crear categoría", systemImage: "plus.circle")
-            }
-        } label: {
-            quickSelectorLabel(title: categoryName, systemImage: selectedCategory?.iconName ?? "tag")
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Categoría")
-        .accessibilityValue(categoryName)
-    }
-
-    private func quickSelectorLabel(title: String, systemImage: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.caption2.weight(.bold))
-            Text(title)
-                .lineLimit(1)
-            Image(systemName: "chevron.down")
-                .font(.caption2.weight(.bold))
-                .opacity(0.62)
-        }
-        .font(.caption.weight(.semibold))
-        .foregroundStyle(.secondary)
+        .font(.caption.weight(.bold))
+        .textCase(.uppercase)
+        .tracking(0.6)
+        .foregroundStyle(.primary)
+        .lineLimit(1)
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(Color.white.opacity(0.08), in: Capsule())
+        .background(type.color.opacity(0.16), in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(type.color.opacity(0.34), lineWidth: 1)
+        )
         .contentShape(Capsule())
     }
 
-    private func accountIconName(for account: BankAccount) -> String {
-        account.isInvestmentAccount ? "chart.line.uptrend.xyaxis" : "building.columns"
+    private var accountSelector: some View {
+        Button {
+            isShowingAccountPicker = true
+        } label: {
+            MovementAccountPickerPill(
+                accountName: accountLabel,
+                bankName: accountBankLabel.isEmpty ? "Selecciona una cuenta" : accountBankLabel,
+                systemImage: accountIconName,
+                tint: accountTint
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!hasActiveAccounts)
+        .accessibilityLabel(type == .transfer ? "Cuenta origen" : "Cuenta")
+        .accessibilityValue("\(accountLabel), \(accountBankLabel)")
+        .accessibilityHint("Abre el selector de cuenta")
+    }
+
+    private var destinationAccountSelector: some View {
+        Button {
+            isShowingDestinationAccountPicker = true
+        } label: {
+            MovementAccountPickerPill(
+                accountName: destinationAccountLabel,
+                bankName: destinationBankLabel.isEmpty ? "Selecciona destino" : destinationBankLabel,
+                systemImage: destinationIconName,
+                tint: destinationTint
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!hasActiveAccounts)
+        .accessibilityLabel("Cuenta destino")
+        .accessibilityValue("\(destinationAccountLabel), \(destinationBankLabel)")
+        .accessibilityHint("Abre el selector de cuenta destino")
+    }
+
+    private var categorySelector: some View {
+        Button {
+            isShowingCategoryPicker = true
+        } label: {
+            MovementCategoryPickerPill(
+                title: categoryLabel,
+                iconName: categoryIconName,
+                tint: categoryTint
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Categoría")
+        .accessibilityValue(categoryLabel)
+        .accessibilityHint("Abre el selector de categoría")
+    }
+}
+
+private extension View {
+    func movementEditorSheetPresentation(isEditing: Bool) -> some View {
+        presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+            .interactiveDismissDisabled(isEditing)
     }
 }
 

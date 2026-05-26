@@ -69,6 +69,12 @@ extension Decimal {
         hidden ? HideBalances.mask : asCurrency(code: code)
     }
 
+    /// Formatea el valor para campos de edición (sin símbolo de moneda).
+    /// Ejemplo: 13.20 -> "13,20" · 1000 -> "1.000,00"
+    func asEditableAmount() -> String {
+        AppNumberFormatter.decimal.string(from: self as NSDecimalNumber) ?? "0,00"
+    }
+
     /// Devuelve true si el valor es negativo.
     var isNegative: Bool {
         return self < 0
@@ -79,5 +85,55 @@ extension Int {
     func grouped() -> String {
         let number = NSNumber(value: self)
         return AppNumberFormatter.integer.string(from: number) ?? "\(self)"
+    }
+}
+
+// MARK: - Editable amounts
+
+/// Parseo y sanitización de importes en campos de texto (`.` miles, `,` decimales).
+enum EditableAmount {
+    /// Convierte texto de campo editable a `Decimal`.
+    /// Ejemplos: `"2.426,83"` → 2426.83 · `"13,20"` → 13.20 · `"1.000"` → 1000
+    static func parse(_ text: String) -> Decimal? {
+        let cleaned = text.replacingOccurrences(of: " ", with: "")
+        guard !cleaned.isEmpty else { return nil }
+
+        if cleaned.contains(",") {
+            let withoutThousands = cleaned.replacingOccurrences(of: ".", with: "")
+            let normalized = withoutThousands.replacingOccurrences(of: ",", with: ".")
+            return Decimal(string: normalized)
+        }
+
+        if cleaned.contains(".") {
+            let withoutThousands = cleaned.replacingOccurrences(of: ".", with: "")
+            return Decimal(string: withoutThousands)
+        }
+
+        return Decimal(string: cleaned)
+    }
+
+    /// Limita la entrada a dígitos, separador de miles `.` y una coma decimal.
+    /// No convierte `.` en `,` para evitar corromper valores como `"2.426,83"`.
+    static func sanitizeInput(_ text: String) -> String {
+        let trimmed = text.replacingOccurrences(of: " ", with: "")
+        var output = ""
+        var hasDecimalSeparator = false
+
+        for character in trimmed {
+            if character.isWholeNumber {
+                output.append(character)
+            } else if character == ".", !hasDecimalSeparator {
+                output.append(character)
+            } else if character == ",", !hasDecimalSeparator {
+                hasDecimalSeparator = true
+                output.append(character)
+            }
+        }
+
+        if output.first == "," {
+            output = "0" + output
+        }
+
+        return output
     }
 }

@@ -24,6 +24,7 @@ struct AccountListView: View {
     @State private var showingDeleteConfirmation = false
     @State private var showingDeleteError = false
     @State private var deleteErrorMessage = ""
+    @State private var navigationPath = NavigationPath()
 
     private var totalBalance: Decimal {
         activeAccounts.reduce(Decimal(0)) { $0 + $1.balance }
@@ -63,7 +64,7 @@ struct AccountListView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             List {
                 Section {
                     VStack(spacing: 14) {
@@ -107,9 +108,12 @@ struct AccountListView: View {
                         .accessibilityElement(children: .combine)
 
                         ForEach(typeAccounts, id: \.id) { account in
-                            NavigationLink(destination: AccountDetailView(account: account)) {
+                            Button {
+                                navigationPath.append(account.id)
+                            } label: {
                                 AccountRowView(account: account)
                             }
+                            .buttonStyle(.plain)
                             .financeGlassClearListRow(insets: EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                             .swipeActions(edge: .leading, allowsFullSwipe: false) {
                                 Button {
@@ -147,6 +151,18 @@ struct AccountListView: View {
                             .financeToolbarIconStyle()
                     }
                     .accessibilityLabel("Añadir cuenta")
+                }
+            }
+            .navigationDestination(for: UUID.self) { accountID in
+                if let account = accounts.first(where: { $0.id == accountID }) {
+                    AccountDetailView(account: account)
+                } else {
+                    FinanceEmptyStateContent(
+                        "Cuenta no disponible",
+                        systemImage: "building.columns",
+                        description: Text("La cuenta seleccionada ya no está disponible")
+                    )
+                    .financeGlassPageBackground()
                 }
             }
             .sheet(isPresented: $showingAddAccount) {

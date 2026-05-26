@@ -69,6 +69,7 @@ struct BudgetsSection: View {
                             .frame(width: 36, height: 36)
                             .background(Color.primary.opacity(0.06), in: Circle())
                     }
+                    .buttonStyle(.plain)
                     .accessibilityLabel("Opciones del presupuesto")
                     let _ = budget
                 } else {

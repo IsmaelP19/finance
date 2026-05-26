@@ -29,6 +29,10 @@ struct MovementDetailView: View {
     @State private var relatedMovementToView: RelatedMovementSelection?
     @State private var hasAnimatedIn = false
     @State private var showingArchivedAccountAlert = false
+    @State private var categoryLabel = "Sin categoría"
+    @State private var categoryIconName = "tag"
+    @State private var categoryTint: Color = .secondary
+    @State private var isShowingCategoryPicker = false
 
     private var linkedReimbursements: [Movement] {
         guard movement.type == .expense else { return [] }
@@ -297,26 +301,35 @@ struct MovementDetailView: View {
 
                     Spacer(minLength: 10)
 
-                    Menu {
-                        ForEach(categories, id: \.id) { category in
-                            Button {
-                                movement.category = category
-                                movement.updatedAt = Date()
-                            } label: {
-                                Label(category.name, systemImage: category.iconName)
-                            }
-                        }
+                    Button {
+                        isShowingCategoryPicker = true
                     } label: {
-                        HStack(spacing: 6) {
-                            CategoryChipView(
-                                name: movement.category?.name ?? "Sin categoría",
-                                iconName: movement.category?.iconName ?? "tag",
-                                color: movement.category?.color ?? .secondary
-                            )
-                            Image(systemName: "chevron.down")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
+                        MovementCategoryPickerPill(
+                            title: categoryLabel,
+                            iconName: categoryIconName,
+                            tint: categoryTint
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Abre el selector de categoría")
+                    .onAppear {
+                        syncCategoryLabelFromMovement()
+                    }
+                    .onChange(of: movement.category?.id) { _, _ in
+                        syncCategoryLabelFromMovement()
+                    }
+                    .sheet(isPresented: $isShowingCategoryPicker) {
+                        MovementCategoryPickerSheet(
+                            selection: Binding(
+                                get: { movement.category },
+                                set: { newCategory in
+                                    movement.category = newCategory
+                                    movement.updatedAt = Date()
+                                    syncCategoryLabelFromMovement()
+                                }
+                            ),
+                            onCreateCategory: {}
+                        )
                     }
                 }
             }
@@ -544,6 +557,12 @@ struct MovementDetailView: View {
             Label(title, systemImage: systemImage)
         }
         .financeGlassSecondaryAction(tint: tint)
+    }
+
+    private func syncCategoryLabelFromMovement() {
+        categoryLabel = movement.category?.name ?? "Sin categoría"
+        categoryIconName = movement.category?.iconName ?? "tag"
+        categoryTint = movement.category?.color ?? .secondary
     }
 
 }

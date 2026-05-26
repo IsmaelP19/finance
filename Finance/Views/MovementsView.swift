@@ -1372,8 +1372,8 @@ struct MovementsView: View {
         guard !normalizedQuery.isEmpty else { return true }
 
         let currencyAmount = movement.amount.asCurrency(code: appCurrencyCode)
-        let rawAmount = NSDecimalNumber(decimal: movement.amount).stringValue
-        let signedRawAmount = NSDecimalNumber(decimal: movement.signedAmount).stringValue
+        let rawAmount = movement.amount.asEditableAmount()
+        let signedRawAmount = movement.signedAmount.asEditableAmount()
 
         let candidates: [String] = [
             movement.concept,
@@ -1388,9 +1388,7 @@ struct MovementsView: View {
             movement.occurredAt.asSpanishDateTime(),
             currencyAmount,
             rawAmount,
-            signedRawAmount,
-            rawAmount.replacingOccurrences(of: ".", with: ","),
-            signedRawAmount.replacingOccurrences(of: ".", with: ",")
+            signedRawAmount
         ]
 
         return candidates

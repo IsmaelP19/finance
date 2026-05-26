@@ -42,87 +42,51 @@ struct AccountDetailView: View {
             }
             .financeGlassClearListRow()
 
-            Section {
-                VStack(alignment: .leading, spacing: 10) {
-                    FinanceGlassSectionHeader(title: "Detalles", systemImage: "info.circle.fill")
-
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
-                        AccountMetricTile(title: "Banco", value: account.bankDisplayName, icon: account.bank?.iconName ?? "building.columns", tint: account.bank?.color ?? account.accountType.color)
-                        AccountMetricTile(title: "Tipo", value: account.accountType.displayName, icon: account.accountType.icon, tint: account.accountType.color)
-                        AccountMetricTile(title: "Moneda", value: appCurrencyCode, icon: "eurosign.circle", tint: .blue)
-                        AccountMetricTile(title: "Actualizada", value: account.updatedAt.asSpanishDateTime(), icon: "clock", tint: .secondary)
-                    }
-                }
-            }
-            .financeGlassClearListRow()
-
             if account.isInvestmentAccount {
                 Section {
-                    if accountSnapshots.isEmpty {
-                        FinanceEmptyStateContent(
-                            "Sin histórico",
-                            systemImage: "chart.line.uptrend.xyaxis",
-                            description: Text("Actualiza inversión y valor de mercado para empezar la serie temporal")
-                        )
-                    } else {
-                        InvestmentHistoryChartView(
-                            snapshots: accountSnapshots,
+                    VStack(alignment: .leading, spacing: 10) {
+                        FinanceGlassSectionHeader(title: "Evolución", systemImage: "chart.line.uptrend.xyaxis")
+
+                        Group {
+                            if accountSnapshots.isEmpty {
+                                FinanceEmptyStateContent(
+                                    "Sin histórico",
+                                    systemImage: "chart.line.uptrend.xyaxis",
+                                    description: Text("Actualiza inversión y valor de mercado para empezar la serie temporal")
+                                )
+                                .padding(.vertical, 22)
+                            } else {
+                                InvestmentHistoryChartView(
+                                    snapshots: accountSnapshots,
+                                    currencyCode: appCurrencyCode,
+                                    hideBalances: hideBalances
+                                )
+                            }
+                        }
+                        .investmentGlassPanel()
+                    }
+                }
+                .financeGlassClearListRow()
+
+                Section {
+                    VStack(alignment: .leading, spacing: 10) {
+                        FinanceGlassSectionHeader(title: "Inversión", systemImage: "chart.pie.fill")
+                        InvestmentSummaryCard(
+                            account: account,
                             currencyCode: appCurrencyCode,
                             hideBalances: hideBalances
                         )
                     }
-                } header: {
-                    FinanceGlassSectionHeader(title: "Evolución", systemImage: "chart.line.uptrend.xyaxis")
                 }
-                .financeGlassFormSection()
-
-                Section {
-                    AccountMetricTile(title: "Invertido", value: account.effectiveInvestedAmount.masked(hideBalances, code: appCurrencyCode), icon: "tray.and.arrow.down.fill", tint: .purple)
-                    AccountMetricTile(title: "Mercado", value: account.effectiveMarketValue.masked(hideBalances, code: appCurrencyCode), icon: "chart.line.uptrend.xyaxis", tint: .blue)
-                    AccountMetricTile(title: "Rentabilidad", value: account.investmentProfit.masked(hideBalances, code: appCurrencyCode), icon: "arrow.up.right", tint: account.investmentProfit.isNegative ? .red : .green)
-
-                    if let returnPercent = account.investmentReturnPercent {
-                        AccountMetricTile(title: "Rentabilidad %", value: returnPercent.asPercent(), icon: "percent", tint: returnPercent.isNegative ? .red : .green)
-                    }
-
-                    if let marketValueUpdatedAt = account.marketValueUpdatedAt {
-                        AccountMetricTile(title: "Mercado actualizado", value: marketValueUpdatedAt.asSpanishDateTime(), icon: "calendar.badge.clock", tint: .secondary)
-                    }
-                } header: {
-                    FinanceGlassSectionHeader(title: "Inversión", systemImage: "chart.pie.fill")
-                }
-                .financeGlassFormSection()
-
-                if !account.isArchived {
-                    Section {
-                    Button {
-                        showingInvestedUpdateSheet = true
-                    } label: {
-                        Label("Actualizar cantidad invertida", systemImage: "plus.circle")
-                    }
-
-                    Button {
-                        showingMarketValueUpdateSheet = true
-                    } label: {
-                        Label("Actualizar valor de mercado", systemImage: "chart.line.uptrend.xyaxis")
-                    }
-                    } header: {
-                        FinanceGlassSectionHeader(title: "Actualización", systemImage: "arrow.triangle.2.circlepath")
-                    }
-                    .financeGlassFormSection()
-                }
+                .financeGlassClearListRow()
             }
 
             // Notas
             if !account.notes.isEmpty {
                 Section {
-                    Text(account.notes)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                } header: {
-                    FinanceGlassSectionHeader(title: "Notas", systemImage: "note.text")
+                    AccountNotesCard(notes: account.notes)
                 }
-                .financeGlassFormSection()
+                .financeGlassClearListRow()
             }
 
             if account.isArchived {
@@ -134,30 +98,23 @@ struct AccountDetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 .financeGlassFormSection()
-            } else {
-                // Acciones
-                Section {
-                    Button {
-                        showingEditSheet = true
-                    } label: {
-                        Label("Editar cuenta", systemImage: "pencil")
-                    }
-
-                    Button(role: .destructive) {
-                        showingDeleteConfirmation = true
-                    } label: {
-                        Label("Eliminar cuenta", systemImage: "trash")
-                            .foregroundStyle(.red)
-                    }
-                }
-                .financeGlassFormSection()
             }
         }
         .financeGlassListContainer()
         .navigationTitle("Detalle")
         .navigationBarTitleDisplayMode(.inline)
+        .safeAreaInset(edge: .bottom) {
+            if account.isInvestmentAccount && !account.isArchived {
+                InvestmentUpdateFloatingBar(
+                    onUpdateInvested: { showingInvestedUpdateSheet = true },
+                    onUpdateMarket: { showingMarketValueUpdateSheet = true }
+                )
+                .padding(.horizontal, 44)
+                .padding(.bottom, 10)
+            }
+        }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {
                     hideBalances.toggle()
                 } label: {
@@ -165,6 +122,32 @@ struct AccountDetailView: View {
                         .financeToolbarIconStyle()
                 }
                 .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
+
+                if !account.isArchived {
+                    Menu {
+                        Button {
+                            showingEditSheet = true
+                        } label: {
+                            Label("Editar cuenta", systemImage: "pencil")
+                        }
+
+                        Button(role: .destructive) {
+                            showingDeleteConfirmation = true
+                        } label: {
+                            Label {
+                                Text("Eliminar cuenta")
+                            } icon: {
+                                Image(systemName: "trash")
+                                    .foregroundStyle(.red)
+                            }
+                        }
+                        .tint(.red)
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .financeToolbarIconStyle()
+                    }
+                    .accessibilityLabel("Acciones de cuenta")
+                }
             }
         }
         .sheet(isPresented: $showingEditSheet) {
@@ -286,50 +269,114 @@ private struct AccountDetailHero: View {
     let currencyCode: String
     let hideBalances: Bool
 
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     private var accent: Color { account.bank?.color ?? account.accountType.color }
+    private var typeTint: Color { account.accountType.color }
     private var iconName: String { account.bank?.iconName ?? account.accountType.icon }
+    private var balanceText: String { account.balance.masked(hideBalances, code: currencyCode) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            HStack(alignment: .top) {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .center, spacing: 16) {
+                Image(systemName: iconName)
+                    .font(.system(size: 25, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 62, height: 62)
+                    .background(accent, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .accessibilityHidden(true)
+
                 VStack(alignment: .leading, spacing: 6) {
                     Text(account.accountType.displayName)
-                        .font(.caption.weight(.bold))
+                        .font(.caption.weight(.semibold))
                         .textCase(.uppercase)
                         .tracking(0.6)
-                        .foregroundStyle(accent)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(typeTint.opacity(0.16), in: Capsule())
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(typeTint.opacity(0.32), lineWidth: 1)
+                        )
+
                     Text(account.name)
                         .font(.title2.weight(.bold))
+                        .foregroundStyle(.primary)
                         .lineLimit(2)
                     Text(account.bankDisplayName)
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.secondary)
+                        .lineLimit(2)
                 }
-
-                Spacer()
-
-                Image(systemName: iconName)
-                    .font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 62, height: 62)
-                    .background(LinearGradient(colors: [accent, account.accountType.color.opacity(0.76)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                Spacer(minLength: 0)
             }
 
             VStack(alignment: .leading, spacing: 5) {
                 Text("Saldo disponible")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-                Text(account.balance.masked(hideBalances, code: currencyCode))
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
+                Text(balanceText)
+                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 30 : 38, weight: .bold, design: .rounded))
                     .minimumScaleFactor(0.72)
+                    .lineLimit(2)
                     .foregroundStyle(account.balance.isNegative ? .red : .primary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+            )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .financeGlassColorCard(
-            gradient: LinearGradient(colors: [accent.opacity(0.22), account.accountType.color.opacity(0.13), Color.white.opacity(0.05)], startPoint: .topLeading, endPoint: .bottomTrailing),
+            gradient: LinearGradient(colors: [accent.opacity(0.24), account.accountType.color.opacity(0.12), Color.primary.opacity(0.035)], startPoint: .topLeading, endPoint: .bottomTrailing),
             cornerRadius: FinanceGlassTokens.Radius.hero
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(account.name), \(account.bankDisplayName), \(account.accountType.displayName), saldo \(hideBalances ? "oculto" : balanceText), actualizada \(account.updatedAt.asSpanishDateTime())")
+    }
+}
+
+private struct AccountNotesCard: View {
+    let notes: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "note.text")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.blue)
+                    .accessibilityHidden(true)
+
+                Text("Notas")
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(notes)
+                .font(.body.weight(.medium))
+                .foregroundStyle(.primary)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Notas, \(notes)")
     }
 }
 
@@ -348,13 +395,376 @@ private struct AccountMetricTile: View {
                     .foregroundStyle(.secondary)
                 Text(value)
                     .font(.subheadline.weight(.bold))
-                    .foregroundStyle(tint)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.78)
+                    .foregroundStyle(.primary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .financeInsetCard(cornerRadius: 18)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(title), \(value)")
+    }
+}
+
+private struct InvestmentSummaryCard: View {
+    let account: BankAccount
+    let currencyCode: String
+    let hideBalances: Bool
+
+    private var profitTint: Color {
+        account.investmentProfit.isNegative ? .red : .green
+    }
+
+    private var returnPercentText: String {
+        account.investmentReturnPercent?.asPercent() ?? "—"
+    }
+
+    var body: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 10) {
+                InvestmentSummaryMetric(
+                    title: "Invertido",
+                    value: account.effectiveInvestedAmount.masked(hideBalances, code: currencyCode),
+                    systemImage: "tray.and.arrow.down.fill",
+                    tint: .purple
+                )
+
+                InvestmentSummaryMetric(
+                    title: "Mercado",
+                    value: account.effectiveMarketValue.masked(hideBalances, code: currencyCode),
+                    systemImage: "chart.line.uptrend.xyaxis",
+                    tint: .blue
+                )
+            }
+
+            HStack(spacing: 10) {
+                InvestmentSummaryMetric(
+                    title: "Rentabilidad",
+                    value: account.investmentProfit.masked(hideBalances, code: currencyCode),
+                    systemImage: account.investmentProfit.isNegative ? "arrow.down.right" : "arrow.up.right",
+                    tint: profitTint
+                )
+
+                InvestmentSummaryMetric(
+                    title: "Rentabilidad %",
+                    value: hideBalances ? "••••" : returnPercentText,
+                    systemImage: "percent",
+                    tint: profitTint
+                )
+            }
+
+            if let marketValueUpdatedAt = account.marketValueUpdatedAt {
+                HStack(spacing: 10) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 30, height: 30)
+                        .background(Color.secondary.opacity(0.12), in: Circle())
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Mercado actualizado")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Text(marketValueUpdatedAt.asSpanishDateTime())
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 2)
+                .padding(.horizontal, 2)
+            }
+        }
+        .investmentGlassPanel()
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct InvestmentSummaryMetric: View {
+    let title: String
+    let value: String
+    let systemImage: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            Image(systemName: systemImage)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 30, height: 30)
+                .background(tint.opacity(0.14), in: Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.headline.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.82)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+    }
+}
+
+private struct InvestmentUpdateFloatingBar: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    @State private var highlightedSegment: InvestmentFloatingSegment?
+
+    let onUpdateInvested: () -> Void
+    let onUpdateMarket: () -> Void
+
+    private let barHeight: CGFloat = 48
+    private let highlightInset: CGFloat = 0.8
+
+    var body: some View {
+        buttonContent
+            .frame(height: barHeight)
+            .padding(3)
+            .frame(maxWidth: 344)
+            .background {
+                if #available(iOS 26, *) {
+                    GlassEffectContainer(spacing: 0) {
+                        Capsule()
+                            .fill(.clear)
+                            .glassEffect(.regular, in: Capsule())
+                    }
+                } else {
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .overlay(
+                            Capsule()
+                                .fill(colorScheme == .dark ? Color.white.opacity(0.04) : Color.white.opacity(0.18))
+                        )
+                }
+            }
+            .overlay {
+                Capsule()
+                    .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.18) : Color.primary.opacity(0.12), lineWidth: 0.75)
+            }
+            .overlay {
+                Capsule()
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(colorScheme == .dark ? 0.14 : 0.28),
+                                .clear
+                            ],
+                            startPoint: .top,
+                            endPoint: .center
+                        )
+                    )
+                    .padding(1.2)
+                    .blendMode(.screen)
+                    .allowsHitTesting(false)
+            }
+    }
+
+    private var buttonContent: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let segmentWidth = width / 2
+
+            ZStack(alignment: .leading) {
+                if let highlightedSegment {
+                    investmentFloatingHighlight
+                        .frame(width: max(0, segmentWidth - highlightInset * 2))
+                        .padding(.vertical, highlightInset)
+                        .offset(x: highlightedSegment.highlightOffset(segmentWidth: segmentWidth, inset: highlightInset))
+                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+
+                HStack(spacing: 0) {
+                    InvestmentFloatingSegmentLabel(
+                        title: "Invertido",
+                        systemImage: "plus",
+                        accessibilityLabel: "Actualizar cantidad invertida",
+                        action: onUpdateInvested
+                    )
+
+                    InvestmentFloatingSegmentLabel(
+                        title: "Mercado",
+                        systemImage: "chart.line.uptrend.xyaxis",
+                        accessibilityLabel: "Actualizar valor de mercado",
+                        action: onUpdateMarket
+                    )
+                }
+
+                centerDivider
+            }
+            .contentShape(Capsule())
+            .gesture(pressTransferGesture(width: width))
+            .animation(.snappy(duration: 0.18), value: highlightedSegment)
+        }
+    }
+
+    private var investmentFloatingHighlight: some View {
+        Capsule(style: .continuous)
+            .fill(.clear)
+            .background {
+                if #available(iOS 26, *) {
+                    Capsule(style: .continuous)
+                        .fill(.clear)
+                        .glassEffect(
+                            .regular
+                                .tint(Color.white.opacity(colorScheme == .dark ? 0.10 : 0.18))
+                                .interactive(),
+                            in: Capsule(style: .continuous)
+                        )
+                } else {
+                    Capsule(style: .continuous)
+                        .fill(.ultraThinMaterial)
+                }
+            }
+            .overlay {
+                Capsule(style: .continuous)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(colorScheme == .dark ? 0.22 : 0.46),
+                                Color.financeAccent.opacity(colorScheme == .dark ? 0.045 : 0.035),
+                                Color.white.opacity(colorScheme == .dark ? 0.035 : 0.12)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .blendMode(.screen)
+            }
+            .overlay {
+                Capsule(style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [
+                                Color.white.opacity(colorScheme == .dark ? 0.38 : 0.72),
+                                Color.white.opacity(colorScheme == .dark ? 0.10 : 0.22),
+                                Color.primary.opacity(colorScheme == .dark ? 0.16 : 0.08)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 0.75
+                    )
+            }
+            .compositingGroup()
+    }
+
+    private var centerDivider: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    colors: [
+                        .clear,
+                        colorScheme == .dark ? Color.white.opacity(0.24) : Color.primary.opacity(0.18),
+                        .clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .frame(width: 1)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private func pressTransferGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { value in
+                highlightedSegment = InvestmentFloatingSegment(locationX: value.location.x, width: width)
+            }
+            .onEnded { value in
+                let endedSegment = InvestmentFloatingSegment(locationX: value.location.x, width: width)
+
+                switch endedSegment {
+                case .invested:
+                    onUpdateInvested()
+                case .market:
+                    onUpdateMarket()
+                case nil:
+                    break
+                }
+
+                highlightedSegment = nil
+            }
+    }
+}
+
+private enum InvestmentFloatingSegment {
+    case invested
+    case market
+
+    init?(locationX: CGFloat, width: CGFloat) {
+        guard width > 0, locationX >= 0, locationX <= width else { return nil }
+        self = locationX < width / 2 ? .invested : .market
+    }
+
+    func highlightOffset(segmentWidth: CGFloat, inset: CGFloat) -> CGFloat {
+        switch self {
+        case .invested:
+            inset
+        case .market:
+            segmentWidth + inset
+        }
+    }
+}
+
+private struct InvestmentGlassPanelModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 22, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.10), lineWidth: 1)
+            )
+    }
+}
+
+private struct InvestmentFloatingSegmentLabel: View {
+    let title: String
+    let systemImage: String
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    var body: some View {
+        Label(title, systemImage: systemImage)
+            .font(.subheadline.weight(.semibold))
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction {
+                action()
+            }
+    }
+}
+
+private extension View {
+    func investmentGlassPanel() -> some View {
+        modifier(InvestmentGlassPanelModifier())
     }
 }
 
@@ -424,10 +834,10 @@ private struct InvestmentValueUpdateSheet: View {
                 }
             }
             .onAppear {
-                valueText = formatDecimal(initialValue)
+                valueText = initialValue.asEditableAmount()
             }
             .onChange(of: valueText) { _, newValue in
-                let sanitized = sanitizeDecimalInput(newValue)
+                let sanitized = EditableAmount.sanitizeInput(newValue)
                 if sanitized != newValue {
                     valueText = sanitized
                 }
@@ -441,58 +851,13 @@ private struct InvestmentValueUpdateSheet: View {
     }
 
     private func save() {
-        let parsed = parseDecimal(valueText)
-        guard parsed >= 0 else {
+        guard let parsed = EditableAmount.parse(valueText), parsed >= 0 else {
             showingAlert = true
             return
         }
 
         onSave(parsed, snapshotDate)
         dismiss()
-    }
-
-    private func parseDecimal(_ text: String) -> Decimal {
-        let cleaned = text
-            .replacingOccurrences(of: " ", with: "")
-            .replacingOccurrences(of: ",", with: ".")
-        return Decimal(string: cleaned) ?? -1
-    }
-
-    private func formatDecimal(_ value: Decimal) -> String {
-        let formatter = NumberFormatter()
-        formatter.numberStyle = .decimal
-        formatter.locale = Locale(identifier: "es_ES")
-        formatter.maximumFractionDigits = 2
-        formatter.minimumFractionDigits = 0
-        formatter.groupingSeparator = ""
-        return formatter.string(from: value as NSDecimalNumber) ?? "\(value)"
-    }
-
-    private func sanitizeDecimalInput(_ text: String) -> String {
-        let normalized = text
-            .replacingOccurrences(of: " ", with: "")
-            .replacingOccurrences(of: ".", with: ",")
-
-        var output = ""
-        var hasSeparator = false
-
-        for character in normalized {
-            if character.isWholeNumber {
-                output.append(character)
-                continue
-            }
-
-            if character == ",", !hasSeparator {
-                hasSeparator = true
-                output.append(character)
-            }
-        }
-
-        if output.first == "," {
-            output = "0" + output
-        }
-
-        return output
     }
 }
 

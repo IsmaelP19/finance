@@ -16,9 +16,8 @@ private struct DraftItem: Identifiable {
     var amountText: String
 
     var parsedAmount: Decimal? {
-        let normalized = amountText.replacingOccurrences(of: ",", with: ".")
-        guard let v = Decimal(string: normalized), v > 0 else { return nil }
-        return v
+        guard let value = EditableAmount.parse(amountText), value > 0 else { return nil }
+        return value
     }
 }
 
@@ -61,9 +60,8 @@ struct AddBudgetView: View {
     // MARK: - Derived values
 
     private var parsedTotal: Decimal? {
-        let normalized = totalText.replacingOccurrences(of: ",", with: ".")
-        guard let v = Decimal(string: normalized), v > 0 else { return nil }
-        return v
+        guard let value = EditableAmount.parse(totalText), value > 0 else { return nil }
+        return value
     }
 
     private var allocatedSum: Decimal {
@@ -302,7 +300,7 @@ struct AddBudgetView: View {
 
     private func loadExistingData() {
         guard let b = budgetToEdit else { return }
-        totalText   = formatAmount(b.totalAmount)
+        totalText   = b.totalAmount.asEditableAmount()
         notifyAt80  = b.notifyAt80Percent
         notifyAt100 = b.notifyAt100Percent
         isActive    = b.isActive
@@ -310,12 +308,8 @@ struct AddBudgetView: View {
             .sorted { ($0.createdAt) < ($1.createdAt) }
             .compactMap { item in
                 guard let cat = item.category else { return nil }
-                return DraftItem(category: cat, amountText: formatAmount(item.allocatedAmount))
+                return DraftItem(category: cat, amountText: item.allocatedAmount.asEditableAmount())
             }
-    }
-
-    private func formatAmount(_ value: Decimal) -> String {
-        NSDecimalNumber(decimal: value).stringValue.replacingOccurrences(of: ".", with: ",")
     }
 
     // MARK: - Save
