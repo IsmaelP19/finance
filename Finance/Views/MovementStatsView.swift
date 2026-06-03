@@ -576,7 +576,7 @@ struct MovementStatsView: View {
     }
 
     private var patrimonyEvolutionPoints: [PatrimonySeriesPoint] {
-        guard !activeAccounts.isEmpty else { return [] }
+        guard !accounts.isEmpty else { return [] }
 
         let interval = monthlyAnalysisInterval
         var pointDates = monthStarts(in: interval)
@@ -1596,8 +1596,14 @@ struct MovementStatsView: View {
     }
 
     private func patrimonyTotal(at date: Date) -> Decimal {
-        activeAccounts.reduce(Decimal(0)) { partial, account in
+        patrimonyAccounts(at: date).reduce(Decimal(0)) { partial, account in
             partial + historicalBalance(of: account, at: date)
+        }
+    }
+
+    private func patrimonyAccounts(at date: Date) -> [BankAccount] {
+        accounts.filter { account in
+            account.isVisibleInPatrimony(at: date)
         }
     }
 

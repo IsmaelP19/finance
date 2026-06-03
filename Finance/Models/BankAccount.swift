@@ -112,6 +112,19 @@ final class BankAccount {
         archivedAt = archivedAt ?? date
         updatedAt = date
     }
+
+    func isVisibleInPatrimony(at date: Date) -> Bool {
+        guard date >= createdAt else {
+            return false
+        }
+
+        guard isArchived else {
+            return true
+        }
+
+        let effectiveArchivedAt = archivedAt ?? updatedAt
+        return date <= effectiveArchivedAt
+    }
 }
 
 // MARK: - Codable DTO para Export/Import JSON

@@ -545,22 +545,18 @@ private struct InvestmentUpdateFloatingBar: View {
                 } else {
                     Capsule()
                         .fill(.ultraThinMaterial)
-                        .overlay(
-                            Capsule()
-                                .fill(colorScheme == .dark ? Color.white.opacity(0.04) : Color.white.opacity(0.18))
-                        )
                 }
             }
             .overlay {
                 Capsule()
-                    .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.18) : Color.primary.opacity(0.12), lineWidth: 0.75)
+                    .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.075) : Color.white.opacity(0.13), lineWidth: 0.5)
             }
             .overlay {
                 Capsule()
                     .fill(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(colorScheme == .dark ? 0.14 : 0.28),
+                                Color.white.opacity(colorScheme == .dark ? 0.055 : 0.095),
                                 .clear
                             ],
                             startPoint: .top,

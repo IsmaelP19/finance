@@ -12,6 +12,7 @@ enum DataIntegrityRepairService {
     nonisolated static func repairBeforeOpeningModelContainer() {
         guard let storeURL else { return }
         nullifyDanglingMovementAccountReferences(at: storeURL)
+        backfillMissingArchivedAccountDates(at: storeURL)
     }
 
     nonisolated private static var storeURL: URL? {
@@ -48,6 +49,57 @@ enum DataIntegrityRepairService {
                 in: database
             )
         }
+    }
+
+    nonisolated private static func backfillMissingArchivedAccountDates(at storeURL: URL) {
+        guard FileManager.default.fileExists(atPath: storeURL.path) else { return }
+
+        var database: OpaquePointer?
+        guard sqlite3_open_v2(storeURL.path, &database, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else {
+            sqlite3_close(database)
+            return
+        }
+        defer { sqlite3_close(database) }
+
+        guard let database,
+              let accountTable = findTable(namedLike: "BANKACCOUNT", in: database)
+        else { return }
+
+        let accountColumns = Set(tableColumns(for: accountTable, in: database).map { $0.uppercased() })
+        guard accountColumns.contains("ZISARCHIVED"),
+              accountColumns.contains("ZARCHIVEDAT")
+        else { return }
+
+        let fallbackColumn: String
+        if accountColumns.contains("ZUPDATEDAT") {
+            fallbackColumn = "ZUPDATEDAT"
+        } else if accountColumns.contains("ZCREATEDAT") {
+            fallbackColumn = "ZCREATEDAT"
+        } else {
+            return
+        }
+
+        backfillMissingArchivedAccountDates(
+            accountTable: accountTable,
+            fallbackColumn: fallbackColumn,
+            in: database
+        )
+    }
+
+    nonisolated private static func backfillMissingArchivedAccountDates(
+        accountTable: String,
+        fallbackColumn: String,
+        in database: OpaquePointer
+    ) {
+        let sql = """
+        UPDATE \(quotedIdentifier(accountTable))
+        SET \(quotedIdentifier("ZARCHIVEDAT")) = \(quotedIdentifier(fallbackColumn))
+        WHERE \(quotedIdentifier("ZISARCHIVED")) != 0
+        AND \(quotedIdentifier("ZARCHIVEDAT")) IS NULL
+        AND \(quotedIdentifier(fallbackColumn)) IS NOT NULL
+        """
+
+        _ = execute(sql, in: database)
     }
 
     nonisolated private static func nullifyDanglingReference(
