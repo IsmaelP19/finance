@@ -90,6 +90,8 @@ struct BudgetsSection: View {
                 BudgetSummaryCard(budget: budget, movements: movements, currencyCode: currencyCode)
                     .contentShape(Rectangle())
                     .onTapGesture { showingDetail = true }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityHint("Abre el detalle del presupuesto")
             } else {
                 emptyState
             }
@@ -200,25 +202,10 @@ private struct BudgetSummaryCard: View {
     }
 
     var body: some View {
+        let forecast = MonthlyBudgetForecast(budget: budget, movements: movements)
+
         VStack(alignment: .leading, spacing: 16) {
-            if isAlerting {
-                HStack(spacing: 8) {
-                    Image(systemName: isOverBudget ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
-                        .font(.caption)
-                    Text(isOverBudget ? "Presupuesto superado" : "Alerta de presupuesto")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                    Spacer()
-                    Text(isOverBudget ? "Revisa tus categorias" : "Has alcanzado el 80 %")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                .foregroundStyle(isOverBudget ? Color.red : Color.orange)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background((isOverBudget ? Color.red : Color.orange).opacity(colorScheme == .dark ? 0.16 : 0.12))
-                .clipShape(Capsule())
-            }
+            forecastStatusPill(forecast)
 
             HStack(alignment: .top, spacing: 14) {
                 VStack(alignment: .leading, spacing: 5) {
@@ -251,17 +238,30 @@ private struct BudgetSummaryCard: View {
                 .frame(minWidth: 92, maxWidth: 124, alignment: .trailing)
             }
 
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(Color.secondary.opacity(0.15))
-                    Capsule()
-                        .fill(progressColor)
-                        .frame(width: max(0, geo.size.width * progress))
-                        .animation(.easeInOut(duration: 0.4), value: progress)
+            HStack(alignment: .center, spacing: 14) {
+                MonthlyBudgetMiniChart(forecast: forecast, tint: progressColor)
+                    .frame(minWidth: 96, idealWidth: 128, maxWidth: 150)
+                    .frame(height: 54)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Previsión final")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Text(forecast.projectedFinalSpend.masked(hideBalances, code: currencyCode))
+                        .font(.system(.headline, design: .rounded).weight(.medium))
+                        .foregroundStyle(forecast.status.tint)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                    Text(forecast.shortMessage)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(height: 10)
+
+            BudgetProgressBar(progress: progress, tint: progressColor, height: 10)
 
             HStack(spacing: 10) {
                 Text("\(Int(progress * 100)) % consumido")
@@ -282,6 +282,10 @@ private struct BudgetSummaryCard: View {
                         .foregroundStyle(.orange)
                 }
 
+                Text("Ver detalle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary.opacity(0.72))
+
                 Image(systemName: "chevron.right")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -300,6 +304,25 @@ private struct BudgetSummaryCard: View {
                     lineWidth: 1
                 )
         )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(forecast.accessibilitySummary(currencyCode: currencyCode, hidesAmounts: hideBalances))
+    }
+
+    private func forecastStatusPill(_ forecast: MonthlyBudgetForecast) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: forecast.status.systemImage)
+                .font(.caption)
+            Text(forecast.status.title)
+                .font(.caption.weight(.semibold))
+            Spacer(minLength: 8)
+            Text(forecast.reliabilityLabel)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+        }
+        .foregroundStyle(forecast.status.tint)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(forecast.status.tint.opacity(colorScheme == .dark ? 0.16 : 0.11), in: Capsule())
     }
 }
 
@@ -338,6 +361,11 @@ struct BudgetDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     globalCard
+                    MonthlyBudgetForecastDetailSection(
+                        forecast: MonthlyBudgetForecast(budget: budget, movements: movements),
+                        currencyCode: currencyCode,
+                        hideBalances: hideBalances
+                    )
                     categoryBreakdown
                 }
                 .padding()
@@ -459,6 +487,485 @@ struct BudgetDetailView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Monthly Forecast Presentation
+
+private struct MonthlyBudgetForecast {
+    enum Status {
+        case noBudget
+        case noSpending
+        case good
+        case tight
+        case warning(day: Int)
+        case exceeded
+
+        var title: String {
+            switch self {
+            case .noBudget: return "Sin presupuesto"
+            case .noSpending: return "Sin gastos"
+            case .good: return "Vas bien"
+            case .tight: return "Vas justo"
+            case .warning: return "Cuidado"
+            case .exceeded: return "Ya has superado"
+            }
+        }
+
+        var systemImage: String {
+            switch self {
+            case .noBudget: return "slash.circle.fill"
+            case .noSpending: return "calendar.badge.clock"
+            case .good: return "checkmark.seal.fill"
+            case .tight: return "gauge.medium"
+            case .warning: return "exclamationmark.triangle.fill"
+            case .exceeded: return "exclamationmark.octagon.fill"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .noBudget: return .secondary
+            case .noSpending: return .blue
+            case .good: return .green
+            case .tight: return .yellow
+            case .warning: return .orange
+            case .exceeded: return .red
+            }
+        }
+    }
+
+    let spent: Decimal
+    let budgetAmount: Decimal
+    let projectedFinalSpend: Decimal
+    let dailyRecommendation: Decimal
+    let dayOfMonth: Int
+    let daysInMonth: Int
+    let expenseCount: Int
+    let reliability: SpendingForecastReliability
+    let forecastBasis: SpendingForecastBasis
+    let historicalMonthsUsed: Int
+    let status: Status
+    let cumulativePoints: [Double]
+    let idealPoints: [Double]
+    let projectedPoints: [Double]
+
+    init(budget: Budget, movements: [Movement], calendar: Calendar = .current, now: Date = Date()) {
+        let serviceForecast = BudgetService.forecast(for: budget, movements: movements, asOf: now)
+        let daysRange = calendar.range(of: .day, in: .month, for: now) ?? 1..<31
+        let daysInMonth = daysRange.count
+        let dayOfMonth = min(max(calendar.component(.day, from: now), 1), daysInMonth)
+        let categoryIDs = Set(budget.items.compactMap { $0.category?.id })
+        let monthExpenses = movements.filter { movement in
+            guard movement.type == .expense else { return false }
+            guard let categoryID = movement.category?.id, categoryIDs.contains(categoryID) else { return false }
+            guard movement.occurredAt <= now else { return false }
+            return calendar.isDate(movement.occurredAt, equalTo: now, toGranularity: .month)
+        }
+
+        let spent = serviceForecast.spentSoFar
+        let projectedFinalSpend = serviceForecast.projectedMonthEndSpend
+        let dailyRecommendation = serviceForecast.recommendedDailySpend ?? 0
+
+        self.spent = spent
+        self.budgetAmount = budget.totalAmount
+        self.projectedFinalSpend = max(projectedFinalSpend, spent)
+        self.dailyRecommendation = dailyRecommendation
+        self.dayOfMonth = dayOfMonth
+        self.daysInMonth = daysInMonth
+        self.expenseCount = monthExpenses.count
+        self.reliability = serviceForecast.reliability
+        self.forecastBasis = serviceForecast.basis
+        self.historicalMonthsUsed = serviceForecast.historicalMonthsUsed
+
+        switch serviceForecast.status {
+        case .noBudget:
+            self.status = .noBudget
+        case .noSpending:
+            self.status = .noSpending
+        case .exceeded:
+            self.status = .exceeded
+        case .risk:
+            let depletionDay = serviceForecast.estimatedDepletionDate.map { calendar.component(.day, from: $0) } ?? dayOfMonth
+            self.status = .warning(day: min(max(depletionDay, dayOfMonth), daysInMonth))
+        case .tight:
+            self.status = .tight
+        case .good:
+            self.status = .good
+        }
+
+        var dailyTotals = Array(repeating: Decimal(0), count: daysInMonth)
+        for movement in monthExpenses {
+            let day = min(max(calendar.component(.day, from: movement.occurredAt), 1), daysInMonth)
+            dailyTotals[day - 1] += movement.statsExpenseAmount
+        }
+
+        var running = Decimal(0)
+        var cumulative = [Double]()
+        for index in 0..<daysInMonth {
+            if index < dayOfMonth {
+                running += dailyTotals[index]
+                cumulative.append((running as NSDecimalNumber).doubleValue)
+            } else {
+                cumulative.append(.nan)
+            }
+        }
+        self.cumulativePoints = cumulative
+
+        self.idealPoints = (1...daysInMonth).map { day in
+            ((budget.totalAmount * Decimal(day) / Decimal(daysInMonth)) as NSDecimalNumber).doubleValue
+        }
+
+        let spentDouble = (spent as NSDecimalNumber).doubleValue
+        let projectedDouble = (max(projectedFinalSpend, spent) as NSDecimalNumber).doubleValue
+        self.projectedPoints = (1...daysInMonth).map { day in
+            if day <= dayOfMonth { return cumulative[max(day - 1, 0)] }
+            let remainingSpan = max(daysInMonth - dayOfMonth, 1)
+            let progress = Double(day - dayOfMonth) / Double(remainingSpan)
+            return spentDouble + ((projectedDouble - spentDouble) * progress)
+        }
+
+    }
+
+    var shortMessage: String {
+        switch status {
+        case .noBudget:
+            return "Configura un presupuesto para activar la previsión."
+        case .noSpending:
+            return "Aún no hay gastos este mes."
+        case .good:
+            return "Tu ritmo encaja con el presupuesto."
+        case .tight:
+            return "Vas justo, conviene moderar el gasto diario."
+        case .warning(let day):
+            return "A este ritmo se agotará alrededor del día \(day)."
+        case .exceeded:
+            return "El presupuesto mensual ya está superado."
+        }
+    }
+
+    var fullMessage: String {
+        let suffix = reliability == .low
+            ? " Es una estimación inicial porque el mes acaba de empezar."
+            : ""
+
+        switch status {
+        case .noBudget:
+            return "Sin presupuesto: define una cantidad mensual para calcular previsiones."
+        case .noSpending:
+            return "Sin gastos: todavía no hay datos de gasto este mes para proyectar el cierre."
+        case .good:
+            return "Vas bien: la previsión se mantiene dentro del presupuesto mensual." + suffix
+        case .tight:
+            return "Vas justo: la previsión queda muy cerca del presupuesto mensual." + suffix
+        case .warning(let day):
+            return "Cuidado, a este ritmo agotarás el presupuesto alrededor del día \(day)." + suffix
+        case .exceeded:
+            return "Ya has superado el presupuesto mensual. Revisa gastos y categorías."
+        }
+    }
+
+    var reliabilityLabel: String {
+        switch status {
+        case .noBudget:
+            return "Sin datos"
+        case .noSpending:
+            return "Esperando gastos"
+        default:
+            if forecastBasis == .historicalAverage {
+                return "Basado en \(historicalMonthsUsed) meses recientes"
+            }
+
+            switch reliability {
+            case .low:
+                return "Estimación inicial"
+            case .medium, .high:
+                return "Basado en tu ritmo actual"
+            }
+        }
+    }
+
+    func accessibilitySummary(currencyCode: String, hidesAmounts: Bool) -> String {
+        "Previsión mensual. \(fullMessage) Gastado \(spent.masked(hidesAmounts, code: currencyCode)) de \(budgetAmount.masked(hidesAmounts, code: currencyCode)). Previsión final \(projectedFinalSpend.masked(hidesAmounts, code: currencyCode))."
+    }
+}
+
+private struct BudgetProgressBar: View {
+    let progress: Double
+    let tint: Color
+    var height: CGFloat = 8
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.15))
+                Capsule()
+                    .fill(tint)
+                    .frame(width: max(0, geo.size.width * min(progress, 1)))
+                    .animation(.easeInOut(duration: 0.4), value: progress)
+            }
+        }
+        .frame(height: height)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct MonthlyBudgetMiniChart: View {
+    let forecast: MonthlyBudgetForecast
+    let tint: Color
+    var maxValueOverride: Double?
+
+    var body: some View {
+        GeometryReader { _ in
+            let maxValue = maxValueOverride ?? max(
+                (forecast.budgetAmount as NSDecimalNumber).doubleValue,
+                forecast.projectedPoints.compactMap { $0.isNaN ? nil : $0 }.max() ?? 1,
+                1
+            )
+            Canvas { context, size in
+                let rect = CGRect(origin: .zero, size: size)
+                drawLine(points: forecast.idealPoints, in: rect, maxValue: maxValue, context: &context, color: .secondary.opacity(0.42), dashed: true)
+                drawLine(points: forecast.projectedPoints, in: rect, maxValue: maxValue, context: &context, color: tint.opacity(0.46), dashed: true)
+                drawLine(points: forecast.cumulativePoints, in: rect, maxValue: maxValue, context: &context, color: tint, dashed: false)
+            }
+            .overlay(alignment: .bottomLeading) {
+                Capsule()
+                    .fill(Color.secondary.opacity(0.18))
+                    .frame(height: 1)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Mini gráfica de previsión mensual")
+        .accessibilityValue(forecast.fullMessage)
+    }
+
+    private func drawLine(
+        points: [Double],
+        in rect: CGRect,
+        maxValue: Double,
+        context: inout GraphicsContext,
+        color: Color,
+        dashed: Bool
+    ) {
+        guard points.count > 1 else { return }
+        var path = Path()
+        var didMove = false
+        for (index, value) in points.enumerated() where !value.isNaN {
+            let x = rect.minX + (CGFloat(index) / CGFloat(max(points.count - 1, 1)) * rect.width)
+            let normalized = min(max(value / maxValue, 0), 1)
+            let y = rect.maxY - (CGFloat(normalized) * rect.height)
+            let point = CGPoint(x: x, y: y)
+            if didMove {
+                path.addLine(to: point)
+            } else {
+                path.move(to: point)
+                didMove = true
+            }
+        }
+        context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: dashed ? 1.5 : 2.4, lineCap: .round, lineJoin: .round, dash: dashed ? [4, 4] : []))
+    }
+}
+
+private struct MonthlyBudgetForecastDetailSection: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let forecast: MonthlyBudgetForecast
+    let currencyCode: String
+    let hideBalances: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Previsión mensual", systemImage: forecast.status.systemImage)
+                .font(.headline)
+                .foregroundStyle(.primary)
+                .accessibilityAddTraits(.isHeader)
+
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: forecast.status.systemImage)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(forecast.status.tint)
+                        .frame(width: 42, height: 42)
+                        .background(forecast.status.tint.opacity(colorScheme == .dark ? 0.18 : 0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(forecast.status.title)
+                            .font(.title3.weight(.medium))
+                            .tracking(-0.2)
+                        Text(forecast.fullMessage)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
+                MonthlyBudgetLargeChart(
+                    forecast: forecast,
+                    currencyCode: currencyCode,
+                    hideBalances: hideBalances
+                )
+                .frame(height: 210)
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                    ForecastMetricTile(title: "Gastado", value: forecast.spent.masked(hideBalances, code: currencyCode), tint: .primary)
+                    ForecastMetricTile(title: "Presupuesto", value: forecast.budgetAmount.masked(hideBalances, code: currencyCode), tint: .primary)
+                    ForecastMetricTile(title: "Previsión final", value: forecast.projectedFinalSpend.masked(hideBalances, code: currencyCode), tint: forecast.status.tint)
+                    ForecastMetricTile(title: "Recomendación diaria", value: forecast.dailyRecommendation.masked(hideBalances, code: currencyCode), tint: .financeAccent)
+                }
+            }
+            .padding(16)
+            .background(Color.primary.opacity(colorScheme == .dark ? 0.075 : 0.045), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+            )
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(forecast.accessibilitySummary(currencyCode: currencyCode, hidesAmounts: hideBalances))
+
+            categoryForecastNotice
+        }
+    }
+
+    private var categoryForecastNotice: some View {
+        Label(
+            "La previsión se calcula sobre el presupuesto total. Por categoría mostramos solo gasto real para no extrapolar gastos puntuales.",
+            systemImage: "info.circle.fill"
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+}
+
+private struct MonthlyBudgetLargeChart: View {
+    let forecast: MonthlyBudgetForecast
+    let currencyCode: String
+    let hideBalances: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                MonthlyBudgetMiniChart(
+                    forecast: forecast,
+                    tint: forecast.status.tint,
+                    maxValueOverride: chartMaxValueDouble
+                )
+                    .padding(.top, 4)
+
+                chartScaleLabels
+                    .frame(width: 72, alignment: .trailing)
+            }
+
+            HStack(spacing: 12) {
+                ForecastLegendItem(label: "Ideal", tint: .secondary, dashed: true)
+                ForecastLegendItem(label: "Real", tint: forecast.status.tint, dashed: false)
+                ForecastLegendItem(label: "Proyección", tint: forecast.status.tint.opacity(0.62), dashed: true)
+            }
+            .font(.caption2.weight(.medium))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Gráfica acumulada de gasto mensual")
+        .accessibilityValue("\(forecast.fullMessage) Escala de 0 a \(chartMaxValue.masked(hideBalances, code: currencyCode)).")
+    }
+
+    private var chartMaxValue: Decimal {
+        Decimal(chartMaxValueDouble)
+    }
+
+    private var chartMaxValueDouble: Double {
+        let projectedMax = forecast.projectedPoints
+            .filter { !$0.isNaN && $0.isFinite }
+            .max() ?? 0
+        let rawMax = max(
+            (forecast.budgetAmount as NSDecimalNumber).doubleValue,
+            projectedMax,
+            1
+        )
+        return NSDecimalNumber(decimal: Decimal(rawMax).roundedUpToNiceChartStep()).doubleValue
+    }
+
+    private var chartScaleLabels: some View {
+        VStack(alignment: .trailing) {
+            Text(chartMaxValue.masked(hideBalances, code: currencyCode))
+            Spacer()
+            Text((chartMaxValue / 2).masked(hideBalances, code: currencyCode))
+            Spacer()
+            Text(Decimal(0).masked(hideBalances, code: currencyCode))
+        }
+        .font(.caption2.weight(.medium).monospacedDigit())
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .minimumScaleFactor(0.55)
+        .padding(.vertical, 4)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct ForecastLegendItem: View {
+    let label: String
+    let tint: Color
+    let dashed: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(tint)
+                .frame(width: dashed ? 14 : 18, height: dashed ? 3 : 4)
+                .opacity(dashed ? 0.55 : 1)
+            Text(label)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private extension Decimal {
+    func roundedUpToNiceChartStep() -> Decimal {
+        let value = NSDecimalNumber(decimal: self).doubleValue
+        guard value.isFinite, value > 0 else { return 1 }
+
+        let magnitude = pow(10, floor(log10(value)))
+        let normalized = value / magnitude
+        let niceNormalized: Double
+
+        switch normalized {
+        case ...1:
+            niceNormalized = 1
+        case ...2:
+            niceNormalized = 2
+        case ...5:
+            niceNormalized = 5
+        default:
+            niceNormalized = 10
+        }
+
+        return Decimal(niceNormalized * magnitude)
+    }
+}
+
+private struct ForecastMetricTile: View {
+    let title: String
+    let value: String
+    let tint: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .textCase(.uppercase)
+                .tracking(0.4)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(.subheadline, design: .rounded).weight(.semibold))
+                .foregroundStyle(tint)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 

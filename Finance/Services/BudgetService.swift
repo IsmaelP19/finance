@@ -22,20 +22,51 @@ enum BudgetService {
 
     // MARK: - Spending calculations
 
+    static func forecast(for budget: Budget, movements: [Movement], asOf date: Date = Date()) -> SpendingForecast {
+        let spent = totalSpent(for: budget, movements: movements, asOf: date)
+        let spendingDays = monthlySpendingDays(for: budget, movements: movements, asOf: date)
+        let historicalSample = historicalRemainingSpendAverage(for: budget, movements: movements, asOf: date)
+
+        return SpendingForecastCalculator.makeForecast(
+            monthlyBudget: budget.totalAmount,
+            spentSoFar: spent,
+            spendingDays: spendingDays,
+            historicalRemainingSpendAverage: historicalSample?.average,
+            historicalMonthsUsed: historicalSample?.monthsUsed ?? 0,
+            asOf: date
+        )
+    }
+
+    static func forecast(for item: BudgetItem, movements: [Movement], asOf date: Date = Date()) -> SpendingForecast? {
+        // Uso interno heredado para cálculos puntuales por ítem. La experiencia de previsión
+        // soportada en producto es solo global para evitar extrapolar gastos puntuales por categoría.
+        guard let category = item.category else { return nil }
+        let spent = spentAmount(for: category, movements: movements, asOf: date)
+        let spendingDays = monthlySpendingDays(for: category, movements: movements, asOf: date)
+
+        return SpendingForecastCalculator.makeForecast(
+            monthlyBudget: item.allocatedAmount,
+            spentSoFar: spent,
+            spendingDays: spendingDays,
+            asOf: date
+        )
+    }
+
     /// Gasto real del mes en curso para una categoría concreta.
     static func spentAmount(
         for category: MovementCategory,
-        movements: [Movement]
+        movements: [Movement],
+        asOf date: Date = Date()
     ) -> Decimal {
         let calendar = Calendar.current
-        let now = Date()
-        let year  = calendar.component(.year,  from: now)
-        let month = calendar.component(.month, from: now)
+        let year  = calendar.component(.year,  from: date)
+        let month = calendar.component(.month, from: date)
 
         return movements
             .filter { movement in
                 guard movement.type == .expense else { return false }
                 guard movement.category?.id == category.id else { return false }
+                guard movement.occurredAt <= date else { return false }
                 let mYear  = calendar.component(.year,  from: movement.occurredAt)
                 let mMonth = calendar.component(.month, from: movement.occurredAt)
                 return mYear == year && mMonth == month
@@ -44,10 +75,10 @@ enum BudgetService {
     }
 
     /// Gasto real del mes en todas las categorías del presupuesto.
-    static func totalSpent(for budget: Budget, movements: [Movement]) -> Decimal {
+    static func totalSpent(for budget: Budget, movements: [Movement], asOf date: Date = Date()) -> Decimal {
         budget.items.reduce(Decimal(0)) { total, item in
             guard let category = item.category else { return total }
-            return total + spentAmount(for: category, movements: movements)
+            return total + spentAmount(for: category, movements: movements, asOf: date)
         }
     }
 
@@ -179,6 +210,92 @@ enum BudgetService {
         center.removeDeliveredNotifications(withIdentifiers: [identifier])
     }
 
+    private static func monthlySpendingDays(for budget: Budget, movements: [Movement], asOf date: Date) -> Int {
+        let categoryIDs = Set(budget.items.compactMap { $0.category?.id })
+        guard !categoryIDs.isEmpty else { return 0 }
+
+        return monthlySpendingDays(for: movements, asOf: date) { movement in
+            guard let categoryID = movement.category?.id else { return false }
+            return categoryIDs.contains(categoryID)
+        }
+    }
+
+    private static func monthlySpendingDays(for category: MovementCategory, movements: [Movement], asOf date: Date) -> Int {
+        monthlySpendingDays(for: movements, asOf: date) { movement in
+            movement.category?.id == category.id
+        }
+    }
+
+    private static func monthlySpendingDays(
+        for movements: [Movement],
+        asOf date: Date,
+        matchesCategory: (Movement) -> Bool
+    ) -> Int {
+        let calendar = Calendar.current
+        let year = calendar.component(.year, from: date)
+        let month = calendar.component(.month, from: date)
+        let days = movements.compactMap { movement -> Date? in
+            guard movement.type == .expense else { return nil }
+            guard matchesCategory(movement) else { return nil }
+            guard movement.occurredAt <= date else { return nil }
+            guard calendar.component(.year, from: movement.occurredAt) == year,
+                  calendar.component(.month, from: movement.occurredAt) == month else { return nil }
+            return calendar.startOfDay(for: movement.occurredAt)
+        }
+
+        return Set(days).count
+    }
+
+    private static func historicalRemainingSpendAverage(
+        for budget: Budget,
+        movements: [Movement],
+        asOf date: Date,
+        calendar: Calendar = .current
+    ) -> (average: Decimal, monthsUsed: Int)? {
+        let categoryIDs = Set(budget.items.compactMap { $0.category?.id })
+        guard !categoryIDs.isEmpty else { return nil }
+
+        let currentDay = calendar.component(.day, from: date)
+        let currentMonthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? date
+        let samples = (1...6).compactMap { offset -> Decimal? in
+            guard let monthStart = calendar.date(byAdding: .month, value: -offset, to: currentMonthStart),
+                  let daysRange = calendar.range(of: .day, in: .month, for: monthStart),
+                  let nextMonthStart = calendar.date(byAdding: .month, value: 1, to: monthStart) else {
+                return nil
+            }
+
+            let daysInHistoricalMonth = daysRange.count
+            let firstProjectedDay = min(currentDay + 1, daysInHistoricalMonth + 1)
+            let firstProjectedDate = calendar.date(
+                from: DateComponents(
+                    year: calendar.component(.year, from: monthStart),
+                    month: calendar.component(.month, from: monthStart),
+                    day: min(firstProjectedDay, daysInHistoricalMonth)
+                )
+            ) ?? monthStart
+
+            var monthHadBudgetSpend = false
+            var remainingWindowSpend = Decimal(0)
+
+            for movement in movements {
+                guard movement.type == .expense else { continue }
+                guard let categoryID = movement.category?.id, categoryIDs.contains(categoryID) else { continue }
+                guard movement.occurredAt >= monthStart, movement.occurredAt < nextMonthStart else { continue }
+
+                monthHadBudgetSpend = true
+                if firstProjectedDay <= daysInHistoricalMonth, movement.occurredAt >= firstProjectedDate {
+                    remainingWindowSpend += movement.statsExpenseAmount
+                }
+            }
+
+            return monthHadBudgetSpend ? remainingWindowSpend : nil
+        }
+
+        guard samples.count >= 2 else { return nil }
+        let total = samples.reduce(Decimal(0), +)
+        return (total / Decimal(samples.count), samples.count)
+    }
+
     /// Cancela todas las notificaciones de todos los ítems del presupuesto.
     static func cancelAllNotifications(for budget: Budget) {
         let center = UNUserNotificationCenter.current()
@@ -191,5 +308,187 @@ enum BudgetService {
         guard !ids.isEmpty else { return }
         center.removePendingNotificationRequests(withIdentifiers: ids)
         center.removeDeliveredNotifications(withIdentifiers: ids)
+    }
+}
+
+struct SpendingForecast: Equatable {
+    let monthlyBudget: Decimal
+    let spentSoFar: Decimal
+    let remainingBudget: Decimal
+    let averageDailySpend: Decimal
+    let recommendedDailySpend: Decimal?
+    let projectedMonthEndSpend: Decimal
+    let projectedMargin: Decimal
+    let estimatedDepletionDate: Date?
+    let status: SpendingForecastStatus
+    let reliability: SpendingForecastReliability
+    let basis: SpendingForecastBasis
+    let historicalMonthsUsed: Int
+    let historicalRemainingSpendAverage: Decimal?
+    let daysElapsed: Int
+    let daysRemaining: Int
+    let daysInMonth: Int
+    let spendingDays: Int
+    let points: [SpendingForecastPoint]
+}
+
+struct SpendingForecastPoint: Identifiable, Equatable {
+    let day: Int
+    let amount: Decimal
+    let isProjected: Bool
+
+    var id: String { "\(day)-\(isProjected)" }
+}
+
+enum SpendingForecastStatus: Equatable {
+    case noBudget
+    case noSpending
+    case good
+    case tight
+    case risk
+    case exceeded
+}
+
+enum SpendingForecastReliability: Equatable {
+    case low
+    case medium
+    case high
+}
+
+enum SpendingForecastBasis: Equatable {
+    case currentPace
+    case historicalAverage
+}
+
+enum SpendingForecastCalculator {
+    static func makeForecast(
+        monthlyBudget: Decimal,
+        spentSoFar: Decimal,
+        spendingDays: Int,
+        historicalRemainingSpendAverage: Decimal? = nil,
+        historicalMonthsUsed: Int = 0,
+        asOf date: Date = Date(),
+        calendar: Calendar = .current
+    ) -> SpendingForecast {
+        let monthRange = calendar.range(of: .day, in: .month, for: date)
+        let daysInMonth = monthRange?.count ?? 30
+        let dayOfMonth = calendar.component(.day, from: date)
+        let daysElapsed = max(1, min(dayOfMonth, daysInMonth))
+        let daysRemaining = max(daysInMonth - daysElapsed, 0)
+        let remaining = monthlyBudget - spentSoFar
+        let averageDaily = spentSoFar / Decimal(daysElapsed)
+        let usesHistoricalData = historicalMonthsUsed >= 2 && historicalRemainingSpendAverage != nil && daysRemaining > 0
+        let basis: SpendingForecastBasis = usesHistoricalData ? .historicalAverage : .currentPace
+        let projected = usesHistoricalData
+            ? spentSoFar + max(historicalRemainingSpendAverage ?? 0, 0)
+            : averageDaily * Decimal(daysInMonth)
+        let projectedMargin = monthlyBudget - projected
+        let recommendedDaily: Decimal? = monthlyBudget > 0 ? max(remaining, 0) / Decimal(max(daysRemaining, 1)) : nil
+        let reliability = reliability(
+            dayOfMonth: daysElapsed,
+            spendingDays: spendingDays,
+            basis: basis,
+            historicalMonthsUsed: historicalMonthsUsed
+        )
+        let depletionDate = estimatedDepletionDate(
+            monthlyBudget: monthlyBudget,
+            spentSoFar: spentSoFar,
+            averageDailySpend: basis == .historicalAverage
+                ? (max(historicalRemainingSpendAverage ?? 0, 0) / Decimal(max(daysRemaining, 1)))
+                : averageDaily,
+            asOf: date,
+            daysRemaining: daysRemaining,
+            calendar: calendar
+        )
+        let status = status(
+            monthlyBudget: monthlyBudget,
+            spentSoFar: spentSoFar,
+            projectedMonthEndSpend: projected,
+            estimatedDepletionDate: depletionDate,
+            daysRemaining: daysRemaining
+        )
+
+        return SpendingForecast(
+            monthlyBudget: monthlyBudget,
+            spentSoFar: spentSoFar,
+            remainingBudget: remaining,
+            averageDailySpend: averageDaily,
+            recommendedDailySpend: recommendedDaily,
+            projectedMonthEndSpend: projected,
+            projectedMargin: projectedMargin,
+            estimatedDepletionDate: depletionDate,
+            status: status,
+            reliability: reliability,
+            basis: basis,
+            historicalMonthsUsed: basis == .historicalAverage ? historicalMonthsUsed : 0,
+            historicalRemainingSpendAverage: basis == .historicalAverage ? historicalRemainingSpendAverage : nil,
+            daysElapsed: daysElapsed,
+            daysRemaining: daysRemaining,
+            daysInMonth: daysInMonth,
+            spendingDays: spendingDays,
+            points: [
+                SpendingForecastPoint(day: 1, amount: 0, isProjected: false),
+                SpendingForecastPoint(day: daysElapsed, amount: spentSoFar, isProjected: false),
+                SpendingForecastPoint(day: daysInMonth, amount: projected, isProjected: true)
+            ]
+        )
+    }
+
+    private static func reliability(dayOfMonth: Int, spendingDays: Int) -> SpendingForecastReliability {
+        reliability(dayOfMonth: dayOfMonth, spendingDays: spendingDays, basis: .currentPace, historicalMonthsUsed: 0)
+    }
+
+    private static func reliability(
+        dayOfMonth: Int,
+        spendingDays: Int,
+        basis: SpendingForecastBasis,
+        historicalMonthsUsed: Int
+    ) -> SpendingForecastReliability {
+        if basis == .historicalAverage {
+            return historicalMonthsUsed >= 4 ? .high : .medium
+        }
+        if dayOfMonth <= 5 || spendingDays < 3 { return .low }
+        if dayOfMonth <= 10 || spendingDays < 5 { return .medium }
+        return .high
+    }
+
+    private static func status(
+        monthlyBudget: Decimal,
+        spentSoFar: Decimal,
+        projectedMonthEndSpend: Decimal,
+        estimatedDepletionDate: Date?,
+        daysRemaining: Int
+    ) -> SpendingForecastStatus {
+        guard monthlyBudget > 0 else { return .noBudget }
+        guard spentSoFar > 0 || projectedMonthEndSpend > 0 else { return .noSpending }
+        if spentSoFar > monthlyBudget { return .exceeded }
+        if estimatedDepletionDate != nil && daysRemaining > 0 { return .risk }
+
+        let usage = projectedMonthEndSpend / monthlyBudget
+        if usage >= Decimal(string: "0.98")! { return .tight }
+        if usage >= Decimal(string: "0.90")! { return .tight }
+        return .good
+    }
+
+    private static func estimatedDepletionDate(
+        monthlyBudget: Decimal,
+        spentSoFar: Decimal,
+        averageDailySpend: Decimal,
+        asOf date: Date,
+        daysRemaining: Int,
+        calendar: Calendar
+    ) -> Date? {
+        guard monthlyBudget > 0, spentSoFar <= monthlyBudget, averageDailySpend > 0 else { return nil }
+        let daysUntilDepletion = ((monthlyBudget - spentSoFar) / averageDailySpend).roundedUpInt()
+        guard daysUntilDepletion <= daysRemaining else { return nil }
+        return calendar.date(byAdding: .day, value: max(daysUntilDepletion, 0), to: date)
+    }
+}
+
+private extension Decimal {
+    func roundedUpInt() -> Int {
+        NSDecimalNumber(decimal: self).doubleValue.rounded(.up).isFinite
+            ? Int(NSDecimalNumber(decimal: self).doubleValue.rounded(.up))
+            : 0
     }
 }
