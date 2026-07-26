@@ -75,7 +75,18 @@ struct AddExpenseIntent: AppIntent {
         )
 
         context.insert(movement)
-        try context.save()
+        do {
+            _ = try MovementBalanceService.rebuild(in: context)
+        } catch {
+            context.rollback()
+            throw IntentError.balanceRebuildFailed
+        }
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
 
         let amountFormatter = NumberFormatter()
         amountFormatter.numberStyle = .currency
@@ -88,6 +99,7 @@ struct AddExpenseIntent: AppIntent {
     enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
         case invalidAmount
         case accountNotFound
+        case balanceRebuildFailed
 
         var localizedStringResource: LocalizedStringResource {
             switch self {
@@ -95,6 +107,8 @@ struct AddExpenseIntent: AppIntent {
                 return "El importe debe ser mayor que cero."
             case .accountNotFound:
                 return "No se encontró la cuenta bancaria seleccionada."
+            case .balanceRebuildFailed:
+                return "No se pudo reconstruir el historial de saldos. No se registró el gasto."
             }
         }
     }

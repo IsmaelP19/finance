@@ -36,8 +36,11 @@ struct SettingsView: View {
     @State private var showingSyncFolderPicker = false
     @State private var showingImportModeDialog = false
     @State private var showingSyncImportConfirmation = false
+    @State private var showingLocalBackups = false
+    @State private var localBackups: [LocalRepairBackupService.BackupInfo] = []
     @State private var pendingImportURL: URL?
     @State private var showingDeleteAllConfirmation = false
+    @State private var showingHistoricalRepairConfirmation = false
     @State private var showingAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
@@ -97,6 +100,24 @@ struct SettingsView: View {
                         ImportDataButton(showingImportPicker: $showingImportPicker) { result in
                             handleImportSelection(result: result)
                         }
+
+                        SettingsDivider()
+
+                        Button {
+                            showingHistoricalRepairConfirmation = true
+                        } label: {
+                            SettingsActionLabel(title: "Reparar saldos históricos", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(.plain)
+
+                        SettingsDivider()
+
+                        Button {
+                            showLocalBackups()
+                        } label: {
+                            SettingsActionLabel(title: "Restaurar backup local", systemImage: "arrow.uturn.backward.circle")
+                        }
+                        .buttonStyle(.plain)
 
                         SettingsDivider()
 
@@ -237,6 +258,11 @@ struct SettingsView: View {
                     ShareSheet(activityItems: [url])
                 }
             }
+            .sheet(isPresented: $showingLocalBackups) {
+                LocalBackupRestoreView(backups: localBackups) { backup in
+                    restoreLocalBackup(backup)
+                }
+            }
             .confirmationDialog(
                 "Importar desde iCloud Drive",
                 isPresented: $showingSyncImportConfirmation,
@@ -267,6 +293,18 @@ struct SettingsView: View {
                 }
             } message: {
                 Text("Puedes importar sumando los datos al estado actual o reemplazarlos completamente.")
+            }
+            .confirmationDialog(
+                "Reparar saldos históricos",
+                isPresented: $showingHistoricalRepairConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Cancelar", role: .cancel) {}
+                Button("Reparar y crear backup", role: .destructive) {
+                    repairHistoricalBalances()
+                }
+            } message: {
+                Text("Se creará un backup local antes de revisar y recalcular los saldos de \(movements.count) movimiento(s).")
             }
             .alert("Eliminar todos los datos", isPresented: $showingDeleteAllConfirmation) {
                 Button("Cancelar", role: .cancel) {}
@@ -398,43 +436,94 @@ struct SettingsView: View {
             let importResult = try DataExportService.importData(from: url)
 
             if replaceExistingData {
-                guard deleteAllData(showSuccessAlert: false) else { return }
+                try ManualSyncService.createVerifiedPreRestoreBackup(
+                    banks: banks,
+                    accounts: accounts,
+                    categories: categories,
+                    movements: movements,
+                    investmentSnapshots: investmentSnapshots,
+                    recurringMovements: recurringMovements,
+                    budgets: budgets
+                )
             }
 
-            for bank in importResult.banks {
-                modelContext.insert(bank)
-            }
+            let report = try DataExportService.importData(
+                importResult,
+                into: modelContext,
+                mode: replaceExistingData ? .replace : .merge,
+                currencyCode: appCurrencyCode
+            )
 
-            for category in importResult.categories {
-                modelContext.insert(category)
-            }
-
-            for account in importResult.accounts {
-                account.currency = appCurrencyCode
-                modelContext.insert(account)
-            }
-
-            for movement in importResult.movements {
-                modelContext.insert(movement)
-            }
-
-            for snapshot in importResult.investmentSnapshots {
-                modelContext.insert(snapshot)
-            }
-
-            for recurring in importResult.recurringMovements {
-                modelContext.insert(recurring)
-            }
-
-            for budget in importResult.budgets {
-                modelContext.insert(budget)
-            }
-
-            alertTitle = "Importacion completada"
-            alertMessage = "Se importaron \(importResult.banks.count) banco(s), \(importResult.accounts.count) cuenta(s), \(importResult.categories.count) categoria(s), \(importResult.movements.count) movimiento(s), \(importResult.investmentSnapshots.count) snapshot(s) de inversión, \(importResult.recurringMovements.count) recurrencia(s) y \(importResult.budgets.count) presupuesto(s)."
+            alertTitle = report.alertTitle
+            alertMessage = report.summary
             showingAlert = true
         } catch {
             showError("Error al importar: \(error.localizedDescription)")
+        }
+    }
+
+    private func repairHistoricalBalances() {
+        do {
+            let backup = try LocalRepairBackupService.createVerifiedBackup(
+                banks: banks,
+                accounts: accounts,
+                categories: categories,
+                movements: movements,
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements,
+                budgets: budgets
+            )
+            let report = try MovementBalanceService.repair(in: modelContext)
+
+            alertTitle = report.accountsChanged == 0 && report.movementsChanged == 0
+                ? "Saldos históricos verificados"
+                : "Saldos históricos reparados"
+            alertMessage = "Se revisaron \(report.accountsChecked) cuenta(s) y \(report.movementsChecked) movimiento(s). Se actualizaron \(report.accountsChanged) cuenta(s) y \(report.movementsChanged) movimiento(s). Backup local: \(backup.url.lastPathComponent)."
+            showingAlert = true
+        } catch {
+            modelContext.rollback()
+            showError("No se pudieron reparar los saldos históricos: \(error.localizedDescription)")
+        }
+    }
+
+    private func showLocalBackups() {
+        do {
+            localBackups = try LocalRepairBackupService.availableBackups()
+            showingLocalBackups = true
+        } catch {
+            showError("No se pudieron cargar los backups locales: \(error.localizedDescription)")
+        }
+    }
+
+    private func restoreLocalBackup(_ backup: LocalRepairBackupService.BackupInfo) {
+        do {
+            let importResult = try LocalRepairBackupService.prepareForRestore(backup)
+            let currentBackup = try LocalRepairBackupService.createVerifiedBackup(
+                banks: banks,
+                accounts: accounts,
+                categories: categories,
+                movements: movements,
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements,
+                budgets: budgets
+            )
+
+            _ = try DataExportService.importData(
+                importResult,
+                into: modelContext,
+                mode: .replace,
+                currencyCode: appCurrencyCode
+            )
+
+            alertTitle = "Backup restaurado"
+            let repairedReferencesMessage = importResult.repairedReferences > 0
+                ? " Se repararon \(importResult.repairedReferences) referencias opcionales inválidas."
+                : ""
+            alertMessage = "Se restauró la copia del \(backup.exportDate.formatted(date: .abbreviated, time: .shortened)).\(repairedReferencesMessage) Backup del estado anterior: \(currentBackup.url.lastPathComponent)."
+            showingAlert = true
+        } catch {
+            modelContext.rollback()
+            showError("No se pudo restaurar el backup local: \(error.localizedDescription)")
         }
     }
 
@@ -475,6 +564,7 @@ struct SettingsView: View {
         do {
             try modelContext.save()
         } catch {
+            modelContext.rollback()
             showError("Error al eliminar los datos: \(error.localizedDescription)")
             return false
         }
@@ -552,38 +642,21 @@ struct SettingsView: View {
 
     private func importLatestFromICloudDriveReplacingData() {
         do {
-            let (importResult, exportDate) = try ManualSyncService.importLatestBackup()
-
-            guard deleteAllData(showSuccessAlert: false) else { return }
-
-            for bank in importResult.banks {
-                modelContext.insert(bank)
-            }
-
-            for category in importResult.categories {
-                modelContext.insert(category)
-            }
-
-            for account in importResult.accounts {
-                account.currency = appCurrencyCode
-                modelContext.insert(account)
-            }
-
-            for movement in importResult.movements {
-                modelContext.insert(movement)
-            }
-
-            for snapshot in importResult.investmentSnapshots {
-                modelContext.insert(snapshot)
-            }
-
-            for recurring in importResult.recurringMovements {
-                modelContext.insert(recurring)
-            }
-
-            for budget in importResult.budgets {
-                modelContext.insert(budget)
-            }
+            let (importResult, exportDate) = try ManualSyncService.prepareLatestBackupForRestore(
+                banks: banks,
+                accounts: accounts,
+                categories: categories,
+                movements: movements,
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements,
+                budgets: budgets
+            )
+            _ = try DataExportService.importData(
+                importResult,
+                into: modelContext,
+                mode: .replace,
+                currencyCode: appCurrencyCode
+            )
 
             ManualSyncService.markImported(exportDate: exportDate)
 

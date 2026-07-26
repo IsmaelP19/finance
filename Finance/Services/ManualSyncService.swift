@@ -18,6 +18,7 @@ enum ManualSyncService {
         case folderNotConfigured
         case cannotAccessFolder
         case noBackupsFound
+        case preRestoreBackupUnavailable
 
         var errorDescription: String? {
             switch self {
@@ -27,6 +28,8 @@ enum ManualSyncService {
                 return "No se pudo acceder a la carpeta de sincronización."
             case .noBackupsFound:
                 return "No se encontraron backups en la carpeta configurada."
+            case .preRestoreBackupUnavailable:
+                return "No se pudo crear y verificar el backup previo en la carpeta iCloud Drive configurada."
             }
         }
     }
@@ -76,27 +79,70 @@ enum ManualSyncService {
         budgets: [Budget]
     ) throws -> BackupInfo {
         try withSyncDirectoryAccess { directoryURL in
-            let tempURL = try DataExportService.exportData(
+            try exportToSyncDirectory(
                 banks: banks,
                 accounts: accounts,
                 categories: categories,
                 movements: movements,
                 investmentSnapshots: investmentSnapshots,
                 recurringMovements: recurringMovements,
-                budgets: budgets
+                budgets: budgets,
+                in: directoryURL
             )
+        }
+    }
 
-            let destinationURL = directoryURL.appendingPathComponent(tempURL.lastPathComponent)
-            if FileManager.default.fileExists(atPath: destinationURL.path) {
-                try FileManager.default.removeItem(at: destinationURL)
-            }
-            try FileManager.default.copyItem(at: tempURL, to: destinationURL)
+    /// Decodifica la copia remota y crea el backup verificable del estado actual
+    /// antes de que el caller pueda reemplazar datos locales.
+    @MainActor
+    static func prepareLatestBackupForRestore(
+        banks: [Bank],
+        accounts: [BankAccount],
+        categories: [MovementCategory],
+        movements: [Movement],
+        investmentSnapshots: [InvestmentSnapshot],
+        recurringMovements: [RecurringMovement],
+        budgets: [Budget]
+    ) throws -> (DataExportService.ImportResult, Date) {
+        try withSyncDirectoryAccess { directoryURL in
+            let latest = try latestBackup(in: directoryURL)
+            let importResult = try DataExportService.importData(from: latest.url)
+            _ = try exportToSyncDirectory(
+                banks: banks,
+                accounts: accounts,
+                categories: categories,
+                movements: movements,
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements,
+                budgets: budgets,
+                in: directoryURL
+            )
+            return (importResult, latest.exportDate)
+        }
+    }
 
-            try pruneBackups(in: directoryURL)
-
-            let exportDate = backupDate(for: destinationURL) ?? Date()
-            markExported(exportDate: exportDate)
-            return BackupInfo(url: destinationURL, exportDate: exportDate)
+    @MainActor
+    static func createVerifiedPreRestoreBackup(
+        banks: [Bank],
+        accounts: [BankAccount],
+        categories: [MovementCategory],
+        movements: [Movement],
+        investmentSnapshots: [InvestmentSnapshot],
+        recurringMovements: [RecurringMovement],
+        budgets: [Budget]
+    ) throws {
+        guard isConfigured else { throw SyncError.preRestoreBackupUnavailable }
+        try withSyncDirectoryAccess { directoryURL in
+            _ = try exportToSyncDirectory(
+                banks: banks,
+                accounts: accounts,
+                categories: categories,
+                movements: movements,
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements,
+                budgets: budgets,
+                in: directoryURL
+            )
         }
     }
 
@@ -179,6 +225,43 @@ enum ManualSyncService {
         for backup in backups.dropFirst(maxBackupFiles) {
             try? FileManager.default.removeItem(at: backup.url)
         }
+    }
+
+    @MainActor
+    private static func exportToSyncDirectory(
+        banks: [Bank],
+        accounts: [BankAccount],
+        categories: [MovementCategory],
+        movements: [Movement],
+        investmentSnapshots: [InvestmentSnapshot],
+        recurringMovements: [RecurringMovement],
+        budgets: [Budget],
+        in directoryURL: URL
+    ) throws -> BackupInfo {
+        let tempURL = try DataExportService.exportData(
+            banks: banks,
+            accounts: accounts,
+            categories: categories,
+            movements: movements,
+            investmentSnapshots: investmentSnapshots,
+            recurringMovements: recurringMovements,
+            budgets: budgets
+        )
+
+        let destinationURL = directoryURL.appendingPathComponent(tempURL.lastPathComponent)
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+        try FileManager.default.copyItem(at: tempURL, to: destinationURL)
+
+        guard FileManager.default.fileExists(atPath: destinationURL.path),
+              let exportDate = DataExportService.readExportDate(from: destinationURL) else {
+            throw SyncError.preRestoreBackupUnavailable
+        }
+
+        try pruneBackups(in: directoryURL)
+        markExported(exportDate: exportDate)
+        return BackupInfo(url: destinationURL, exportDate: exportDate)
     }
 
     private static func backupDate(for fileURL: URL) -> Date? {

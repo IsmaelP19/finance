@@ -720,6 +720,7 @@ struct MovementsView: View {
     private func deleteMovements(at offsets: IndexSet) {
         CrashReportService.shared.recordBreadcrumb("MovementsView.deleteMovements count=\(offsets.count)")
 
+        var rebuildError: Error?
         withAnimation {
             for index in offsets {
                 let movement = visibleFilteredMovements[index]
@@ -736,14 +737,16 @@ struct MovementsView: View {
                     case .income:
                         account.balance -= movement.amount
                     case .transfer:
+                        let sourceInvestedAmountBeforeImpact = account.effectiveInvestedAmount
                         account.balance += movement.amount
                         if account.isInvestmentAccount {
-                            account.investedAmount = account.effectiveInvestedAmount + movement.amount
+                            account.investedAmount = sourceInvestedAmountBeforeImpact + movement.amount
                         }
                         if let destination = movement.destinationAccount {
+                            let destinationInvestedAmountBeforeImpact = destination.effectiveInvestedAmount
                             destination.balance -= movement.amount
                             if destination.isInvestmentAccount {
-                                destination.investedAmount = max(0, destination.effectiveInvestedAmount - movement.amount)
+                                destination.investedAmount = max(0, destinationInvestedAmountBeforeImpact - movement.amount)
                             }
                             destination.updatedAt = Date()
                         }
@@ -753,6 +756,22 @@ struct MovementsView: View {
                 }
                 modelContext.delete(movement)
             }
+            do {
+                _ = try MovementBalanceService.rebuild(in: modelContext)
+                try modelContext.save()
+            } catch {
+                modelContext.rollback()
+                rebuildError = error
+                CrashReportService.shared.recordDiagnosticEvent(
+                    "MovementBalanceService.rebuild failed error=\(error.localizedDescription)"
+                )
+            }
+        }
+
+        if let rebuildError {
+            pendingAlertMessage = "No se pudo reconstruir el historial de saldos: \(rebuildError.localizedDescription)"
+            showingPendingAlert = true
+            return
         }
 
         reloadMovements(refreshAvailableYears: true)
@@ -1318,11 +1337,12 @@ struct MovementsView: View {
             account: account
         )
 
+        let confirmationDate = Date()
         let movement = Movement(
             concept: pending.rule.concept,
             amount: pending.rule.amount,
             type: pending.rule.type,
-            occurredAt: pending.dueDate,
+            occurredAt: confirmationDate,
             account: account,
             destinationAccount: nil,
             category: pending.rule.category,
@@ -1335,6 +1355,18 @@ struct MovementsView: View {
         withAnimation {
             modelContext.insert(movement)
             pending.rule.updatedAt = Date()
+        }
+        do {
+            _ = try MovementBalanceService.rebuild(in: modelContext)
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            CrashReportService.shared.recordDiagnosticEvent(
+                "MovementBalanceService.rebuild failed error=\(error.localizedDescription)"
+            )
+            pendingAlertMessage = "No se pudo confirmar el movimiento recurrente: \(error.localizedDescription)"
+            showingPendingAlert = true
+            return
         }
         recurringConfirmationMovements.append(movement)
 

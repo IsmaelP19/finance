@@ -24,6 +24,7 @@ struct AddMovementView: View {
     @State private var selectedDestinationAccount: BankAccount?
     @State private var movementType: MovementType = .expense
     @State private var amountText: String = ""
+    @State private var amountExpression: String = ""
     @State private var concept: String = ""
     @State private var selectedCategory: MovementCategory?
     @State private var categorySearchText: String = ""
@@ -38,11 +39,16 @@ struct AddMovementView: View {
     @State private var recurringEndDate: Date = Date()
     @State private var isSharedExpense = false
     @State private var personalAmountText: String = ""
+    @State private var personalAmountExpression: String = ""
     @State private var isReimbursementIncome = false
     @State private var selectedReimbursementExpense: Movement?
     @State private var showingQuickReimbursementSheet = false
     @State private var cachedAccountGroups: [MovementAccountBankGroup] = []
     @FocusState private var heroFocusedField: MovementDraftHeroField?
+    @FocusState private var personalAmountFocused: Bool
+
+    @State private var amountCalculatorError: String?
+    @State private var amountCalculatorErrorHaptic = 0
 
     @State private var showingValidationAlert = false
     @State private var validationMessage = ""
@@ -197,8 +203,8 @@ struct AddMovementView: View {
 
     private var expectedReimbursementForDraftExpense: Decimal {
         guard movementType == .expense, isSharedExpense else { return 0 }
-        let total = parseAmount(from: amountText)
-        let personal = parseAmount(from: personalAmountText)
+        let total = parseHeroAmount()
+        let personal = parsePersonalAmount()
         guard total > 0 else { return 0 }
         return max(total - personal, 0)
     }
@@ -216,11 +222,11 @@ struct AddMovementView: View {
     }
 
     private var draftSharedExpenseTotal: Decimal {
-        parseAmount(from: amountText)
+        parseHeroAmount()
     }
 
     private var draftSharedExpensePersonalAmount: Decimal {
-        parseAmount(from: personalAmountText)
+        parsePersonalAmount()
     }
 
     private var isReimbursementFullyRecovered: Bool {
@@ -244,6 +250,8 @@ struct AddMovementView: View {
                     MovementDraftHero(
                         title: $concept,
                         amountText: $amountText,
+                        amountExpression: $amountExpression,
+                        amountErrorMessage: $amountCalculatorError,
                         type: $movementType,
                         isMovementTypeLocked: isMovementTypeLocked,
                         selectedAccount: $selectedAccount,
@@ -254,6 +262,10 @@ struct AddMovementView: View {
                     currencyCode: appCurrencyCode,
                     tint: movementTint,
                     focusedField: $heroFocusedField,
+                        onAmountDone: {
+                            heroFocusedField = nil
+                        },
+                        onDismissAmountKeyboard: dismissAmountKeyboardIfActive,
                         onCreateCategory: {
                             newCategoryName = ""
                             categorySearchText = ""
@@ -268,13 +280,22 @@ struct AddMovementView: View {
                         VStack(alignment: .leading, spacing: 12) {
                             Toggle("Definir mi gasto", isOn: $isSharedExpense)
                                 .tint(movementTint)
+                                .simultaneousGesture(TapGesture().onEnded {
+                                    dismissAmountKeyboardIfActive()
+                                })
 
                             if isSharedExpense {
                                 MovementEditorInlineAmountRow(
                                     label: "Mi parte",
                                     text: $personalAmountText,
+                                    expression: $personalAmountExpression,
+                                    errorMessage: $amountCalculatorError,
                                     currencyCode: appCurrencyCode,
-                                    tint: movementTint
+                                    tint: movementTint,
+                                    isFocused: $personalAmountFocused,
+                                    onDone: {
+                                        personalAmountFocused = false
+                                    }
                                 )
 
                                 if draftSharedExpenseTotal > 0 {
@@ -470,7 +491,7 @@ struct AddMovementView: View {
                 .movementEditorDetailSection()
             }
             .financeGlassListContainer()
-            .scrollDismissesKeyboard(.interactively)
+            .scrollDismissesKeyboard(.immediately)
             .financeGlassPageBackground()
             .navigationTitle(editorNavigationTitle)
             .navigationBarTitleDisplayMode(.inline)
@@ -496,15 +517,42 @@ struct AddMovementView: View {
                     .accessibilityLabel(isEditing ? "Actualizar movimiento" : "Guardar movimiento")
                 }
 
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Listo") {
-                        heroFocusedField = nil
+                if heroFocusedField != .amount, !personalAmountFocused {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Listo") {
+                            heroFocusedField = nil
+                            personalAmountFocused = false
+                        }
+                        .fontWeight(.semibold)
                     }
-                    .fontWeight(.semibold)
+                }
+            }
+            .sensoryFeedback(.error, trigger: amountCalculatorErrorHaptic)
+            .onChange(of: heroFocusedField) { oldValue, newValue in
+                if newValue == .amount {
+                    amountCalculatorError = nil
+                }
+                if oldValue == .amount, newValue != .amount {
+                    scheduleAmountExpressionFinalization {
+                        guard heroFocusedField != .amount else { return }
+                        finalizeAmountExpression(expression: &amountExpression, amount: &amountText)
+                    }
+                }
+            }
+            .onChange(of: personalAmountFocused) { wasFocused, isFocused in
+                if isFocused {
+                    amountCalculatorError = nil
+                }
+                if wasFocused, !isFocused {
+                    scheduleAmountExpressionFinalization {
+                        guard !personalAmountFocused else { return }
+                        finalizeAmountExpression(expression: &personalAmountExpression, amount: &personalAmountText)
+                    }
                 }
             }
             .movementEditorSheetPresentation(isEditing: isEditing)
+            .environment(\.dismissAmountKeyboard, dismissAmountKeyboardIfActive)
             .onAppear {
                 refreshCachedAccountGroups()
                 setupDefaults()
@@ -519,6 +567,7 @@ struct AddMovementView: View {
                     isRecurring = false
                     isSharedExpense = false
                     personalAmountText = ""
+                    personalAmountExpression = ""
                     if !allowsReimbursementLinkingInThisContext {
                         isReimbursementIncome = false
                         selectedReimbursementExpense = nil
@@ -532,6 +581,7 @@ struct AddMovementView: View {
                     if newValue != .expense {
                         isSharedExpense = false
                         personalAmountText = ""
+                    personalAmountExpression = ""
                     }
 
                     if newValue != .income {
@@ -548,6 +598,7 @@ struct AddMovementView: View {
             .onChange(of: isSharedExpense) { _, enabled in
                 if !enabled {
                     personalAmountText = ""
+                    personalAmountExpression = ""
                 } else if personalAmountText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     personalAmountText = amountText
                 }
@@ -592,6 +643,7 @@ struct AddMovementView: View {
             selectedDestinationAccount = movementToEdit.destinationAccount
             movementType = movementToEdit.type
             amountText = movementToEdit.amount.asEditableAmount()
+            amountExpression = ""
             concept = movementToEdit.concept
             selectedCategory = movementToEdit.category
             occurredAt = movementToEdit.occurredAt
@@ -604,10 +656,12 @@ struct AddMovementView: View {
                 isSharedExpense = personalAmount < movementToEdit.amount
                 if isSharedExpense {
                     personalAmountText = personalAmount.asEditableAmount()
+                    personalAmountExpression = ""
                 }
             } else {
                 isSharedExpense = false
                 personalAmountText = ""
+                personalAmountExpression = ""
             }
 
             if movementToEdit.type == .income,
@@ -698,12 +752,78 @@ struct AddMovementView: View {
         refreshCachedAccountGroups()
     }
 
-    private func parseAmount(from text: String) -> Decimal {
-        EditableAmount.parse(text) ?? 0
+    private func parseHeroAmount() -> Decimal {
+        parsedAmount(display: amountText, expression: amountExpression)
+    }
+
+    private func parsePersonalAmount() -> Decimal {
+        parsedAmount(display: personalAmountText, expression: personalAmountExpression)
+    }
+
+    private func parsedAmount(display: String, expression: String) -> Decimal {
+        if AmountExpressionEvaluator.containsExpression(expression) {
+            if let preview = AmountExpressionEvaluator.previewValue(for: expression) {
+                return preview
+            }
+            return EditableAmount.parse(display) ?? 0
+        }
+        return EditableAmount.parse(display) ?? 0
+    }
+
+    private func scheduleAmountExpressionFinalization(_ action: @escaping @MainActor () -> Void) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            action()
+        }
+    }
+
+    private func dismissAmountKeyboardIfActive() {
+        guard heroFocusedField == .amount || personalAmountFocused else { return }
+
+        finalizeAmountExpression(expression: &amountExpression, amount: &amountText)
+        finalizeAmountExpression(expression: &personalAmountExpression, amount: &personalAmountText)
+        heroFocusedField = nil
+        personalAmountFocused = false
+    }
+
+    private func finalizeAmountExpression(expression: inout String, amount: inout String) {
+        guard AmountExpressionEvaluator.containsExpression(expression) else {
+            expression = ""
+            return
+        }
+
+        switch AmountExpressionEvaluator.evaluate(expression) {
+        case .success(let value):
+            amount = value.asEditableAmount()
+            expression = ""
+            amountCalculatorError = nil
+        case .failure(let error):
+            amountCalculatorError = error.localizedDescription
+            amountCalculatorErrorHaptic += 1
+        }
+    }
+
+    @discardableResult
+    private func resolveAmountExpression(expression: inout String, amount: inout String) -> Bool {
+        guard AmountExpressionEvaluator.containsExpression(expression) else { return true }
+
+        switch AmountExpressionEvaluator.evaluate(expression) {
+        case .success(let value):
+            amount = value.asEditableAmount()
+            expression = ""
+            amountCalculatorError = nil
+            return true
+        case .failure(let error):
+            validationMessage = error.localizedDescription
+            showingValidationAlert = true
+            amountCalculatorError = error.localizedDescription
+            amountCalculatorErrorHaptic += 1
+            return false
+        }
     }
 
     private func parseAmount() -> Decimal {
-        parseAmount(from: amountText)
+        parseHeroAmount()
     }
 
     private func normalizedPersonalAmountForExpense(totalAmount: Decimal, rawPersonalAmount: Decimal?) -> Decimal? {
@@ -761,6 +881,10 @@ struct AddMovementView: View {
         }
 
         recordSaveDiagnostic("parse_amount_before", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
+        if !resolveAmountExpression(expression: &amountExpression, amount: &amountText) {
+            recordSaveDiagnostic("parse_amount_failed", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
+            return
+        }
         let amount = parseAmount()
         guard amount > 0 else {
             recordSaveDiagnostic("parse_amount_failed", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
@@ -772,7 +896,10 @@ struct AddMovementView: View {
 
         let personalAmountForStats: Decimal?
         if movementType == .expense && isSharedExpense && canConfigureOwnershipFields {
-            let personalAmount = parseAmount(from: personalAmountText)
+            if !resolveAmountExpression(expression: &personalAmountExpression, amount: &personalAmountText) {
+                return
+            }
+            let personalAmount = parsePersonalAmount()
 
             guard personalAmount >= 0 else {
                 recordSaveDiagnostic("parse_personal_amount_negative", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
@@ -943,7 +1070,9 @@ struct AddMovementView: View {
                     recurring.isActive = true
                     recurring.updatedAt = Date()
                     movementToEdit.recurringRuleId = recurring.id
-                    movementToEdit.recurringScheduledAt = Calendar.current.startOfDay(for: movementToEdit.occurredAt)
+                    if movementToEdit.recurringScheduledAt == nil {
+                        movementToEdit.recurringScheduledAt = Calendar.current.startOfDay(for: movementToEdit.occurredAt)
+                    }
                 } else {
                     let recurring = RecurringMovement(
                         concept: trimmedConcept,
@@ -1007,6 +1136,8 @@ struct AddMovementView: View {
             }
         }
 
+        guard rebuildHistoricalBalances() else { return }
+
         saveContextAndDismiss(
             reevaluateBudgetsAfterSave: movementType == .expense || editedMovementWasExpense,
             budgetMovementToAppendAfterSave: movementForBudgetReevaluation
@@ -1033,6 +1164,7 @@ struct AddMovementView: View {
             dismiss()
         } catch {
             recordSaveDiagnostic("modelContext_save_failed", error: error)
+            modelContext.rollback()
             validationMessage = "No se pudo guardar el movimiento: \(error.localizedDescription)"
             showingValidationAlert = true
         }
@@ -1120,15 +1252,17 @@ struct AddMovementView: View {
         case .income:
             sourceAccount.balance += amount
         case .transfer:
+            let sourceInvestedAmountBeforeImpact = sourceAccount.effectiveInvestedAmount
             sourceAccount.balance -= amount
             if sourceAccount.isInvestmentAccount {
-                sourceAccount.investedAmount = max(0, sourceAccount.effectiveInvestedAmount - amount)
+                sourceAccount.investedAmount = max(0, sourceInvestedAmountBeforeImpact - amount)
             }
             if let destinationAccount {
                 destinationAccount.currency = appCurrencyCode
+                let destinationInvestedAmountBeforeImpact = destinationAccount.effectiveInvestedAmount
                 destinationAccount.balance += amount
                 if destinationAccount.isInvestmentAccount {
-                    destinationAccount.investedAmount = destinationAccount.effectiveInvestedAmount + amount
+                    destinationAccount.investedAmount = destinationInvestedAmountBeforeImpact + amount
                 }
                 destinationAccount.updatedAt = Date()
             }
@@ -1147,20 +1281,38 @@ struct AddMovementView: View {
         case .income:
             sourceAccount.balance -= movement.amount
         case .transfer:
+            let sourceInvestedAmountBeforeImpact = sourceAccount.effectiveInvestedAmount
             sourceAccount.balance += movement.amount
             if sourceAccount.isInvestmentAccount {
-                sourceAccount.investedAmount = sourceAccount.effectiveInvestedAmount + movement.amount
+                sourceAccount.investedAmount = sourceInvestedAmountBeforeImpact + movement.amount
             }
             if let destination = movement.destinationAccount {
+                let destinationInvestedAmountBeforeImpact = destination.effectiveInvestedAmount
                 destination.balance -= movement.amount
                 if destination.isInvestmentAccount {
-                    destination.investedAmount = max(0, destination.effectiveInvestedAmount - movement.amount)
+                    destination.investedAmount = max(0, destinationInvestedAmountBeforeImpact - movement.amount)
                 }
                 destination.updatedAt = Date()
             }
         }
 
         sourceAccount.updatedAt = Date()
+    }
+
+    @discardableResult
+    private func rebuildHistoricalBalances() -> Bool {
+        do {
+            _ = try MovementBalanceService.rebuild(in: modelContext)
+            return true
+        } catch {
+            modelContext.rollback()
+            CrashReportService.shared.recordDiagnosticEvent(
+                "MovementBalanceService.rebuild failed error=\(error.localizedDescription)"
+            )
+            validationMessage = "No se pudo reconstruir el historial de saldos: \(error.localizedDescription)"
+            showingValidationAlert = true
+            return false
+        }
     }
 
     private func ensureTransferAccountsAreDifferent() {
@@ -1210,6 +1362,8 @@ enum MovementDraftHeroField: Hashable {
 private struct MovementDraftHero: View {
     @Binding var title: String
     @Binding var amountText: String
+    @Binding var amountExpression: String
+    @Binding var amountErrorMessage: String?
     @Binding var type: MovementType
     var isMovementTypeLocked: Bool = false
     @Binding var selectedAccount: BankAccount?
@@ -1220,6 +1374,8 @@ private struct MovementDraftHero: View {
     let currencyCode: String
     let tint: Color
     var focusedField: FocusState<MovementDraftHeroField?>.Binding
+    var onAmountDone: () -> Void
+    var onDismissAmountKeyboard: () -> Void
     var onCreateCategory: () -> Void
 
     @State private var accountLabel = "Sin cuenta"
@@ -1258,12 +1414,18 @@ private struct MovementDraftHero: View {
             }
 
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                TextField("0,00", text: $amountText)
-                    .keyboardType(.decimalPad)
-                    .font(.system(size: 36, weight: .bold, design: .rounded))
-                    .minimumScaleFactor(0.72)
-                    .tint(tint)
-                    .focused(focusedField, equals: .amount)
+                AmountCalculatorHeroAmountField(
+                    displayAmount: $amountText,
+                    expression: $amountExpression,
+                    errorMessage: $amountErrorMessage,
+                    placeholder: "0,00",
+                    font: .system(size: 36, weight: .bold, design: .rounded),
+                    tint: tint,
+                    accessibilityLabel: "Importe",
+                    focus: focusedField,
+                    onDone: onAmountDone
+                )
+                .minimumScaleFactor(0.72)
 
                 CurrencySymbolLabel(code: currencyCode, companion: .hero)
             }
@@ -1360,6 +1522,7 @@ private struct MovementDraftHero: View {
                 .accessibilityHint("No editable en un reembolso vinculado")
         } else {
             Button {
+                onDismissAmountKeyboard()
                 isShowingTypePicker = true
             } label: {
                 movementTypeChip(type: type, showsChevron: true)
@@ -1398,6 +1561,7 @@ private struct MovementDraftHero: View {
 
     private var accountSelector: some View {
         Button {
+            onDismissAmountKeyboard()
             isShowingAccountPicker = true
         } label: {
             MovementAccountPickerPill(
@@ -1416,6 +1580,7 @@ private struct MovementDraftHero: View {
 
     private var destinationAccountSelector: some View {
         Button {
+            onDismissAmountKeyboard()
             isShowingDestinationAccountPicker = true
         } label: {
             MovementAccountPickerPill(
@@ -1434,6 +1599,7 @@ private struct MovementDraftHero: View {
 
     private var categorySelector: some View {
         Button {
+            onDismissAmountKeyboard()
             isShowingCategoryPicker = true
         } label: {
             MovementCategoryPickerPill(
@@ -1460,8 +1626,12 @@ private extension View {
 private struct MovementEditorInlineAmountRow: View {
     let label: String
     @Binding var text: String
+    @Binding var expression: String
+    @Binding var errorMessage: String?
     let currencyCode: String
     let tint: Color
+    var isFocused: FocusState<Bool>.Binding
+    var onDone: () -> Void
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -1470,11 +1640,16 @@ private struct MovementEditorInlineAmountRow: View {
                 .foregroundStyle(.secondary)
                 .fixedSize()
 
-            TextField(label, text: $text)
-                .keyboardType(.decimalPad)
-                .font(.title3.weight(.bold))
-                .multilineTextAlignment(.trailing)
-                .tint(tint)
+            AmountCalculatorInlineAmountField(
+                displayAmount: $text,
+                expression: $expression,
+                errorMessage: $errorMessage,
+                placeholder: label,
+                font: .title3.weight(.bold),
+                tint: tint,
+                focus: isFocused,
+                onDone: onDone
+            )
 
             CurrencySymbolLabel(code: currencyCode, companion: .inline)
         }
@@ -1514,8 +1689,20 @@ private struct MovementEditorSectionHeader: View {
     }
 }
 
+private struct DismissAmountKeyboardKey: EnvironmentKey {
+    static let defaultValue: () -> Void = {}
+}
+
+private extension EnvironmentValues {
+    var dismissAmountKeyboard: () -> Void {
+        get { self[DismissAmountKeyboardKey.self] }
+        set { self[DismissAmountKeyboardKey.self] = newValue }
+    }
+}
+
 private struct MovementEditorDetailSectionModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismissAmountKeyboard) private var dismissAmountKeyboard
 
     private var surface: Color {
         colorScheme == .dark
@@ -1531,6 +1718,9 @@ private struct MovementEditorDetailSectionModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .simultaneousGesture(TapGesture().onEnded {
+                dismissAmountKeyboard()
+            })
             .listRowInsets(EdgeInsets(top: 8, leading: 20, bottom: 8, trailing: 20))
             .listRowSeparator(.hidden)
             .listRowBackground(

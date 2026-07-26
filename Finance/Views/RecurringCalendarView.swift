@@ -527,11 +527,12 @@ struct RecurringCalendarView: View {
             account: account
         )
 
+        let confirmationDate = Date()
         let movement = Movement(
             concept: occurrence.rule.concept,
             amount: occurrence.rule.amount,
             type: occurrence.rule.type,
-            occurredAt: occurrence.dueDate,
+            occurredAt: confirmationDate,
             account: account,
             destinationAccount: nil,
             category: occurrence.rule.category,
@@ -544,6 +545,18 @@ struct RecurringCalendarView: View {
         withAnimation {
             modelContext.insert(movement)
             occurrence.rule.updatedAt = Date()
+        }
+        do {
+            _ = try MovementBalanceService.rebuild(in: modelContext)
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            CrashReportService.shared.recordDiagnosticEvent(
+                "MovementBalanceService.rebuild failed error=\(error.localizedDescription)"
+            )
+            actionAlertMessage = "No se pudo confirmar el movimiento recurrente: \(error.localizedDescription)"
+            showingActionAlert = true
+            return
         }
 
         HapticFeedback.success()

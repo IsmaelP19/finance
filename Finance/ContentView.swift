@@ -215,38 +215,21 @@ struct ContentView: View {
 
     private func importLatestBackupFromICloudDrive() {
         do {
-            let (importResult, exportDate) = try ManualSyncService.importLatestBackup()
-
-            deleteAllData()
-
-            for bank in importResult.banks {
-                modelContext.insert(bank)
-            }
-
-            for category in importResult.categories {
-                modelContext.insert(category)
-            }
-
-            for account in importResult.accounts {
-                account.currency = appCurrencyCode
-                modelContext.insert(account)
-            }
-
-            for movement in importResult.movements {
-                modelContext.insert(movement)
-            }
-
-            for snapshot in importResult.investmentSnapshots {
-                modelContext.insert(snapshot)
-            }
-
-            for recurring in importResult.recurringMovements {
-                modelContext.insert(recurring)
-            }
-
-            for budget in importResult.budgets {
-                modelContext.insert(budget)
-            }
+            let (importResult, exportDate) = try ManualSyncService.prepareLatestBackupForRestore(
+                banks: banks,
+                accounts: accounts,
+                categories: categories,
+                movements: movements,
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements,
+                budgets: budgets
+            )
+            _ = try DataExportService.importData(
+                importResult,
+                into: modelContext,
+                mode: .replace,
+                currencyCode: appCurrencyCode
+            )
 
             ManualSyncService.markImported(exportDate: exportDate)
             pendingSyncExportDate = nil

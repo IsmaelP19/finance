@@ -4,6 +4,8 @@
 - No crear commits salvo que el usuario lo pida explicitamente.
 - Cuando el usuario pida crear un commit, hacer tambien el `git push` correspondiente automaticamente despues de que el commit se complete correctamente.
 - Evitar usar comandos innecesarios, como `git diff` o cualquiera de `xcodebuild`
+- Debes usar los subagentes disponibles siempre que sea posible.
+- No te inventes el diseño, debes basarte siempre en las reglas ya definidas. En caso de no tener algo definido deberas pararte y preguntar para tomar una decision de diseño.
 
 ## Agentes Cursor
 
