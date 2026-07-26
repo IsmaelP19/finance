@@ -471,13 +471,19 @@ private struct FinanceHomeSkeletonView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 Capsule()
                                     .fill(Color.primary.opacity(0.22))
-                                    .frame(width: CGFloat([110, 145, 120, 85][index]), height: 14)
+                                    .frame(
+                                        minWidth: 0,
+                                        idealWidth: CGFloat([110, 145, 120, 85][index]),
+                                        maxWidth: CGFloat([110, 145, 120, 85][index])
+                                    )
+                                    .frame(height: 14)
                                 Capsule()
                                     .fill(Color.primary.opacity(0.14))
-                                    .frame(width: 75, height: 10)
+                                    .frame(minWidth: 0, idealWidth: 75, maxWidth: 75)
+                                    .frame(height: 10)
                             }
 
-                            Spacer()
+                            Spacer(minLength: 0)
 
                             Capsule()
                                 .fill(Color.primary.opacity(0.22))

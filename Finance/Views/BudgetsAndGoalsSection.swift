@@ -183,12 +183,7 @@ private struct BudgetSummaryCard: View {
     }
 
     private var progressColor: Color {
-        switch progress {
-        case ..<0.6:  return .green
-        case ..<0.8:  return .yellow
-        case ..<1.0:  return .orange
-        default:      return .red
-        }
+        BudgetColorPalette.progress(for: progress, colorScheme: colorScheme)
     }
 
     private var remaining: Decimal { budget.totalAmount - spent }
@@ -203,6 +198,7 @@ private struct BudgetSummaryCard: View {
 
     var body: some View {
         let forecast = MonthlyBudgetForecast(budget: budget, movements: movements)
+        let statusTint = BudgetColorPalette.status(for: forecast.status, colorScheme: colorScheme)
 
         VStack(alignment: .leading, spacing: 16) {
             forecastStatusPill(forecast)
@@ -239,7 +235,7 @@ private struct BudgetSummaryCard: View {
             }
 
             HStack(alignment: .center, spacing: 14) {
-                MonthlyBudgetMiniChart(forecast: forecast, tint: progressColor)
+                MonthlyBudgetMiniChart(forecast: forecast, tint: statusTint)
                     .frame(minWidth: 96, idealWidth: 128, maxWidth: 150)
                     .frame(height: 54)
 
@@ -249,7 +245,7 @@ private struct BudgetSummaryCard: View {
                         .foregroundStyle(.secondary)
                     Text(forecast.projectedFinalSpend.masked(hideBalances, code: currencyCode))
                         .font(.system(.headline, design: .rounded).weight(.medium))
-                        .foregroundStyle(forecast.status.tint)
+                        .foregroundStyle(statusTint)
                         .lineLimit(1)
                         .minimumScaleFactor(0.72)
                     Text(forecast.shortMessage)
@@ -264,28 +260,10 @@ private struct BudgetSummaryCard: View {
             BudgetProgressBar(progress: progress, tint: progressColor, height: 10)
 
             HStack(spacing: 10) {
-                Text("\(Int(progress * 100)) % consumido")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if remaining > 0 {
-                    Text("Quedan \(remaining.masked(hideBalances, code: currencyCode))")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.secondary)
-                } else if remaining < 0 {
-                    Text("Superado \((-remaining).masked(hideBalances, code: currencyCode))")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.red)
-                } else {
-                    Text("Presupuesto agotado")
-                        .font(.caption.weight(.medium))
-                        .foregroundStyle(.orange)
-                }
-
-                Text("Ver detalle")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.primary.opacity(0.72))
-
+                consumedLabel
+                Spacer(minLength: 8)
+                remainingLabel
+                    .layoutPriority(1)
                 Image(systemName: "chevron.right")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -309,20 +287,84 @@ private struct BudgetSummaryCard: View {
     }
 
     private func forecastStatusPill(_ forecast: MonthlyBudgetForecast) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: forecast.status.systemImage)
-                .font(.caption)
-            Text(forecast.status.title)
-                .font(.caption.weight(.semibold))
-            Spacer(minLength: 8)
-            Text(forecast.reliabilityLabel)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.secondary)
+        let tint = BudgetColorPalette.status(for: forecast.status, colorScheme: colorScheme)
+
+        return HStack(spacing: 8) {
+            forecastStatusTitle(forecast, tint: tint)
+                .layoutPriority(1)
+            Spacer(minLength: 6)
+            forecastReliabilityLabel(forecast)
         }
-        .foregroundStyle(forecast.status.tint)
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
-        .background(forecast.status.tint.opacity(colorScheme == .dark ? 0.16 : 0.11), in: Capsule())
+        .background(
+            tint.opacity(colorScheme == .dark ? 0.16 : 0.11),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+    }
+
+    private var consumedLabel: some View {
+        Text("\(Int(progress * 100)) % consumido")
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.85)
+    }
+
+    @ViewBuilder
+    private var remainingLabel: some View {
+        if remaining > 0 {
+            Text("Quedan \(remaining.masked(hideBalances, code: currencyCode))")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        } else if remaining < 0 {
+            Text("Superado \((-remaining).masked(hideBalances, code: currencyCode))")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.red)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        } else {
+            Text("Presupuesto agotado")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.orange)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+    }
+
+    private func forecastStatusTitle(
+        _ forecast: MonthlyBudgetForecast,
+        tint: Color
+    ) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: forecast.status.systemImage)
+                .font(.caption)
+                .foregroundStyle(tint)
+            Text(forecast.status.title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+        }
+        .lineLimit(1)
+        .minimumScaleFactor(0.8)
+    }
+
+    private func forecastReliabilityLabel(
+        _ forecast: MonthlyBudgetForecast
+    ) -> some View {
+        ViewThatFits(in: .horizontal) {
+            reliabilityText(forecast.reliabilityLabel)
+            reliabilityText(forecast.compactReliabilityLabel)
+        }
+    }
+
+    private func reliabilityText(_ label: String) -> some View {
+        Text(label)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.primary.opacity(0.72))
+            .lineLimit(1)
+            .minimumScaleFactor(0.75)
     }
 }
 
@@ -508,7 +550,7 @@ private struct MonthlyBudgetForecast {
             case .good: return "Vas bien"
             case .tight: return "Vas justo"
             case .warning: return "Cuidado"
-            case .exceeded: return "Ya has superado"
+            case .exceeded: return "Presupuesto excedido"
             }
         }
 
@@ -523,7 +565,7 @@ private struct MonthlyBudgetForecast {
             }
         }
 
-        var tint: Color {
+        var baseTint: Color {
             switch self {
             case .noBudget: return .secondary
             case .noSpending: return .blue
@@ -670,23 +712,84 @@ private struct MonthlyBudgetForecast {
         case .noBudget:
             return "Sin datos"
         case .noSpending:
-            return "Esperando gastos"
+            return "Sin gastos aún"
         default:
             if forecastBasis == .historicalAverage {
-                return "Basado en \(historicalMonthsUsed) meses recientes"
+                return "Media de \(historicalMonthsUsed) meses"
             }
 
             switch reliability {
             case .low:
                 return "Estimación inicial"
             case .medium, .high:
-                return "Basado en tu ritmo actual"
+                return "Ritmo actual"
+            }
+        }
+    }
+
+    var compactReliabilityLabel: String {
+        switch status {
+        case .noBudget:
+            return "Sin datos"
+        case .noSpending:
+            return "Sin gastos"
+        default:
+            if forecastBasis == .historicalAverage {
+                return "\(historicalMonthsUsed) meses"
+            }
+
+            switch reliability {
+            case .low:
+                return "Inicial"
+            case .medium, .high:
+                return "Ritmo actual"
             }
         }
     }
 
     func accessibilitySummary(currencyCode: String, hidesAmounts: Bool) -> String {
         "Previsión mensual. \(fullMessage) Gastado \(spent.masked(hidesAmounts, code: currencyCode)) de \(budgetAmount.masked(hidesAmounts, code: currencyCode)). Previsión final \(projectedFinalSpend.masked(hidesAmounts, code: currencyCode))."
+    }
+}
+
+private enum BudgetColorPalette {
+    static func progress(for progress: Double, colorScheme: ColorScheme) -> Color {
+        switch progress {
+        case ..<0.6:
+            return readableGreen(for: colorScheme)
+        case ..<0.8:
+            return readableYellow(for: colorScheme)
+        case ..<1.0:
+            return .orange
+        default:
+            return .red
+        }
+    }
+
+    static func status(
+        for status: MonthlyBudgetForecast.Status,
+        colorScheme: ColorScheme
+    ) -> Color {
+        switch status {
+        case .good:
+            return readableGreen(for: colorScheme)
+        case .tight:
+            return readableYellow(for: colorScheme)
+        default:
+            return status.baseTint
+        }
+    }
+
+    private static func readableGreen(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? .green
+            : Color(red: 0.031, green: 0.498, blue: 0.357)
+    }
+
+    private static func readableYellow(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark
+            ? .yellow
+            : Color(red: 0.549, green: 0.392, blue: 0.0)
     }
 }
 
@@ -726,7 +829,7 @@ private struct MonthlyBudgetMiniChart: View {
             Canvas { context, size in
                 let rect = CGRect(origin: .zero, size: size)
                 drawLine(points: forecast.idealPoints, in: rect, maxValue: maxValue, context: &context, color: .secondary.opacity(0.42), dashed: true)
-                drawLine(points: forecast.projectedPoints, in: rect, maxValue: maxValue, context: &context, color: tint.opacity(0.46), dashed: true)
+                drawLine(points: forecast.projectedPoints, in: rect, maxValue: maxValue, context: &context, color: tint.opacity(0.72), dashed: true)
                 drawLine(points: forecast.cumulativePoints, in: rect, maxValue: maxValue, context: &context, color: tint, dashed: false)
             }
             .overlay(alignment: .bottomLeading) {
@@ -775,7 +878,9 @@ private struct MonthlyBudgetForecastDetailSection: View {
     let hideBalances: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        let statusTint = BudgetColorPalette.status(for: forecast.status, colorScheme: colorScheme)
+
+        return VStack(alignment: .leading, spacing: 14) {
             Label("Previsión mensual", systemImage: forecast.status.systemImage)
                 .font(.headline)
                 .foregroundStyle(.primary)
@@ -785,9 +890,9 @@ private struct MonthlyBudgetForecastDetailSection: View {
                 HStack(alignment: .top, spacing: 12) {
                     Image(systemName: forecast.status.systemImage)
                         .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(forecast.status.tint)
+                        .foregroundStyle(statusTint)
                         .frame(width: 42, height: 42)
-                        .background(forecast.status.tint.opacity(colorScheme == .dark ? 0.18 : 0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .background(statusTint.opacity(colorScheme == .dark ? 0.18 : 0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
 
                     VStack(alignment: .leading, spacing: 5) {
                         Text(forecast.status.title)
@@ -810,7 +915,7 @@ private struct MonthlyBudgetForecastDetailSection: View {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     ForecastMetricTile(title: "Gastado", value: forecast.spent.masked(hideBalances, code: currencyCode), tint: .primary)
                     ForecastMetricTile(title: "Presupuesto", value: forecast.budgetAmount.masked(hideBalances, code: currencyCode), tint: .primary)
-                    ForecastMetricTile(title: "Previsión final", value: forecast.projectedFinalSpend.masked(hideBalances, code: currencyCode), tint: forecast.status.tint)
+                    ForecastMetricTile(title: "Previsión final", value: forecast.projectedFinalSpend.masked(hideBalances, code: currencyCode), tint: statusTint)
                     ForecastMetricTile(title: "Recomendación diaria", value: forecast.dailyRecommendation.masked(hideBalances, code: currencyCode), tint: .financeAccent)
                 }
             }
@@ -841,16 +946,22 @@ private struct MonthlyBudgetForecastDetailSection: View {
 }
 
 private struct MonthlyBudgetLargeChart: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     let forecast: MonthlyBudgetForecast
     let currencyCode: String
     let hideBalances: Bool
+
+    private var statusTint: Color {
+        BudgetColorPalette.status(for: forecast.status, colorScheme: colorScheme)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 10) {
                 MonthlyBudgetMiniChart(
                     forecast: forecast,
-                    tint: forecast.status.tint,
+                    tint: statusTint,
                     maxValueOverride: chartMaxValueDouble
                 )
                     .padding(.top, 4)
@@ -861,8 +972,8 @@ private struct MonthlyBudgetLargeChart: View {
 
             HStack(spacing: 12) {
                 ForecastLegendItem(label: "Ideal", tint: .secondary, dashed: true)
-                ForecastLegendItem(label: "Real", tint: forecast.status.tint, dashed: false)
-                ForecastLegendItem(label: "Proyección", tint: forecast.status.tint.opacity(0.62), dashed: true)
+                ForecastLegendItem(label: "Real", tint: statusTint, dashed: false)
+                ForecastLegendItem(label: "Proyección", tint: statusTint, dashed: true)
             }
             .font(.caption2.weight(.medium))
         }
@@ -914,7 +1025,7 @@ private struct ForecastLegendItem: View {
             RoundedRectangle(cornerRadius: 2)
                 .fill(tint)
                 .frame(width: dashed ? 14 : 18, height: dashed ? 3 : 4)
-                .opacity(dashed ? 0.55 : 1)
+                .opacity(dashed ? 0.72 : 1)
             Text(label)
                 .foregroundStyle(.secondary)
         }
@@ -992,12 +1103,7 @@ private struct BudgetItemRow: View {
     }
 
     private var progressColor: Color {
-        switch progress {
-        case ..<0.6:  return .green
-        case ..<0.8:  return .yellow
-        case ..<1.0:  return .orange
-        default:      return .red
-        }
+        BudgetColorPalette.progress(for: progress, colorScheme: colorScheme)
     }
 
     private var remaining: Decimal { item.allocatedAmount - spent }
