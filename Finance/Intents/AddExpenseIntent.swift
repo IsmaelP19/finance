@@ -27,6 +27,7 @@ struct AddExpenseIntent: AppIntent {
     @Parameter(title: "Cuenta bancaria")
     var account: BankAccountEntity
 
+    @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let decimalAmount = Decimal(amount)
 

@@ -146,12 +146,14 @@ enum ManualSyncService {
         }
     }
 
+    @MainActor
     static func latestBackup() throws -> BackupInfo {
         try withSyncDirectoryAccess { directoryURL in
             try latestBackup(in: directoryURL)
         }
     }
 
+    @MainActor
     static func importLatestBackup() throws -> (DataExportService.ImportResult, Date) {
         try withSyncDirectoryAccess { directoryURL in
             let latest = try latestBackup(in: directoryURL)
@@ -176,10 +178,21 @@ enum ManualSyncService {
     @MainActor static func shouldPromptForNewBackup() -> Bool {
         guard let latest = try? latestBackup() else { return false }
 
+        return shouldPromptForNewBackup(latestExportDate: latest.exportDate)
+    }
+
+    @MainActor
+    static func shouldPromptForNewBackup(in directoryURL: URL) -> Bool {
+        guard let latest = try? latestBackup(in: directoryURL) else { return false }
+
+        return shouldPromptForNewBackup(latestExportDate: latest.exportDate)
+    }
+
+    private static func shouldPromptForNewBackup(latestExportDate: Date) -> Bool {
         let acknowledgedDate = maxDate(lastImportedExportDate, lastDismissedExportDate)
         let baseline = maxDate(acknowledgedDate, lastExportedExportDate)
         guard let baseline else { return true }
-        return latest.exportDate > baseline
+        return latestExportDate > baseline
     }
 
     static func syncFolderDisplayName() -> String {
@@ -196,18 +209,18 @@ enum ManualSyncService {
         }
     }
 
+    @MainActor
     private static func listBackups(in directoryURL: URL) throws -> [BackupInfo] {
         let files = try FileManager.default.contentsOfDirectory(
             at: directoryURL,
-            includingPropertiesForKeys: [.contentModificationDateKey],
+            includingPropertiesForKeys: nil,
             options: [.skipsHiddenFiles]
         )
 
         return files
             .filter { $0.lastPathComponent.hasPrefix("Finance_backup_") && $0.pathExtension.lowercased() == "json" }
-            .map { fileURL in
-                let fileModDate = backupDate(for: fileURL)
-                let exportDate: Date = fileModDate ?? .distantPast
+            .compactMap { fileURL in
+                guard let exportDate = DataExportService.readExportDate(from: fileURL) else { return nil }
                 return BackupInfo(url: fileURL, exportDate: exportDate)
             }
             .sorted { lhs, rhs in
@@ -218,6 +231,7 @@ enum ManualSyncService {
             }
     }
 
+    @MainActor
     private static func pruneBackups(in directoryURL: URL) throws {
         let backups = try listBackups(in: directoryURL)
         guard backups.count > maxBackupFiles else { return }
@@ -264,11 +278,8 @@ enum ManualSyncService {
         return BackupInfo(url: destinationURL, exportDate: exportDate)
     }
 
-    private static func backupDate(for fileURL: URL) -> Date? {
-        try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-    }
-
-    private static func latestBackup(in directoryURL: URL) throws -> BackupInfo {
+    @MainActor
+    static func latestBackup(in directoryURL: URL) throws -> BackupInfo {
         let backups = try listBackups(in: directoryURL)
         guard let latest = backups.first else {
             throw SyncError.noBackupsFound

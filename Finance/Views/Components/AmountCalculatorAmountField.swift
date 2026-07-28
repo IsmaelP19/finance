@@ -276,12 +276,11 @@ struct AmountCalculatorInlineAmountField: View {
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 4) {
-                if isComposingExpression, let expressionPreviewText {
-                    Text("= \(expressionPreviewText)")
-                        .font(previewFont)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
+            HStack(alignment: .center, spacing: 4) {
+                if isComposingExpression, !expressionPrefixText.isEmpty {
+                    Text(expressionPrefixText)
+                        .font(font)
+                        .foregroundStyle(.primary)
                         .allowsHitTesting(false)
                 }
 
@@ -293,7 +292,7 @@ struct AmountCalculatorInlineAmountField: View {
                     placeholder: isComposingExpression ? "" : placeholder,
                     font: uiFont,
                     textColor: UIColor.label,
-                    textAlignment: .right,
+                    textAlignment: isComposingExpression ? .left : .right,
                     tintColor: UIColor(tint),
                     isFocused: focus.wrappedValue,
                     locksCaretAtEnd: isComposingExpression,
@@ -316,10 +315,11 @@ struct AmountCalculatorInlineAmountField: View {
                     handleKeyboardTextChange(oldValue: oldValue, newValue: newValue)
                 }
 
-                if isComposingExpression, !expressionPrefixText.isEmpty {
-                    Text(expressionPrefixText)
-                        .font(font)
-                        .foregroundStyle(.primary)
+                if isComposingExpression, let expressionPreviewText {
+                    Text("= \(expressionPreviewText)")
+                        .font(previewFont)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
                         .allowsHitTesting(false)
                 }
             }

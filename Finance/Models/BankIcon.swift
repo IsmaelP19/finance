@@ -30,5 +30,5 @@ enum BankIcon: String, CaseIterable, Identifiable, Codable {
     var id: String { rawValue }
 
     /// Nombre del SF Symbol para usar en Image(systemName:).
-    var systemName: String { rawValue }
+    nonisolated var systemName: String { rawValue }
 }

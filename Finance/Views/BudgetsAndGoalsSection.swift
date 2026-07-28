@@ -758,7 +758,7 @@ private enum BudgetColorPalette {
         case ..<0.6:
             return readableGreen(for: colorScheme)
         case ..<0.8:
-            return readableYellow(for: colorScheme)
+            return readableWarning(for: colorScheme)
         case ..<1.0:
             return .orange
         default:
@@ -774,7 +774,9 @@ private enum BudgetColorPalette {
         case .good:
             return readableGreen(for: colorScheme)
         case .tight:
-            return readableYellow(for: colorScheme)
+            return readableWarning(for: colorScheme)
+        case .warning:
+            return readableWarning(for: colorScheme)
         default:
             return status.baseTint
         }
@@ -786,10 +788,10 @@ private enum BudgetColorPalette {
             : Color(red: 0.031, green: 0.498, blue: 0.357)
     }
 
-    private static func readableYellow(for colorScheme: ColorScheme) -> Color {
+    private static func readableWarning(for colorScheme: ColorScheme) -> Color {
         colorScheme == .dark
-            ? .yellow
-            : Color(red: 0.549, green: 0.392, blue: 0.0)
+            ? Color(red: 0.925, green: 0.494, blue: 0.0) // --rui-color-warning: #EC7E00
+            : Color(red: 0.776, green: 0.353, blue: 0.0) // #C65A00, vivid light-mode variant
     }
 }
 

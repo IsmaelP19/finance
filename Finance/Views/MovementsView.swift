@@ -203,6 +203,9 @@ struct MovementsView: View {
     @State private var searchText = ""
     @State private var showingPendingAlert = false
     @State private var pendingAlertMessage = ""
+    @State private var pendingRecurringToEditAmount: PendingRecurringMovement?
+    @State private var pendingRecurringToManage: PendingRecurringMovement?
+    @State private var showingPendingRecurringActions = false
     @State private var loadedMovements: [Movement] = []
     @State private var sourceFetchOffset = 0
     @State private var hasMoreSourceMovements = true
@@ -443,14 +446,15 @@ struct MovementsView: View {
                             PendingRecurringMovementRowView(
                                 pending: pending,
                                 currencyCode: appCurrencyCode,
-                                hideBalances: hideBalances
+                                hideBalances: hideBalances,
+                                onEditAmount: { pendingRecurringToEditAmount = pending }
                             )
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                     Button {
-                                        confirmPendingRecurring(pending)
+                                        confirmPendingRecurringImmediately(pending)
                                     } label: {
                                         Label("Confirmar", systemImage: "checkmark.circle.fill")
                                     }
@@ -458,10 +462,18 @@ struct MovementsView: View {
                                 }
 
                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                    Button(role: .destructive) {
-                                        cancelPendingRecurring(pending.rule)
+                                    Button {
+                                        pendingRecurringToEditAmount = pending
                                     } label: {
-                                        Label("Cancelar", systemImage: "xmark.circle")
+                                        Label("Editar importe", systemImage: "pencil")
+                                    }
+                                    .tint(.financeAccent)
+
+                                    Button {
+                                        pendingRecurringToManage = pending
+                                        showingPendingRecurringActions = true
+                                    } label: {
+                                        Label("Gestionar", systemImage: "ellipsis.circle")
                                     }
                                 }
                         }
@@ -511,54 +523,7 @@ struct MovementsView: View {
                         )
                     }
 
-                    Section {
-                        ForEach(visibleMovementRows) { row in
-                            MovementRowView(
-                                movement: row.movement,
-                                currencyCode: appCurrencyCode,
-                                hideBalances: hideBalances,
-                                recoveredReimbursementAmount: row.recoveredReimbursementAmount
-                            )
-                                .transition(.asymmetric(
-                                    insertion: .move(edge: .top).combined(with: .opacity),
-                                    removal: .opacity
-                                ))
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
-                                 .contentShape(Rectangle())
-                                 .onTapGesture {
-                                     presentMovementDetail(for: row.movement)
-                                 }
-                                 .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                     if !row.isLocked {
-                                         Button {
-                                             presentEditMovement(for: row.movement)
-                                         } label: {
-                                             Label("Editar", systemImage: "pencil")
-                                         }
-                                        .tint(.financeAccent)
-                                    }
-                                }
-                        }
-                        .onDelete(perform: deleteMovements)
-
-                        if visibleFilteredMovements.count < movementCount {
-                            HStack {
-                                Spacer()
-                                ProgressView()
-                                Spacer()
-                            }
-                            .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 14, trailing: 16))
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
-                            .onAppear {
-                                loadNextMovementPage()
-                            }
-                        }
-                    }
-                    .animation(.snappy(duration: 0.28, extraBounce: 0.04), value: visibleFilteredMovements.map(\.id))
-                    .animation(.snappy(duration: 0.24, extraBounce: 0), value: recoveredReimbursementAmountsByExpenseID)
+                    movementRowsSection
                 }
 
             }
@@ -709,11 +674,100 @@ struct MovementsView: View {
             }) { selection in
                 AddMovementView(movementToEdit: selection.movement)
             }
+            .sheet(item: $pendingRecurringToEditAmount) { pending in
+                RecurringOccurrenceAmountEditor(
+                    concept: pending.rule.concept,
+                    scheduledDate: pending.dueDate,
+                    suggestedAmount: pending.rule.amount,
+                    currencyCode: appCurrencyCode
+                ) { amount, applyToFuture in
+                    try confirmPendingRecurring(
+                        pending,
+                        amount: amount,
+                        applyToFuture: applyToFuture
+                    )
+                }
+            }
+            .confirmationDialog(
+                "Gestionar recurrencia",
+                isPresented: $showingPendingRecurringActions,
+                titleVisibility: .visible,
+                presenting: pendingRecurringToManage
+            ) { pending in
+                Button("Omitir solo esta ocurrencia") {
+                    skipPendingRecurring(pending)
+                }
+                Button("Finalizar recurrencia", role: .destructive) {
+                    endPendingRecurring(pending)
+                }
+                Button("Cancelar", role: .cancel) {}
+            } message: { pending in
+                Text("\(pending.rule.concept) · \(pending.dueDate.asSpanishShortDate())")
+            }
             .alert("Acción no disponible", isPresented: $showingPendingAlert) {
                 Button("Aceptar", role: .cancel) {}
             } message: {
                 Text(pendingAlertMessage)
             }
+        }
+    }
+
+    private var movementRowsSection: some View {
+        Section {
+            ForEach(visibleMovementRows) { row in
+                movementRow(for: row)
+            }
+            .onDelete(perform: deleteMovements)
+
+            if visibleFilteredMovements.count < movementCount {
+                movementPaginationRow
+            }
+        }
+        .animation(.snappy(duration: 0.28, extraBounce: 0.04), value: visibleFilteredMovements.map(\.id))
+        .animation(.snappy(duration: 0.24, extraBounce: 0), value: recoveredReimbursementAmountsByExpenseID)
+    }
+
+    private func movementRow(for row: MovementRowData) -> some View {
+        MovementRowView(
+            movement: row.movement,
+            currencyCode: appCurrencyCode,
+            hideBalances: hideBalances,
+            recoveredReimbursementAmount: row.recoveredReimbursementAmount
+        )
+        .transition(.asymmetric(
+            insertion: .move(edge: .top).combined(with: .opacity),
+            removal: .opacity
+        ))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            presentMovementDetail(for: row.movement)
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            if !row.isLocked {
+                Button {
+                    presentEditMovement(for: row.movement)
+                } label: {
+                    Label("Editar", systemImage: "pencil")
+                }
+                .tint(.financeAccent)
+            }
+        }
+    }
+
+    private var movementPaginationRow: some View {
+        HStack {
+            Spacer()
+            ProgressView()
+            Spacer()
+        }
+        .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 14, trailing: 16))
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .onAppear {
+            loadNextMovementPage()
         }
     }
 
@@ -1302,101 +1356,72 @@ struct MovementsView: View {
         return selectedCategoryFilters.contains(.category(categoryID))
     }
 
-    private func confirmPendingRecurring(_ pending: PendingRecurringMovement) {
-        guard pending.rule.type != .transfer else {
-            pendingAlertMessage = "Las transferencias no se pueden confirmar como recurrentes."
-            showingPendingAlert = true
-            return
-        }
-
-        guard let account = pending.rule.account else {
-            pendingAlertMessage = "La cuenta asociada ya no está disponible. Edita la recurrencia para continuar."
-            showingPendingAlert = true
-            return
-        }
-
-        guard account.isActive else {
-            pending.rule.isActive = false
-            pending.rule.updatedAt = Date()
-            pendingAlertMessage = "La cuenta asociada está archivada. La recurrencia se ha desactivado."
-            showingPendingAlert = true
-            return
-        }
-
-        guard !RecurringMovementService.isOccurrenceConfirmed(
-            ruleID: pending.rule.id,
-            dueDate: pending.dueDate,
-            movements: recurringConfirmationMovements
-        ) else {
-            return
-        }
-
-        let resultingBalance = applyRecurringImpact(
-            type: pending.rule.type,
-            amount: pending.rule.amount,
-            account: account
-        )
-
-        let confirmationDate = Date()
-        let movement = Movement(
-            concept: pending.rule.concept,
-            amount: pending.rule.amount,
-            type: pending.rule.type,
-            occurredAt: confirmationDate,
-            account: account,
-            destinationAccount: nil,
-            category: pending.rule.category,
-            notes: pending.rule.notes,
-            resultingBalance: resultingBalance,
-            recurringRuleId: pending.rule.id,
-            recurringScheduledAt: pending.dueDate
-        )
-
-        withAnimation {
-            modelContext.insert(movement)
-            pending.rule.updatedAt = Date()
-        }
+    private func confirmPendingRecurring(
+        _ pending: PendingRecurringMovement,
+        amount: Decimal,
+        applyToFuture: Bool
+    ) throws {
         do {
-            _ = try MovementBalanceService.rebuild(in: modelContext)
-            try modelContext.save()
+            let movement = try RecurringMovementService.confirmOccurrence(
+                rule: pending.rule,
+                dueDate: pending.dueDate,
+                amount: amount,
+                applyToFuture: applyToFuture,
+                currencyCode: appCurrencyCode,
+                in: modelContext
+            )
+            recurringConfirmationMovements.append(movement)
+            HapticFeedback.success()
+            mergeVisibleMovements([movement], preferredVisibleCount: targetVisibleMovementCount(from: loadedMovements.count))
+            refreshSummaryAndRecurringStateSilently(refreshAvailableYears: true)
         } catch {
             modelContext.rollback()
             CrashReportService.shared.recordDiagnosticEvent(
-                "MovementBalanceService.rebuild failed error=\(error.localizedDescription)"
+                "RecurringMovementService.confirmOccurrence failed error=\(error.localizedDescription)"
             )
+            throw error
+        }
+    }
+
+    private func confirmPendingRecurringImmediately(_ pending: PendingRecurringMovement) {
+        do {
+            try confirmPendingRecurring(pending, amount: pending.rule.amount, applyToFuture: false)
+        } catch {
             pendingAlertMessage = "No se pudo confirmar el movimiento recurrente: \(error.localizedDescription)"
             showingPendingAlert = true
-            return
-        }
-        recurringConfirmationMovements.append(movement)
-
-        HapticFeedback.success()
-        mergeVisibleMovements([movement], preferredVisibleCount: targetVisibleMovementCount(from: loadedMovements.count))
-        refreshSummaryAndRecurringStateSilently(refreshAvailableYears: true)
-    }
-
-    private func cancelPendingRecurring(_ recurring: RecurringMovement) {
-        withAnimation {
-            recurring.isActive = false
-            recurring.updatedAt = Date()
         }
     }
 
-    @discardableResult
-    private func applyRecurringImpact(type: MovementType, amount: Decimal, account: BankAccount) -> Decimal {
-        account.currency = appCurrencyCode
-
-        switch type {
-        case .expense:
-            account.balance -= amount
-        case .income:
-            account.balance += amount
-        case .transfer:
-            break
+    private func skipPendingRecurring(_ pending: PendingRecurringMovement) {
+        do {
+            try RecurringMovementService.skipOccurrence(
+                rule: pending.rule,
+                dueDate: pending.dueDate,
+                in: modelContext
+            )
+            HapticFeedback.success()
+            refreshSummaryAndRecurringStateSilently()
+        } catch {
+            modelContext.rollback()
+            pendingAlertMessage = "No se pudo omitir la ocurrencia: \(error.localizedDescription)"
+            showingPendingAlert = true
         }
+    }
 
-        account.updatedAt = Date()
-        return account.balance
+    private func endPendingRecurring(_ pending: PendingRecurringMovement) {
+        do {
+            try RecurringMovementService.endRecurrence(
+                pending.rule,
+                before: pending.dueDate,
+                in: modelContext
+            )
+            HapticFeedback.success()
+            refreshSummaryAndRecurringStateSilently()
+        } catch {
+            modelContext.rollback()
+            pendingAlertMessage = "No se pudo finalizar la recurrencia: \(error.localizedDescription)"
+            showingPendingAlert = true
+        }
     }
 
     private func matchesSearch(_ movement: Movement, query: String) -> Bool {
@@ -2130,6 +2155,7 @@ private struct PendingRecurringMovementRowView: View {
     let pending: PendingRecurringMovement
     let currencyCode: String
     let hideBalances: Bool
+    let onEditAmount: () -> Void
 
     private var statusColor: Color {
         switch pending.status {
@@ -2194,6 +2220,11 @@ private struct PendingRecurringMovementRowView: View {
             dateText: pending.dueDate.asSpanishShortDate(),
             style: .movementListCard
         )
+        .contextMenu {
+            Button(action: onEditAmount) {
+                Label("Editar importe", systemImage: "pencil")
+            }
+        }
     }
 }
 

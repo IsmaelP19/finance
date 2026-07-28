@@ -233,18 +233,16 @@ enum MonthlyWrappedService {
     private static let lastViewedMonthKey = "monthlyWrappedLastViewedMonth"
     private static let reminderIdentifier = "monthlyWrappedReminder"
 
+    @MainActor
     static func configureMonthlyReminder() {
-        let center = UNUserNotificationCenter.current()
-
-        center.getNotificationSettings { settings in
-            switch settings.authorizationStatus {
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            switch await center.notificationSettings().authorizationStatus {
             case .authorized, .provisional, .ephemeral:
-                scheduleMonthlyReminder(center: center)
+                scheduleMonthlyReminder()
             case .notDetermined:
-                center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-                    guard granted else { return }
-                    scheduleMonthlyReminder(center: center)
-                }
+                guard (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) == true else { return }
+                scheduleMonthlyReminder()
             case .denied:
                 return
             @unknown default:
@@ -351,7 +349,9 @@ enum MonthlyWrappedService {
         )
     }
 
-    private static func scheduleMonthlyReminder(center: UNUserNotificationCenter) {
+    @MainActor
+    private static func scheduleMonthlyReminder() {
+        let center = UNUserNotificationCenter.current()
         center.removePendingNotificationRequests(withIdentifiers: [reminderIdentifier])
 
         var components = DateComponents()

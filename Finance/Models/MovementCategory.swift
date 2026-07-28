@@ -74,7 +74,7 @@ enum CategoryIcon: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
-    var systemName: String {
+    nonisolated var systemName: String {
         switch self {
         case .tag: return "tag.fill"
         case .cart: return "cart.fill"
@@ -114,7 +114,7 @@ enum CategoryColor: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
-    var color: Color {
+    nonisolated var color: Color {
         switch self {
         case .red: return .red
         case .orange: return .orange

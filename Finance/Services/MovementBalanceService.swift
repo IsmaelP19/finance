@@ -39,7 +39,7 @@ enum MovementBalanceService {
         let movementsChanged: Int
     }
 
-    static func reconstruct(
+    nonisolated static func reconstruct(
         accounts: [AccountSnapshot],
         movements: [MovementSnapshot]
     ) -> Reconstruction {
@@ -73,6 +73,7 @@ enum MovementBalanceService {
     /// Recalcula los valores históricos persistidos conservando los totales
     /// representados por el estado actual de las cuentas.
     @discardableResult
+    @MainActor
     static func rebuild(in modelContext: ModelContext) throws -> Reconstruction {
         let accounts = try modelContext.fetch(FetchDescriptor<BankAccount>())
         let movements = try modelContext.fetch(FetchDescriptor<Movement>())
@@ -104,6 +105,7 @@ enum MovementBalanceService {
     }
 
     @discardableResult
+    @MainActor
     static func repair(in modelContext: ModelContext) throws -> RepairReport {
         let accounts = try modelContext.fetch(FetchDescriptor<BankAccount>())
         let movements = try modelContext.fetch(FetchDescriptor<Movement>())
@@ -127,13 +129,13 @@ enum MovementBalanceService {
         )
     }
 
-    private static func stableOrder(_ lhs: MovementSnapshot, _ rhs: MovementSnapshot) -> Bool {
+    nonisolated private static func stableOrder(_ lhs: MovementSnapshot, _ rhs: MovementSnapshot) -> Bool {
         if lhs.occurredAt != rhs.occurredAt { return lhs.occurredAt < rhs.occurredAt }
         if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
         return lhs.id.uuidString < rhs.id.uuidString
     }
 
-    private static func applyNetImpact(
+    nonisolated private static func applyNetImpact(
         of movement: MovementSnapshot,
         to impacts: inout [UUID: Decimal]
     ) {
@@ -149,7 +151,7 @@ enum MovementBalanceService {
         }
     }
 
-    private static func applyBalanceImpact(
+    nonisolated private static func applyBalanceImpact(
         of movement: MovementSnapshot,
         to balances: inout [UUID: Decimal]
     ) {

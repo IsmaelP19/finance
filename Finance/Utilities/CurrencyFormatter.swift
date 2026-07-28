@@ -71,8 +71,18 @@ extension Decimal {
 
     /// Formatea el valor para campos de edición (sin símbolo de moneda).
     /// Ejemplo: 13.20 -> "13,20" · 1000 -> "1.000,00"
-    func asEditableAmount() -> String {
-        AppNumberFormatter.decimal.string(from: self as NSDecimalNumber) ?? "0,00"
+    nonisolated func asEditableAmount() -> String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.usesGroupingSeparator = true
+        formatter.groupingSeparator = "."
+        formatter.decimalSeparator = ","
+        formatter.groupingSize = 3
+        formatter.secondaryGroupingSize = 3
+        formatter.maximumFractionDigits = 2
+        formatter.minimumFractionDigits = 2
+        return formatter.string(from: self as NSDecimalNumber) ?? "0,00"
     }
 
     /// Devuelve true si el valor es negativo.
@@ -94,7 +104,7 @@ extension Int {
 enum EditableAmount {
     /// Convierte texto de campo editable a `Decimal`.
     /// Ejemplos: `"2.426,83"` → 2426.83 · `"13,20"` → 13.20 · `"1.000"` → 1000
-    static func parse(_ text: String) -> Decimal? {
+    nonisolated static func parse(_ text: String) -> Decimal? {
         let cleaned = text.replacingOccurrences(of: " ", with: "")
         guard !cleaned.isEmpty else { return nil }
 
@@ -114,7 +124,7 @@ enum EditableAmount {
 
     /// Limita la entrada a dígitos, separador de miles `.` y una coma decimal.
     /// No convierte `.` en `,` para evitar corromper valores como `"2.426,83"`.
-    static func sanitizeInput(_ text: String) -> String {
+    nonisolated static func sanitizeInput(_ text: String) -> String {
         let trimmed = text.replacingOccurrences(of: " ", with: "")
         var output = ""
         var hasDecimalSeparator = false

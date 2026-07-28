@@ -10,6 +10,7 @@ import Foundation
 import SwiftData
 @testable import Finance
 
+@MainActor
 struct FinanceTests {
 
     @Test func activeAccountIsVisibleAfterCreation() async throws {
@@ -22,6 +23,76 @@ struct FinanceTests {
         let account = makeAccount(createdAt: date(year: 2026, month: 5, day: 2))
 
         #expect(!account.isVisibleInPatrimony(at: date(year: 2026, month: 5, day: 1)))
+    }
+
+    @Test func recentlyExportedBackupDoesNotPromptWhenModificationDateIsNewer() async throws {
+        let exportDate = date(year: 2026, month: 7, day: 1)
+        let directoryURL = try makeBackupDirectory()
+        defer {
+            ManualSyncService.clearConfiguration()
+            try? FileManager.default.removeItem(at: directoryURL)
+        }
+
+        let backupURL = try writeBackup(named: "Finance_backup_recent.json", exportDate: exportDate, in: directoryURL)
+        try FileManager.default.setAttributes(
+            [.modificationDate: exportDate.addingTimeInterval(86_400)],
+            ofItemAtPath: backupURL.path
+        )
+        ManualSyncService.markExported(exportDate: exportDate)
+
+        #expect(!ManualSyncService.shouldPromptForNewBackup(in: directoryURL))
+    }
+
+    @Test func latestBackupUsesEmbeddedExportDateWhenModificationDatesDiffer() async throws {
+        let olderExportDate = date(year: 2026, month: 7, day: 1)
+        let newerExportDate = date(year: 2026, month: 7, day: 3)
+        let directoryURL = try makeBackupDirectory()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+
+        let olderURL = try writeBackup(named: "Finance_backup_older.json", exportDate: olderExportDate, in: directoryURL)
+        let newerURL = try writeBackup(named: "Finance_backup_newer.json", exportDate: newerExportDate, in: directoryURL)
+        try FileManager.default.setAttributes(
+            [.modificationDate: newerExportDate.addingTimeInterval(-86_400)],
+            ofItemAtPath: newerURL.path
+        )
+        try FileManager.default.setAttributes(
+            [.modificationDate: newerExportDate.addingTimeInterval(86_400)],
+            ofItemAtPath: olderURL.path
+        )
+
+        let latest = try ManualSyncService.latestBackup(in: directoryURL)
+
+        #expect(latest.url == newerURL)
+        #expect(latest.exportDate == newerExportDate)
+    }
+
+    @Test func genuinelyNewerRemoteBackupPrompts() async throws {
+        let localExportDate = date(year: 2026, month: 7, day: 1)
+        let remoteExportDate = date(year: 2026, month: 7, day: 2)
+        let directoryURL = try makeBackupDirectory()
+        defer {
+            ManualSyncService.clearConfiguration()
+            try? FileManager.default.removeItem(at: directoryURL)
+        }
+
+        _ = try writeBackup(named: "Finance_backup_remote.json", exportDate: remoteExportDate, in: directoryURL)
+        ManualSyncService.markExported(exportDate: localExportDate)
+
+        #expect(ManualSyncService.shouldPromptForNewBackup(in: directoryURL))
+    }
+
+    @Test func invalidBackupIsIgnoredWithoutBreakingLatestBackupFlow() async throws {
+        let exportDate = date(year: 2026, month: 7, day: 2)
+        let directoryURL = try makeBackupDirectory()
+        defer { try? FileManager.default.removeItem(at: directoryURL) }
+
+        try Data("not valid json".utf8).write(to: directoryURL.appendingPathComponent("Finance_backup_invalid.json"))
+        let validURL = try writeBackup(named: "Finance_backup_valid.json", exportDate: exportDate, in: directoryURL)
+
+        let latest = try ManualSyncService.latestBackup(in: directoryURL)
+
+        #expect(latest.url == validURL)
+        #expect(latest.exportDate == exportDate)
     }
 
     @Test func archivedAccountRemainsVisibleBeforeArchiveDate() async throws {
@@ -73,6 +144,229 @@ struct FinanceTests {
             movements: [movement],
             calendar: testCalendar
         ))
+    }
+
+    @Test func skippedRecurringOccurrenceIsNotPendingButLaterOccurrencesRemain() async throws {
+        let account = makeAccount(createdAt: date(year: 2026, month: 5, day: 1))
+        let skippedDate = date(year: 2026, month: 5, day: 5)
+        let rule = RecurringMovement(
+            concept: "Variable bill",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: skippedDate,
+            account: account,
+            skippedOccurrenceDates: [skippedDate]
+        )
+
+        let pending = RecurringMovementService.pendingMovements(
+            for: [rule],
+            confirmedMovements: [],
+            now: date(year: 2026, month: 5, day: 1),
+            horizonDays: 70,
+            calendar: testCalendar
+        )
+
+        #expect(!pending.contains { testCalendar.isDate($0.dueDate, inSameDayAs: skippedDate) })
+        #expect(pending.contains { testCalendar.isDate($0.dueDate, inSameDayAs: date(year: 2026, month: 6, day: 5)) })
+    }
+
+    @Test func recurringDTOBackupRoundTripPreservesSkippedOccurrences() async throws {
+        let skippedDate = date(year: 2026, month: 5, day: 5)
+        let rule = RecurringMovement(
+            concept: "Variable bill",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: skippedDate,
+            skippedOccurrenceDates: [skippedDate]
+        )
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+
+        let restored = try decoder.decode(
+            RecurringMovementDTO.self,
+            from: encoder.encode(RecurringMovementDTO(from: rule))
+        ).toModel()
+
+        #expect(restored.skippedOccurrenceDates == [skippedDate])
+    }
+
+    @Test @MainActor func confirmingRecurringOccurrenceUsesActualAmountWithoutChangingTemplate() async throws {
+        let schema = Schema([
+            Bank.self,
+            BankAccount.self,
+            MovementCategory.self,
+            Movement.self,
+            InvestmentSnapshot.self,
+            RecurringMovement.self,
+            Budget.self,
+            BudgetItem.self
+        ])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let account = BankAccount(name: "Cuenta", accountType: .checking, balance: 100)
+        let dueDate = date(year: 2026, month: 5, day: 5)
+        let rule = RecurringMovement(
+            concept: "Variable bill",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: dueDate,
+            account: account
+        )
+        context.insert(account)
+        context.insert(rule)
+        try context.save()
+
+        let movement = try RecurringMovementService.confirmOccurrence(
+            rule: rule,
+            dueDate: dueDate,
+            amount: 55,
+            applyToFuture: false,
+            currencyCode: "EUR",
+            in: context,
+            calendar: testCalendar
+        )
+
+        #expect(movement.amount == 55)
+        #expect(movement.recurringRuleId == rule.id)
+        #expect(movement.recurringScheduledAt == dueDate)
+        #expect(rule.amount == 40)
+        #expect(account.balance == 45)
+        #expect(movement.resultingBalance == 45)
+    }
+
+    @Test @MainActor func applyingRecurringAmountToFutureSplitsSeriesAtScheduledDate() async throws {
+        let schema = Schema([
+            Bank.self,
+            BankAccount.self,
+            MovementCategory.self,
+            Movement.self,
+            InvestmentSnapshot.self,
+            RecurringMovement.self,
+            Budget.self,
+            BudgetItem.self
+        ])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let account = BankAccount(name: "Cuenta", accountType: .checking, balance: 100)
+        let startDate = date(year: 2026, month: 5, day: 5)
+        let dueDate = date(year: 2026, month: 6, day: 5)
+        let rule = RecurringMovement(
+            concept: "Variable bill",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: startDate,
+            account: account
+        )
+        context.insert(account)
+        context.insert(rule)
+        try context.save()
+
+        let movement = try RecurringMovementService.confirmOccurrence(
+            rule: rule,
+            dueDate: dueDate,
+            amount: 55,
+            applyToFuture: true,
+            currencyCode: "EUR",
+            in: context,
+            calendar: testCalendar
+        )
+        let rules = try context.fetch(FetchDescriptor<RecurringMovement>())
+        let futureRule = try #require(rules.first { $0.id == movement.recurringRuleId })
+
+        #expect(rules.count == 2)
+        #expect(!rule.isActive)
+        #expect(rule.amount == 40)
+        #expect(rule.endDate == date(year: 2026, month: 6, day: 4))
+        #expect(futureRule.isActive)
+        #expect(futureRule.startDate == dueDate)
+        #expect(futureRule.amount == 55)
+        #expect(movement.amount == 55)
+    }
+
+    @Test func monthlyRecurrenceKeepsOriginalAnchorDayAfterAClampedMonth() async throws {
+        let startDate = date(year: 2026, month: 1, day: 31)
+        let rule = RecurringMovement(
+            concept: "Variable bill",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 31,
+            startDate: startDate
+        )
+        let interval = DateInterval(
+            start: startDate,
+            end: date(year: 2026, month: 4, day: 1)
+        )
+
+        let dueDates = RecurringMovementService.dueDates(
+            of: rule,
+            in: interval,
+            calendar: testCalendar
+        )
+
+        #expect(dueDates == [
+            date(year: 2026, month: 1, day: 31),
+            date(year: 2026, month: 2, day: 28),
+            date(year: 2026, month: 3, day: 31)
+        ])
+    }
+
+    @Test func recurringSegmentNeverGeneratesAnOccurrenceBeforeItsStartDate() async throws {
+        let startDate = date(year: 2026, month: 6, day: 15)
+        let rule = RecurringMovement(
+            concept: "Changed frequency",
+            amount: 40,
+            type: .expense,
+            frequency: .monthly,
+            dayOfMonth: 5,
+            startDate: startDate
+        )
+        let interval = DateInterval(
+            start: date(year: 2026, month: 6, day: 1),
+            end: date(year: 2026, month: 8, day: 1)
+        )
+
+        let dueDates = RecurringMovementService.dueDates(
+            of: rule,
+            in: interval,
+            calendar: testCalendar
+        )
+
+        #expect(dueDates == [date(year: 2026, month: 7, day: 5)])
+    }
+
+    @Test func endedRecurrenceKeepsEarlierUnresolvedOccurrencePending() async throws {
+        let account = makeAccount(createdAt: date(year: 2026, month: 6, day: 1))
+        let rule = RecurringMovement(
+            concept: "Variable bill",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: date(year: 2026, month: 6, day: 5),
+            endDate: date(year: 2026, month: 6, day: 14),
+            account: account,
+            isActive: false
+        )
+
+        let pending = RecurringMovementService.pendingMovements(
+            for: [rule],
+            confirmedMovements: [],
+            now: date(year: 2026, month: 6, day: 10),
+            horizonDays: 60,
+            calendar: testCalendar
+        )
+
+        #expect(pending.count == 1)
+        #expect(testCalendar.isDate(pending[0].dueDate, inSameDayAs: date(year: 2026, month: 6, day: 5)))
     }
 
     @Test func reconstructsHistoricalExpenseAndIncomeBalances() async throws {
@@ -677,6 +971,22 @@ struct FinanceTests {
         account.createdAt = createdAt
         account.updatedAt = createdAt
         return account
+    }
+
+    private func makeBackupDirectory() throws -> URL {
+        let directoryURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FinanceTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: false)
+        return directoryURL
+    }
+
+    private func writeBackup(named name: String, exportDate: Date, in directoryURL: URL) throws -> URL {
+        let data = Data(
+            "{\"version\":8,\"exportDate\":\"\(ISO8601DateFormatter().string(from: exportDate))\"}".utf8
+        )
+        let fileURL = directoryURL.appendingPathComponent(name)
+        try data.write(to: fileURL)
+        return fileURL
     }
 
     private func date(year: Int, month: Int, day: Int) -> Date {

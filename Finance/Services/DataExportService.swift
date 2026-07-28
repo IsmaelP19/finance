@@ -152,7 +152,7 @@ enum DataExportService {
         let budgetDTOs = budgets.map { BudgetDTO(from: $0) }
 
         let exportData = ExportData(
-            version: 7,
+            version: 8,
             exportDate: Date(),
             banks: bankDTOs,
             accounts: accountDTOs,

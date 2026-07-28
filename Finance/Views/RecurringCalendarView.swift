@@ -13,6 +13,7 @@ import UIKit
 
 private enum RecurringCalendarStatus: Equatable {
     case confirmed
+    case skipped
     case overdue
     case dueToday
     case pending
@@ -21,6 +22,8 @@ private enum RecurringCalendarStatus: Equatable {
         switch self {
         case .confirmed:
             return "Confirmado"
+        case .skipped:
+            return "Omitido"
         case .overdue:
             return "Vencido"
         case .dueToday:
@@ -34,6 +37,8 @@ private enum RecurringCalendarStatus: Equatable {
         switch self {
         case .confirmed:
             return .green
+        case .skipped:
+            return .secondary
         case .overdue:
             return .red
         case .dueToday:
@@ -48,6 +53,8 @@ private enum RecurringCalendarStatus: Equatable {
         switch self {
         case .confirmed:
             return .systemGreen
+        case .skipped:
+            return .systemGray
         case .overdue:
             return .systemRed
         case .dueToday:
@@ -68,6 +75,8 @@ private enum RecurringCalendarStatus: Equatable {
             return 2
         case .confirmed:
             return 1
+        case .skipped:
+            return 0
         }
     }
 
@@ -79,7 +88,16 @@ private enum RecurringCalendarStatus: Equatable {
 private struct RecurringCalendarOccurrence: Identifiable {
     let rule: RecurringMovement
     let dueDate: Date
-    let isConfirmed: Bool
+    let confirmedMovement: Movement?
+    let isSkipped: Bool
+
+    var isConfirmed: Bool {
+        confirmedMovement != nil
+    }
+
+    var effectiveAmount: Decimal {
+        confirmedMovement?.amount ?? rule.amount
+    }
 
     var id: String {
         "\(rule.id.uuidString)-\(Int(dueDate.timeIntervalSince1970))"
@@ -99,12 +117,12 @@ struct RecurringCalendarView: View {
     @State private var calendarHeightUpdateTask: DispatchWorkItem?
     @State private var showingActionAlert = false
     @State private var actionAlertMessage = ""
+    @State private var occurrenceToEditAmount: RecurringCalendarOccurrence?
+    @State private var occurrenceToManage: RecurringCalendarOccurrence?
+    @State private var showingOccurrenceActions = false
 
     private var recurringCalendar: Calendar {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.locale = Locale(identifier: "es_ES")
-        calendar.timeZone = .autoupdatingCurrent
-        return calendar
+        RecurringMovementService.recurrenceCalendar
     }
 
     private var selectedDateOccurrences: [RecurringCalendarOccurrence] {
@@ -146,21 +164,21 @@ struct RecurringCalendarView: View {
 
     private var selectedMonthRecurringExpenseTotal: Decimal {
         selectedMonthOccurrences.reduce(Decimal(0)) { partialResult, occurrence in
-            guard occurrence.rule.type == .expense else { return partialResult }
-            return partialResult + occurrence.rule.amount
+            guard occurrence.rule.type == .expense, !occurrence.isSkipped else { return partialResult }
+            return partialResult + occurrence.effectiveAmount
         }
     }
 
     private var selectedMonthRecurringIncomeTotal: Decimal {
         selectedMonthOccurrences.reduce(Decimal(0)) { partialResult, occurrence in
-            guard occurrence.rule.type == .income else { return partialResult }
-            return partialResult + occurrence.rule.amount
+            guard occurrence.rule.type == .income, !occurrence.isSkipped else { return partialResult }
+            return partialResult + occurrence.effectiveAmount
         }
     }
 
     private var selectedMonthExpenseOccurrenceCount: Int {
         selectedMonthOccurrences.reduce(into: 0) { partialResult, occurrence in
-            if occurrence.rule.type == .expense {
+            if occurrence.rule.type == .expense, !occurrence.isSkipped {
                 partialResult += 1
             }
         }
@@ -177,11 +195,15 @@ struct RecurringCalendarView: View {
     }
 
     private var selectedDatePendingCount: Int {
-        selectedDateOccurrences.filter { !$0.isConfirmed }.count
+        selectedDateOccurrences.filter { !$0.isConfirmed && !$0.isSkipped }.count
     }
 
     private var selectedDateConfirmedCount: Int {
         selectedDateOccurrences.filter(\.isConfirmed).count
+    }
+
+    private var selectedDateSkippedCount: Int {
+        selectedDateOccurrences.filter(\.isSkipped).count
     }
 
     private var nextUpcomingPreviewCount: Int {
@@ -292,98 +314,8 @@ struct RecurringCalendarView: View {
                     .financeGlassClearListRow()
                 }
 
-                RecurringCalendarSectionHeader(
-                    title: "Cobros y pagos del día",
-                    subtitle: selectedDateHeaderTitle,
-                    trailingText: selectedDateOccurrences.isEmpty ? nil : "\(selectedDateOccurrences.count) previstos",
-                    detailText: selectedDateOccurrences.isEmpty
-                        ? ""
-                        : "\(selectedDatePendingCount) pendientes · \(selectedDateConfirmedCount) confirmados"
-                )
-
-                Section {
-                    if selectedDateOccurrences.isEmpty {
-                        FinanceEmptyStateContent(
-                            "Sin movimientos para este día",
-                            systemImage: "calendar.badge.exclamationmark",
-                            description: Text("Cambia el día o vuelve a hoy para revisar otros cobros y pagos recurrentes.")
-                        )
-                        .financeGlassClearListRow()
-                    } else {
-                        ForEach(selectedDateOccurrences) { occurrence in
-                            RecurringCalendarRow(
-                                occurrence: occurrence,
-                                currencyCode: appCurrencyCode,
-                                hideBalances: hideBalances,
-                                status: status(for: occurrence)
-                            )
-                            .financeGlassClearListRow()
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                if !occurrence.isConfirmed {
-                                    Button {
-                                        confirmOccurrence(occurrence)
-                                    } label: {
-                                        Label("Confirmar", systemImage: "checkmark.circle.fill")
-                                    }
-                                    .tint(.green)
-                                }
-                            }
-                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                if !occurrence.isConfirmed {
-                                    Button(role: .destructive) {
-                                        cancelRecurringRule(occurrence.rule)
-                                    } label: {
-                                        Label("Cancelar", systemImage: "xmark.circle")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                RecurringCalendarSectionHeader(
-                    title: "Próximos pagos recurrentes",
-                    subtitle: "Agenda inmediata",
-                    trailingText: upcomingOccurrences.isEmpty ? nil : "\(nextUpcomingPreviewCount) visibles",
-                    detailText: upcomingOccurrences.isEmpty ? "" : "Mostrando los siguientes movimientos pendientes"
-                )
-
-                Section {
-                    if upcomingOccurrences.isEmpty {
-                        FinanceEmptyStateContent(
-                            "Sin próximos vencimientos",
-                            systemImage: "checkmark.circle",
-                            description: Text("No hay pagos recurrentes pendientes en los próximos 90 días.")
-                        )
-                        .financeGlassClearListRow()
-                    } else {
-                        ForEach(upcomingOccurrences.prefix(12)) { occurrence in
-                            RecurringCalendarRow(
-                                occurrence: occurrence,
-                                currencyCode: appCurrencyCode,
-                                hideBalances: hideBalances,
-                                status: status(for: occurrence)
-                            )
-                            .financeGlassClearListRow()
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button {
-                                    confirmOccurrence(occurrence)
-                                } label: {
-                                    Label("Confirmar", systemImage: "checkmark.circle.fill")
-                                }
-                                .tint(.green)
-                            }
-
-                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    cancelRecurringRule(occurrence.rule)
-                                } label: {
-                                    Label("Cancelar", systemImage: "xmark.circle")
-                                }
-                            }
-                        }
-                    }
-                }
+                selectedDaySections
+                upcomingSections
             }
             .financeGlassListContainer()
             .navigationTitle("Calendario")
@@ -434,34 +366,180 @@ struct RecurringCalendarView: View {
                     }
                 }
             }
+            .sheet(item: $occurrenceToEditAmount) { occurrence in
+                amountEditor(for: occurrence)
+            }
+            .confirmationDialog(
+                "Gestionar recurrencia",
+                isPresented: $showingOccurrenceActions,
+                titleVisibility: .visible,
+                presenting: occurrenceToManage
+            ) { occurrence in
+                occurrenceManagementActions(for: occurrence)
+            } message: { occurrence in
+                occurrenceManagementMessage(for: occurrence)
+            }
             .alert("Acción no disponible", isPresented: $showingActionAlert) {
                 Button("Aceptar", role: .cancel) {}
             } message: {
-                Text(actionAlertMessage)
+                actionAlertText
             }
         }
+    }
+
+    private func amountEditor(for occurrence: RecurringCalendarOccurrence) -> some View {
+        RecurringOccurrenceAmountEditor(
+            concept: occurrence.rule.concept,
+            scheduledDate: occurrence.dueDate,
+            suggestedAmount: occurrence.rule.amount,
+            currencyCode: appCurrencyCode
+        ) { amount, applyToFuture in
+            try confirmOccurrenceWithAmount(
+                occurrence,
+                amount: amount,
+                applyToFuture: applyToFuture
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var selectedDaySections: some View {
+        RecurringCalendarSectionHeader(
+            title: "Cobros y pagos del día",
+            subtitle: selectedDateHeaderTitle,
+            trailingText: selectedDateOccurrences.isEmpty ? nil : "\(selectedDateOccurrences.count) previstos",
+            detailText: selectedDateOccurrences.isEmpty ? "" : selectedDateSummaryText
+        )
+
+        Section {
+            if selectedDateOccurrences.isEmpty {
+                FinanceEmptyStateContent(
+                    "Sin movimientos para este día",
+                    systemImage: "calendar.badge.exclamationmark",
+                    description: Text("Cambia el día o vuelve a hoy para revisar otros cobros y pagos recurrentes.")
+                )
+                .financeGlassClearListRow()
+            } else {
+                ForEach(selectedDateOccurrences) { occurrence in
+                    interactiveOccurrenceRow(occurrence)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var upcomingSections: some View {
+        RecurringCalendarSectionHeader(
+            title: "Próximos pagos recurrentes",
+            subtitle: "Agenda inmediata",
+            trailingText: upcomingOccurrences.isEmpty ? nil : "\(nextUpcomingPreviewCount) visibles",
+            detailText: upcomingOccurrences.isEmpty ? "" : "Mostrando los siguientes movimientos pendientes"
+        )
+
+        Section {
+            if upcomingOccurrences.isEmpty {
+                FinanceEmptyStateContent(
+                    "Sin próximos vencimientos",
+                    systemImage: "checkmark.circle",
+                    description: Text("No hay pagos recurrentes pendientes en los próximos 90 días.")
+                )
+                .financeGlassClearListRow()
+            } else {
+                ForEach(Array(upcomingOccurrences.prefix(12))) { occurrence in
+                    interactiveOccurrenceRow(occurrence)
+                }
+            }
+        }
+    }
+
+    private func interactiveOccurrenceRow(_ occurrence: RecurringCalendarOccurrence) -> some View {
+        InteractiveRecurringCalendarRow(
+            occurrence: occurrence,
+            currencyCode: appCurrencyCode,
+            hideBalances: hideBalances,
+            status: status(for: occurrence),
+            onConfirm: {
+                confirmOccurrenceImmediately(occurrence)
+            },
+            onManage: {
+                occurrenceToManage = occurrence
+                showingOccurrenceActions = true
+            },
+            onEditAmount: {
+                occurrenceToEditAmount = occurrence
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func occurrenceManagementActions(for occurrence: RecurringCalendarOccurrence) -> some View {
+        Button("Omitir solo esta ocurrencia") {
+            skipOccurrence(occurrence)
+        }
+        Button("Finalizar recurrencia", role: .destructive) {
+            endRecurrence(occurrence)
+        }
+        Button("Cancelar", role: .cancel) {}
+    }
+
+    private func occurrenceManagementMessage(for occurrence: RecurringCalendarOccurrence) -> Text {
+        Text("\(occurrence.rule.concept) · \(occurrence.dueDate.asSpanishShortDate())")
+    }
+
+    private var actionAlertText: Text {
+        Text(actionAlertMessage)
     }
 
     private func occurrences(in interval: DateInterval, includeConfirmed: Bool) -> [RecurringCalendarOccurrence] {
         var results: [RecurringCalendarOccurrence] = []
 
-        for rule in recurringMovements where rule.isActive && rule.type != .transfer && rule.account?.isActive == true {
-            let dueDates = RecurringMovementService.dueDates(of: rule, in: interval, calendar: recurringCalendar)
+        for rule in recurringMovements where rule.type != .transfer {
+            var dueDateSet = Set<Date>()
 
-            for dueDate in dueDates {
-                let confirmed = RecurringMovementService.isOccurrenceConfirmed(
+            if (rule.isActive && rule.account?.isActive == true) || rule.endDate != nil {
+                let scheduledDates = RecurringMovementService.dueDates(
+                    of: rule,
+                    in: interval,
+                    calendar: recurringCalendar
+                )
+                dueDateSet.formUnion(scheduledDates.map { recurringCalendar.startOfDay(for: $0) })
+            }
+
+            for movement in movements where movement.recurringRuleId == rule.id {
+                let scheduledDate = movement.recurringScheduledAt ?? movement.occurredAt
+                let normalizedDate = recurringCalendar.startOfDay(for: scheduledDate)
+                if interval.contains(normalizedDate) {
+                    dueDateSet.insert(normalizedDate)
+                }
+            }
+
+            for skippedDate in rule.skippedOccurrenceDates {
+                let normalizedDate = recurringCalendar.startOfDay(for: skippedDate)
+                if interval.contains(normalizedDate) {
+                    dueDateSet.insert(normalizedDate)
+                }
+            }
+
+            for dueDate in dueDateSet {
+                let confirmedMovement = RecurringMovementService.confirmedMovement(
                     ruleID: rule.id,
                     dueDate: dueDate,
                     movements: movements,
                     calendar: recurringCalendar
                 )
+                let skipped = RecurringMovementService.isOccurrenceSkipped(
+                    rule: rule,
+                    dueDate: dueDate,
+                    calendar: recurringCalendar
+                )
 
-                if includeConfirmed || !confirmed {
+                if includeConfirmed || (confirmedMovement == nil && !skipped) {
                     results.append(
                         RecurringCalendarOccurrence(
                             rule: rule,
                             dueDate: dueDate,
-                            isConfirmed: confirmed
+                            confirmedMovement: confirmedMovement,
+                            isSkipped: skipped
                         )
                     )
                 }
@@ -476,6 +554,9 @@ struct RecurringCalendarView: View {
     private func status(for occurrence: RecurringCalendarOccurrence) -> RecurringCalendarStatus {
         if occurrence.isConfirmed {
             return .confirmed
+        }
+        if occurrence.isSkipped {
+            return .skipped
         }
 
         let today = recurringCalendar.startOfDay(for: Date())
@@ -492,80 +573,69 @@ struct RecurringCalendarView: View {
         return .pending
     }
 
-    private func confirmOccurrence(_ occurrence: RecurringCalendarOccurrence) {
-        guard occurrence.rule.type != .transfer else {
-            actionAlertMessage = "Las transferencias no se pueden confirmar como recurrentes."
-            showingActionAlert = true
-            return
-        }
-
-        guard let account = occurrence.rule.account else {
-            actionAlertMessage = "La cuenta asociada ya no está disponible. Edita la recurrencia para continuar."
-            showingActionAlert = true
-            return
-        }
-
-        guard account.isActive else {
-            occurrence.rule.isActive = false
-            occurrence.rule.updatedAt = Date()
-            actionAlertMessage = "La cuenta asociada está archivada. La recurrencia se ha desactivado."
-            showingActionAlert = true
-            return
-        }
-
-        guard !RecurringMovementService.isOccurrenceConfirmed(
-            ruleID: occurrence.rule.id,
-            dueDate: occurrence.dueDate,
-            movements: movements
-        ) else {
-            return
-        }
-
-        let resultingBalance = applyRecurringImpact(
-            type: occurrence.rule.type,
-            amount: occurrence.rule.amount,
-            account: account
-        )
-
-        let confirmationDate = Date()
-        let movement = Movement(
-            concept: occurrence.rule.concept,
-            amount: occurrence.rule.amount,
-            type: occurrence.rule.type,
-            occurredAt: confirmationDate,
-            account: account,
-            destinationAccount: nil,
-            category: occurrence.rule.category,
-            notes: occurrence.rule.notes,
-            resultingBalance: resultingBalance,
-            recurringRuleId: occurrence.rule.id,
-            recurringScheduledAt: occurrence.dueDate
-        )
-
-        withAnimation {
-            modelContext.insert(movement)
-            occurrence.rule.updatedAt = Date()
-        }
+    private func confirmOccurrenceWithAmount(
+        _ occurrence: RecurringCalendarOccurrence,
+        amount: Decimal,
+        applyToFuture: Bool
+    ) throws {
         do {
-            _ = try MovementBalanceService.rebuild(in: modelContext)
-            try modelContext.save()
+            _ = try RecurringMovementService.confirmOccurrence(
+                rule: occurrence.rule,
+                dueDate: occurrence.dueDate,
+                amount: amount,
+                applyToFuture: applyToFuture,
+                currencyCode: appCurrencyCode,
+                in: modelContext,
+                calendar: recurringCalendar
+            )
+            HapticFeedback.success()
         } catch {
             modelContext.rollback()
             CrashReportService.shared.recordDiagnosticEvent(
-                "MovementBalanceService.rebuild failed error=\(error.localizedDescription)"
+                "RecurringMovementService.confirmOccurrence failed error=\(error.localizedDescription)"
             )
-            actionAlertMessage = "No se pudo confirmar el movimiento recurrente: \(error.localizedDescription)"
-            showingActionAlert = true
-            return
+            throw error
         }
-
-        HapticFeedback.success()
     }
 
-    private func cancelRecurringRule(_ recurring: RecurringMovement) {
-        withAnimation {
-            recurring.isActive = false
-            recurring.updatedAt = Date()
+    private func confirmOccurrenceImmediately(_ occurrence: RecurringCalendarOccurrence) {
+        do {
+            try confirmOccurrenceWithAmount(occurrence, amount: occurrence.rule.amount, applyToFuture: false)
+        } catch {
+            actionAlertMessage = "No se pudo confirmar el movimiento recurrente: \(error.localizedDescription)"
+            showingActionAlert = true
+        }
+    }
+
+    private func skipOccurrence(_ occurrence: RecurringCalendarOccurrence) {
+        do {
+            try RecurringMovementService.skipOccurrence(
+                rule: occurrence.rule,
+                dueDate: occurrence.dueDate,
+                in: modelContext,
+                calendar: recurringCalendar
+            )
+            HapticFeedback.success()
+        } catch {
+            modelContext.rollback()
+            actionAlertMessage = "No se pudo omitir la ocurrencia: \(error.localizedDescription)"
+            showingActionAlert = true
+        }
+    }
+
+    private func endRecurrence(_ occurrence: RecurringCalendarOccurrence) {
+        do {
+            try RecurringMovementService.endRecurrence(
+                occurrence.rule,
+                before: occurrence.dueDate,
+                in: modelContext,
+                calendar: recurringCalendar
+            )
+            HapticFeedback.success()
+        } catch {
+            modelContext.rollback()
+            actionAlertMessage = "No se pudo finalizar la recurrencia: \(error.localizedDescription)"
+            showingActionAlert = true
         }
     }
 
@@ -594,21 +664,15 @@ struct RecurringCalendarView: View {
         }
     }
 
-    @discardableResult
-    private func applyRecurringImpact(type: MovementType, amount: Decimal, account: BankAccount) -> Decimal {
-        account.currency = appCurrencyCode
-
-        switch type {
-        case .expense:
-            account.balance -= amount
-        case .income:
-            account.balance += amount
-        case .transfer:
-            break
+    private var selectedDateSummaryText: String {
+        var parts = [
+            "\(selectedDatePendingCount) pendientes",
+            "\(selectedDateConfirmedCount) confirmados"
+        ]
+        if selectedDateSkippedCount > 0 {
+            parts.append("\(selectedDateSkippedCount) omitidos")
         }
-
-        account.updatedAt = Date()
-        return account.balance
+        return parts.joined(separator: " · ")
     }
 }
 
@@ -864,6 +928,56 @@ private struct DecoratedRecurringCalendarView: View {
 }
 #endif
 
+private struct InteractiveRecurringCalendarRow: View {
+    let occurrence: RecurringCalendarOccurrence
+    let currencyCode: String
+    let hideBalances: Bool
+    let status: RecurringCalendarStatus
+    let onConfirm: () -> Void
+    let onManage: () -> Void
+    let onEditAmount: () -> Void
+
+    var body: some View {
+        RecurringCalendarRow(
+            occurrence: occurrence,
+            currencyCode: currencyCode,
+            hideBalances: hideBalances,
+            status: status
+        )
+        .financeGlassClearListRow()
+        .contextMenu {
+            if !occurrence.isConfirmed && !occurrence.isSkipped {
+                Button(action: onEditAmount) {
+                    Label("Editar importe", systemImage: "pencil")
+                }
+                Button(action: onConfirm) {
+                    Label("Confirmar", systemImage: "checkmark.circle.fill")
+                }
+            }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            if !occurrence.isConfirmed && !occurrence.isSkipped {
+                Button(action: onConfirm) {
+                    Label("Confirmar", systemImage: "checkmark.circle.fill")
+                }
+                .tint(.green)
+            }
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            if !occurrence.isConfirmed && !occurrence.isSkipped {
+                Button(action: onEditAmount) {
+                    Label("Editar importe", systemImage: "pencil")
+                }
+                .tint(.financeAccent)
+
+                Button(action: onManage) {
+                    Label("Gestionar", systemImage: "ellipsis.circle")
+                }
+            }
+        }
+    }
+}
+
 private struct RecurringCalendarRow: View {
     let occurrence: RecurringCalendarOccurrence
     let currencyCode: String
@@ -873,9 +987,9 @@ private struct RecurringCalendarRow: View {
     private var amountText: String {
         switch occurrence.rule.type {
         case .expense, .income:
-            return (occurrence.rule.amount * occurrence.rule.type.signMultiplier).masked(hideBalances, code: currencyCode)
+            return (occurrence.effectiveAmount * occurrence.rule.type.signMultiplier).masked(hideBalances, code: currencyCode)
         case .transfer:
-            return occurrence.rule.amount.masked(hideBalances, code: currencyCode)
+            return occurrence.effectiveAmount.masked(hideBalances, code: currencyCode)
         }
     }
 

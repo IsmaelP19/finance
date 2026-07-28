@@ -50,7 +50,7 @@ enum MovementType: String, CaseIterable, Codable, Identifiable {
     }
 
     /// Multiplicador para aplicar el signo del movimiento al saldo.
-    var signMultiplier: Decimal {
+    nonisolated var signMultiplier: Decimal {
         switch self {
         case .expense:
             return -1

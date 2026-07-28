@@ -44,7 +44,7 @@ enum BankColor: String, CaseIterable, Identifiable, Codable {
     }
 
     /// Color de SwiftUI correspondiente.
-    var color: Color {
+    nonisolated var color: Color {
         switch self {
         case .blue: return .blue
         case .darkBlue: return Color(red: 0.0, green: 0.2, blue: 0.5)

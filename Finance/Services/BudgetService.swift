@@ -11,7 +11,7 @@ import UserNotifications
 /// Calcula el progreso del presupuesto mensual único y gestiona notificaciones locales
 /// por categoría cuando se alcanzan los umbrales del 80 % y 100 % de la asignación.
 enum BudgetService {
-    private struct BudgetNotificationAction {
+    private struct BudgetNotificationAction: Sendable {
         let id80: String
         let id100: String
         let categoryName: String
@@ -105,16 +105,18 @@ enum BudgetService {
 
     private static let itemNotificationPrefix = "budget-item-"
 
-    static func requestNotificationAuthorizationIfNeeded(completion: ((Bool) -> Void)? = nil) {
-        let center = UNUserNotificationCenter.current()
-        center.getNotificationSettings { settings in
-            switch settings.authorizationStatus {
+    @MainActor
+    static func requestNotificationAuthorizationIfNeeded(
+        completion: (@MainActor @Sendable (Bool) -> Void)? = nil
+    ) {
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            let authorizationStatus = await center.notificationSettings().authorizationStatus
+            switch authorizationStatus {
             case .authorized, .provisional, .ephemeral:
                 completion?(true)
             case .notDetermined:
-                center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-                    completion?(granted)
-                }
+                completion?((try? await center.requestAuthorization(options: [.alert, .sound, .badge])) == true)
             case .denied:
                 completion?(false)
             @unknown default:
@@ -125,15 +127,16 @@ enum BudgetService {
 
     /// Evalúa cada ítem del presupuesto y programa/cancela notificaciones de umbral
     /// según el gasto actual de cada categoría. Llamar después de guardar un gasto.
+    @MainActor
     static func evaluateAndNotify(budget: Budget, movements: [Movement]) {
         guard budget.isActive else { return }
-        let center = UNUserNotificationCenter.current()
         let actions = budget.items.compactMap { notificationAction(for: $0, budget: budget, movements: movements) }
 
         guard !actions.isEmpty else { return }
 
         requestNotificationAuthorizationIfNeeded { granted in
             guard granted else { return }
+            let center = UNUserNotificationCenter.current()
             for action in actions {
                 evaluateAction(action, center: center)
             }
@@ -157,10 +160,10 @@ enum BudgetService {
         )
     }
 
+    @MainActor
     private static func evaluateAction(_ action: BudgetNotificationAction, center: UNUserNotificationCenter) {
         if action.notifyAt100Percent && action.progress >= 1 {
             scheduleThresholdNotification(
-                center: center,
                 identifier: action.id100,
                 title: "Presupuesto superado",
                 body: "Has superado el presupuesto de \(action.categoryName) este mes."
@@ -171,7 +174,6 @@ enum BudgetService {
 
         if action.notifyAt80Percent && action.progress >= 0.8 && action.progress < 1 {
             scheduleThresholdNotification(
-                center: center,
                 identifier: action.id80,
                 title: "Alerta de presupuesto",
                 body: "Llevas el 80 % del presupuesto de \(action.categoryName) este mes."
@@ -181,30 +183,32 @@ enum BudgetService {
         }
     }
 
+    @MainActor
     private static func scheduleThresholdNotification(
-        center: UNUserNotificationCenter,
         identifier: String,
         title: String,
         body: String
     ) {
-        // Only fire once per identifier: skip if already pending or delivered.
-        center.getPendingNotificationRequests { pending in
+        Task { @MainActor in
+            let center = UNUserNotificationCenter.current()
+            let pending = await center.pendingNotificationRequests()
             guard !pending.contains(where: { $0.identifier == identifier }) else { return }
-            center.getDeliveredNotifications { delivered in
-                guard !delivered.contains(where: { $0.request.identifier == identifier }) else { return }
 
-                let content = UNMutableNotificationContent()
-                content.title = title
-                content.body  = body
-                content.sound = .default
+            let delivered = await center.deliveredNotifications()
+            guard !delivered.contains(where: { $0.request.identifier == identifier }) else { return }
 
-                // Immediate trigger (nil) — fire as soon as possible.
-                let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-                center.add(request)
-            }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body  = body
+            content.sound = .default
+
+            // Immediate trigger (nil) — fire as soon as possible.
+            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+            try? await center.add(request)
         }
     }
 
+    @MainActor
     private static func cancelNotification(center: UNUserNotificationCenter, identifier: String) {
         center.removePendingNotificationRequests(withIdentifiers: [identifier])
         center.removeDeliveredNotifications(withIdentifiers: [identifier])
@@ -297,6 +301,7 @@ enum BudgetService {
     }
 
     /// Cancela todas las notificaciones de todos los ítems del presupuesto.
+    @MainActor
     static func cancelAllNotifications(for budget: Budget) {
         let center = UNUserNotificationCenter.current()
         let ids = budget.items.flatMap { item in

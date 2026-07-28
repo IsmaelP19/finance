@@ -9,6 +9,7 @@ import Foundation
 import Testing
 @testable import Finance
 
+@MainActor
 struct SpendingForecastCalculatorTests {
     @Test func projectsMonthEndSpendFromCurrentDailyAverage() async throws {
         let forecast = SpendingForecastCalculator.makeForecast(

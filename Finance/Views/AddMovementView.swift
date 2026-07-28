@@ -8,6 +8,22 @@
 import SwiftUI
 import SwiftData
 
+private enum RecurringMovementEditScope: String, CaseIterable, Identifiable {
+    case occurrenceOnly
+    case thisAndFuture
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .occurrenceOnly:
+            return "Solo este"
+        case .thisAndFuture:
+            return "Este y futuros"
+        }
+    }
+}
+
 /// Formulario para crear movimientos (gasto o ingreso).
 struct AddMovementView: View {
     @Environment(\.modelContext) private var modelContext
@@ -37,6 +53,7 @@ struct AddMovementView: View {
     @State private var recurringStartDate: Date = Date()
     @State private var recurringHasEndDate = false
     @State private var recurringEndDate: Date = Date()
+    @State private var recurringEditScope: RecurringMovementEditScope = .occurrenceOnly
     @State private var isSharedExpense = false
     @State private var personalAmountText: String = ""
     @State private var personalAmountExpression: String = ""
@@ -54,6 +71,10 @@ struct AddMovementView: View {
     @State private var validationMessage = ""
     @State private var didLoadExistingData = false
 
+    private var recurringCalendar: Calendar {
+        RecurringMovementService.recurrenceCalendar
+    }
+
     private let movementToEdit: Movement?
     private let preselectedType: MovementType?
     private let preselectedAccountID: UUID?
@@ -62,6 +83,10 @@ struct AddMovementView: View {
 
     private var isEditing: Bool {
         movementToEdit != nil
+    }
+
+    private var linkedRecurringRuleForEditing: RecurringMovement? {
+        movementToEdit.flatMap(linkedRecurringRule(for:))
     }
 
     private var editorNavigationTitle: String {
@@ -191,7 +216,7 @@ struct AddMovementView: View {
     }
 
     private var isMovementTypeLocked: Bool {
-        isLinkedReimbursementContext
+        isLinkedReimbursementContext || linkedRecurringRuleForEditing != nil
     }
 
     private var linkedReimbursementsForEditedExpense: [Movement] {
@@ -442,37 +467,81 @@ struct AddMovementView: View {
                 if allowsRecurringConfiguration {
                     Section {
                         VStack(alignment: .leading, spacing: 12) {
-                            Toggle("Marcar como recurrente", isOn: $isRecurring)
-                                .tint(movementTint)
-
-                            if isRecurring {
-                                Picker("Frecuencia", selection: $recurringFrequency) {
-                                    ForEach(RecurringMovementFrequency.allCases) { frequency in
-                                        Text(frequency.displayName)
-                                            .tag(frequency)
+                            if let linkedRecurringRuleForEditing {
+                                if linkedRecurringRuleForEditing.isActive {
+                                    Picker("Aplicar cambios", selection: $recurringEditScope) {
+                                        ForEach(RecurringMovementEditScope.allCases) { scope in
+                                            Text(scope.title)
+                                                .tag(scope)
+                                        }
                                     }
+                                    .pickerStyle(.segmented)
+
+                                    if recurringEditScope == .thisAndFuture {
+                                        Picker("Frecuencia", selection: $recurringFrequency) {
+                                            ForEach(RecurringMovementFrequency.allCases) { frequency in
+                                                Text(frequency.displayName)
+                                                    .tag(frequency)
+                                            }
+                                        }
+
+                                        Toggle("Fecha de fin", isOn: $recurringHasEndDate)
+
+                                        if recurringHasEndDate {
+                                            DatePicker(
+                                                "Fin",
+                                                selection: $recurringEndDate,
+                                                in: recurringStartDate...,
+                                                displayedComponents: .date
+                                            )
+                                        }
+
+                                        Text("La plantilla se actualizará desde la ocurrencia programada del \(recurringStartDate.asSpanishShortDate()). Los movimientos anteriores conservarán sus importes reales.")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    } else {
+                                        Text("Solo se actualizará este movimiento. La plantilla recurrente no cambiará.")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                } else {
+                                    Text("Esta recurrencia ya está finalizada. Solo se actualizará este movimiento.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
                                 }
+                            } else {
+                                Toggle("Marcar como recurrente", isOn: $isRecurring)
+                                    .tint(movementTint)
 
-                                DatePicker(
-                                    "Primer cobro/pago",
-                                    selection: $recurringStartDate,
-                                    displayedComponents: .date
-                                )
+                                if isRecurring {
+                                    Picker("Frecuencia", selection: $recurringFrequency) {
+                                        ForEach(RecurringMovementFrequency.allCases) { frequency in
+                                            Text(frequency.displayName)
+                                                .tag(frequency)
+                                        }
+                                    }
 
-                                Toggle("Fecha de fin", isOn: $recurringHasEndDate)
-
-                                if recurringHasEndDate {
                                     DatePicker(
-                                        "Fin",
-                                        selection: $recurringEndDate,
-                                        in: recurringStartDate...,
+                                        "Primer cobro/pago",
+                                        selection: $recurringStartDate,
                                         displayedComponents: .date
                                     )
-                                }
 
-                                Text("Se guardará como pendiente recurrente. No afectará al saldo hasta confirmar el cobro/pago.")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                    Toggle("Fecha de fin", isOn: $recurringHasEndDate)
+
+                                    if recurringHasEndDate {
+                                        DatePicker(
+                                            "Fin",
+                                            selection: $recurringEndDate,
+                                            in: recurringStartDate...,
+                                            displayedComponents: .date
+                                        )
+                                    }
+
+                                    Text("Se guardará como pendiente recurrente. No afectará al saldo hasta confirmar el cobro/pago.")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                         .padding(.vertical, 4)
@@ -675,11 +744,14 @@ struct AddMovementView: View {
 
             if let recurring = linkedRecurringRule(for: movementToEdit) {
                 isRecurring = recurring.isActive
+                recurringEditScope = .occurrenceOnly
                 recurringFrequency = recurring.frequency
-                recurringStartDate = Calendar.current.startOfDay(for: recurring.startDate)
+                recurringStartDate = recurringCalendar.startOfDay(
+                    for: movementToEdit.recurringScheduledAt ?? recurring.startDate
+                )
                 if let endDate = recurring.endDate {
                     recurringHasEndDate = true
-                    recurringEndDate = Calendar.current.startOfDay(for: endDate)
+                    recurringEndDate = recurringCalendar.startOfDay(for: endDate)
                 } else {
                     recurringHasEndDate = false
                     recurringEndDate = recurringStartDate
@@ -687,7 +759,7 @@ struct AddMovementView: View {
             } else {
                 isRecurring = false
                 recurringFrequency = .monthly
-                recurringStartDate = Calendar.current.startOfDay(for: movementToEdit.occurredAt)
+                recurringStartDate = recurringCalendar.startOfDay(for: movementToEdit.occurredAt)
                 recurringHasEndDate = false
                 recurringEndDate = recurringStartDate
             }
@@ -745,7 +817,7 @@ struct AddMovementView: View {
         }
 
         recurringFrequency = .monthly
-        recurringStartDate = Calendar.current.startOfDay(for: occurredAt)
+        recurringStartDate = recurringCalendar.startOfDay(for: occurredAt)
         recurringEndDate = recurringStartDate
 
         ensureTransferAccountsAreDifferent()
@@ -977,8 +1049,8 @@ struct AddMovementView: View {
         let recurringConfiguration: (startDate: Date, endDate: Date?, anchorDay: Int)?
 
         if isRecurring && allowsRecurringConfiguration {
-            let normalizedStart = Calendar.current.startOfDay(for: recurringStartDate)
-            let normalizedEnd = recurringHasEndDate ? Calendar.current.startOfDay(for: recurringEndDate) : nil
+            let normalizedStart = recurringCalendar.startOfDay(for: recurringStartDate)
+            let normalizedEnd = recurringHasEndDate ? recurringCalendar.startOfDay(for: recurringEndDate) : nil
 
             if let normalizedEnd, normalizedEnd < normalizedStart {
                 recordSaveDiagnostic("validate_recurring_end_failed", accountID: selectedAccount.id, categoryID: selectedCategory?.id, reimbursementForID: reimbursementForID)
@@ -990,7 +1062,7 @@ struct AddMovementView: View {
             recurringConfiguration = (
                 startDate: normalizedStart,
                 endDate: normalizedEnd,
-                anchorDay: Calendar.current.component(.day, from: normalizedStart)
+                anchorDay: recurringCalendar.component(.day, from: normalizedStart)
             )
         } else {
             recurringConfiguration = nil
@@ -1053,27 +1125,39 @@ struct AddMovementView: View {
                 unlinkReimbursementsLinkedToExpense(expenseID: movementToEdit.id)
             }
 
-            if isRecurring {
+            if let recurring = linkedRecurringRule(for: movementToEdit) {
+                if recurring.isActive, recurringEditScope == .thisAndFuture {
+                    guard let recurringConfiguration else { return }
+                    let boundaryDate = movementToEdit.recurringScheduledAt ?? recurringStartDate
+                    let targetRule = RecurringMovementService.ruleForFutureChanges(
+                        from: recurring,
+                        boundaryDate: boundaryDate,
+                        movements: movements,
+                        in: modelContext
+                    )
+
+                    targetRule.concept = trimmedConcept
+                    targetRule.amount = amount
+                    targetRule.type = movementType
+                    targetRule.frequency = recurringFrequency
+                    targetRule.dayOfMonth = recurringFrequency == recurring.frequency
+                        ? recurring.dayOfMonth
+                        : recurringCalendar.component(.day, from: boundaryDate)
+                    targetRule.endDate = recurringConfiguration.endDate
+                    targetRule.account = selectedAccount
+                    targetRule.category = selectedCategory
+                    targetRule.notes = notes
+                    targetRule.isActive = true
+                    targetRule.updatedAt = Date()
+                    movementToEdit.recurringRuleId = targetRule.id
+                }
+
+                if movementToEdit.recurringScheduledAt == nil {
+                    movementToEdit.recurringScheduledAt = recurringCalendar.startOfDay(for: movementToEdit.occurredAt)
+                }
+            } else if isRecurring {
                 guard let recurringConfiguration else { return }
 
-                if let recurring = linkedRecurringRule(for: movementToEdit) {
-                    recurring.concept = trimmedConcept
-                    recurring.amount = amount
-                    recurring.type = movementType
-                    recurring.frequency = recurringFrequency
-                    recurring.dayOfMonth = recurringConfiguration.anchorDay
-                    recurring.startDate = recurringConfiguration.startDate
-                    recurring.endDate = recurringConfiguration.endDate
-                    recurring.account = selectedAccount
-                    recurring.category = selectedCategory
-                    recurring.notes = notes
-                    recurring.isActive = true
-                    recurring.updatedAt = Date()
-                    movementToEdit.recurringRuleId = recurring.id
-                    if movementToEdit.recurringScheduledAt == nil {
-                        movementToEdit.recurringScheduledAt = Calendar.current.startOfDay(for: movementToEdit.occurredAt)
-                    }
-                } else {
                     let recurring = RecurringMovement(
                         concept: trimmedConcept,
                         amount: amount,
@@ -1089,13 +1173,8 @@ struct AddMovementView: View {
                     )
                     modelContext.insert(recurring)
                     movementToEdit.recurringRuleId = recurring.id
-                    movementToEdit.recurringScheduledAt = Calendar.current.startOfDay(for: movementToEdit.occurredAt)
-                }
+                    movementToEdit.recurringScheduledAt = recurringCalendar.startOfDay(for: movementToEdit.occurredAt)
             } else {
-                if let recurring = linkedRecurringRule(for: movementToEdit) {
-                    recurring.isActive = false
-                    recurring.updatedAt = Date()
-                }
                 movementToEdit.recurringRuleId = nil
                 movementToEdit.recurringScheduledAt = nil
             }

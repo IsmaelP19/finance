@@ -27,13 +27,13 @@ enum AmountExpressionError: Equatable, LocalizedError {
 
 /// Evalúa expresiones aritméticas en campos de importe con formato español.
 enum AmountExpressionEvaluator {
-    private static let operatorCharacters: Set<Character> = ["+", "-", "−", "×", "÷", "*", "/"]
+    nonisolated private static let operatorCharacters: Set<Character> = ["+", "-", "−", "×", "÷", "*", "/"]
 
-    static func containsExpression(_ text: String) -> Bool {
+    nonisolated static func containsExpression(_ text: String) -> Bool {
         text.contains { operatorCharacters.contains($0) }
     }
 
-    static func previewValue(for text: String) -> Decimal? {
+    nonisolated static func previewValue(for text: String) -> Decimal? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
@@ -64,7 +64,7 @@ enum AmountExpressionEvaluator {
         return EditableAmount.parse(evaluable)
     }
 
-    static func evaluate(_ text: String) -> Result<Decimal, AmountExpressionError> {
+    nonisolated static func evaluate(_ text: String) -> Result<Decimal, AmountExpressionError> {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .failure(.invalidSyntax) }
         guard containsExpression(trimmed) else {
@@ -105,7 +105,7 @@ enum AmountExpressionEvaluator {
         case multiply = "*"
         case divide = "/"
 
-        var precedence: Int {
+        nonisolated var precedence: Int {
             switch self {
             case .add, .subtract: return 1
             case .multiply, .divide: return 2
@@ -113,7 +113,7 @@ enum AmountExpressionEvaluator {
         }
     }
 
-    private static func tokenize(_ text: String) -> [Token]? {
+    nonisolated private static func tokenize(_ text: String) -> [Token]? {
         var tokens: [Token] = []
         var index = text.startIndex
 
@@ -152,11 +152,11 @@ enum AmountExpressionEvaluator {
         return tokens
     }
 
-    private static func isNumberCharacter(_ character: Character) -> Bool {
+    nonisolated private static func isNumberCharacter(_ character: Character) -> Bool {
         character.isWholeNumber || character == "." || character == ","
     }
 
-    private static func normalizedOperator(_ character: Character) -> ArithmeticOperator? {
+    nonisolated private static func normalizedOperator(_ character: Character) -> ArithmeticOperator? {
         switch character {
         case "+": return .add
         case "-", "−": return .subtract
@@ -168,7 +168,7 @@ enum AmountExpressionEvaluator {
 
     // MARK: - Evaluation (PEMDAS via shunting-yard)
 
-    private static func evaluateTokens(_ tokens: [Token]) -> Result<Decimal, AmountExpressionError> {
+    nonisolated private static func evaluateTokens(_ tokens: [Token]) -> Result<Decimal, AmountExpressionError> {
         var output: [Decimal] = []
         var operators: [ArithmeticOperator] = []
 
@@ -215,7 +215,7 @@ enum AmountExpressionEvaluator {
         return .success(result)
     }
 
-    private static func apply(
+    nonisolated private static func apply(
         _ op: ArithmeticOperator,
         lhs: Decimal,
         rhs: Decimal
@@ -235,7 +235,7 @@ enum AmountExpressionEvaluator {
 }
 
 enum AmountCalculatorInput {
-    static func appendOperator(_ symbol: String, to expression: String) -> String? {
+    nonisolated static func appendOperator(_ symbol: String, to expression: String) -> String? {
         let base = expression.trimmingTrailingWhitespace()
         guard !base.isEmpty else { return nil }
 
@@ -248,11 +248,11 @@ enum AmountCalculatorInput {
         return base + " \(symbol) "
     }
 
-    static func expressionByReplacingTrailingOperand(in expression: String, operand: String) -> String {
+    nonisolated static func expressionByReplacingTrailingOperand(in expression: String, operand: String) -> String {
         prefixBeforeTrailingOperand(expression) + operand
     }
 
-    static func prefixBeforeTrailingOperand(_ expression: String) -> String {
+    nonisolated static func prefixBeforeTrailingOperand(_ expression: String) -> String {
         let trimmed = expression.trimmingTrailingWhitespace()
         guard !trimmed.isEmpty else { return "" }
         guard AmountExpressionEvaluator.containsExpression(trimmed) else { return "" }
@@ -282,7 +282,7 @@ enum AmountCalculatorInput {
         return ""
     }
 
-    static func trailingOperand(in expression: String) -> String {
+    nonisolated static func trailingOperand(in expression: String) -> String {
         let trimmed = expression.trimmingTrailingWhitespace()
         guard !trimmed.isEmpty else { return "" }
 
@@ -294,7 +294,7 @@ enum AmountCalculatorInput {
         return String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
     }
 
-    static func deleteBackward(in expression: String) -> String {
+    nonisolated static func deleteBackward(in expression: String) -> String {
         let trimmed = expression.trimmingTrailingWhitespace()
         guard !trimmed.isEmpty else { return "" }
 
@@ -308,7 +308,7 @@ enum AmountCalculatorInput {
         return withoutTrailingOperator.trimmingTrailingWhitespace()
     }
 
-    static func displayAmount(for expression: String) -> String {
+    nonisolated static func displayAmount(for expression: String) -> String {
         let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
 
@@ -319,18 +319,18 @@ enum AmountCalculatorInput {
         return trimmed
     }
 
-    static func floatingExpression(for expression: String) -> String? {
+    nonisolated static func floatingExpression(for expression: String) -> String? {
         let trimmed = expression.trimmingCharacters(in: .whitespacesAndNewlines)
         guard AmountExpressionEvaluator.containsExpression(trimmed) else { return nil }
         return trimmed
     }
 
-    static func endsWithOperator(_ value: String) -> Bool {
+    nonisolated static func endsWithOperator(_ value: String) -> Bool {
         guard let last = value.trimmingTrailingWhitespace().last else { return false }
         return isOperator(last)
     }
 
-    private static func dropTrailingOperator(from expression: String) -> String {
+    nonisolated private static func dropTrailingOperator(from expression: String) -> String {
         var value = expression.trimmingTrailingWhitespace()
         guard let last = value.last, isOperator(last) else { return value }
 
@@ -338,13 +338,13 @@ enum AmountCalculatorInput {
         return value.trimmingTrailingWhitespace()
     }
 
-    private static func isOperator(_ character: Character) -> Bool {
+    nonisolated private static func isOperator(_ character: Character) -> Bool {
         ["+", "−", "×", "÷", "-", "*", "/"].contains(character)
     }
 }
 
 private extension String {
-    func trimmingTrailingWhitespace() -> String {
+    nonisolated func trimmingTrailingWhitespace() -> String {
         var copy = self
         while let last = copy.last, last.isWhitespace {
             copy.removeLast()

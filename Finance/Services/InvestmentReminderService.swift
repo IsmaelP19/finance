@@ -11,6 +11,7 @@ import UserNotifications
 enum InvestmentReminderService {
     private static let reminderPrefix = "investment-reminder-weekday-"
 
+    @MainActor
     static func configureWeekdayReminder(enabled: Bool, hour: Int, minute: Int) {
         let center = UNUserNotificationCenter.current()
 
@@ -22,11 +23,15 @@ enum InvestmentReminderService {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
             guard granted else { return }
 
-            removeWeekdayReminders(center: center)
-            scheduleWeekdayReminders(center: center, hour: hour, minute: minute)
+            Task { @MainActor in
+                let center = UNUserNotificationCenter.current()
+                removeWeekdayReminders(center: center)
+                scheduleWeekdayReminders(center: center, hour: hour, minute: minute)
+            }
         }
     }
 
+    @MainActor
     private static func scheduleWeekdayReminders(center: UNUserNotificationCenter, hour: Int, minute: Int) {
         for weekday in 2...6 { // lunes-viernes
             var components = DateComponents()
@@ -50,6 +55,7 @@ enum InvestmentReminderService {
         }
     }
 
+    @MainActor
     private static func removeWeekdayReminders(center: UNUserNotificationCenter) {
         let identifiers = (2...6).map { "\(reminderPrefix)\($0)" }
         center.removePendingNotificationRequests(withIdentifiers: identifiers)

@@ -41,6 +41,7 @@ final class RecurringMovement {
     var endDate: Date?
     var notes: String
     var isActive: Bool
+    var skippedOccurrenceDatesData: Data = Data()
     var createdAt: Date
     var updatedAt: Date
 
@@ -62,6 +63,16 @@ final class RecurringMovement {
         set { frequencyRaw = newValue.rawValue }
     }
 
+    var skippedOccurrenceDates: [Date] {
+        get {
+            guard !skippedOccurrenceDatesData.isEmpty else { return [] }
+            return (try? JSONDecoder().decode([Date].self, from: skippedOccurrenceDatesData)) ?? []
+        }
+        set {
+            skippedOccurrenceDatesData = (try? JSONEncoder().encode(newValue)) ?? Data()
+        }
+    }
+
     init(
         concept: String,
         amount: Decimal,
@@ -73,7 +84,8 @@ final class RecurringMovement {
         account: BankAccount? = nil,
         category: MovementCategory? = nil,
         notes: String = "",
-        isActive: Bool = true
+        isActive: Bool = true,
+        skippedOccurrenceDates: [Date] = []
     ) {
         self.id = UUID()
         self.concept = concept
@@ -87,6 +99,7 @@ final class RecurringMovement {
         self.category = category
         self.notes = notes
         self.isActive = isActive
+        self.skippedOccurrenceDatesData = (try? JSONEncoder().encode(skippedOccurrenceDates)) ?? Data()
         self.createdAt = Date()
         self.updatedAt = Date()
     }
@@ -105,6 +118,7 @@ struct RecurringMovementDTO: Codable {
     let endDate: Date?
     let notes: String
     let isActive: Bool
+    let skippedOccurrenceDates: [Date]
     let createdAt: Date
     let updatedAt: Date
     let accountId: UUID?
@@ -121,6 +135,7 @@ struct RecurringMovementDTO: Codable {
         case endDate
         case notes
         case isActive
+        case skippedOccurrenceDates
         case createdAt
         case updatedAt
         case accountId
@@ -138,6 +153,7 @@ struct RecurringMovementDTO: Codable {
         endDate = recurring.endDate
         notes = recurring.notes
         isActive = recurring.isActive
+        skippedOccurrenceDates = recurring.skippedOccurrenceDates
         createdAt = recurring.createdAt
         updatedAt = recurring.updatedAt
         accountId = recurring.account?.id
@@ -156,6 +172,7 @@ struct RecurringMovementDTO: Codable {
         endDate = try container.decodeIfPresent(Date.self, forKey: .endDate)
         notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
         isActive = try container.decodeIfPresent(Bool.self, forKey: .isActive) ?? true
+        skippedOccurrenceDates = try container.decodeIfPresent([Date].self, forKey: .skippedOccurrenceDates) ?? []
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         updatedAt = try container.decode(Date.self, forKey: .updatedAt)
         accountId = try container.decodeIfPresent(UUID.self, forKey: .accountId)
@@ -174,7 +191,8 @@ struct RecurringMovementDTO: Codable {
             account: nil,
             category: nil,
             notes: notes,
-            isActive: isActive
+            isActive: isActive,
+            skippedOccurrenceDates: skippedOccurrenceDates
         )
 
         recurring.id = id
