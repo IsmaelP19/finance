@@ -9,41 +9,39 @@ import SwiftUI
 import SwiftData
 import UIKit
 
+private enum QuickExpenseSheet: Identifiable {
+    case standard
+    case wallet(WalletExpenseDraft)
+
+    var id: String {
+        switch self {
+        case .standard:
+            return "standard"
+        case .wallet(let draft):
+            return draft.id.uuidString
+        }
+    }
+}
+
 /// Vista raíz de la aplicación con navegación inferior por pestañas.
+@MainActor
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Environment(DeepLinkRouter.self) private var deepLinkRouter
+    @ObservedObject private var persistenceCoordinator = PersistenceOperationCoordinator.shared
 
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
-    @AppStorage(AppLaunchUX.hasAccountsSnapshotKey) private var hasAccountsSnapshot = false
-    @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
-    @Query(sort: \Bank.name) private var banks: [Bank]
-    @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
-    @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
-    @Query(sort: \InvestmentSnapshot.snapshotDate, order: .reverse) private var investmentSnapshots: [InvestmentSnapshot]
-    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
-    @Query(sort: \Budget.createdAt) private var budgets: [Budget]
 
     @State private var showingSyncImportPrompt = false
     @State private var pendingSyncExportDate: Date?
     @State private var showingSyncErrorAlert = false
     @State private var syncErrorMessage = ""
-    @State private var showingQuickAddExpense = false
+    @State private var quickExpenseSheet: QuickExpenseSheet?
+    @State private var activeWalletDraftID: UUID?
+    @State private var walletDismissedForRestore = false
     @State private var pendingCrashReport: CrashReport?
     @State private var showingCrashReportAlert = false
-
-    private var pendingRecurringCount: Int {
-        RecurringMovementService.pendingMovements(
-            for: recurringMovements,
-            confirmedMovements: movements,
-            horizonDays: 5
-        ).count
-    }
-
-    private var activeAccounts: [BankAccount] {
-        accounts.filter(\.isActive)
-    }
 
     private var crashReportAlertMessage: String {
         guard let pendingCrashReport else { return "" }
@@ -51,6 +49,12 @@ struct ContentView: View {
     }
 
     var body: some View {
+        ContentBadgeReader { pendingRecurringCount in
+            quickExpenseContent(pendingRecurringCount: pendingRecurringCount)
+        }
+    }
+
+    private func tabContent(pendingRecurringCount: Int) -> some View {
         TabView {
             ChartsView()
                 .tabItem {
@@ -84,27 +88,43 @@ struct ContentView: View {
         .toolbarBackground(.ultraThinMaterial, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .background(FinanceGlassBackground().ignoresSafeArea())
+    }
+
+    private func lifecycleContent(pendingRecurringCount: Int) -> some View {
+        tabContent(pendingRecurringCount: pendingRecurringCount)
         .task {
-            performStartupTasks()
+            await performStartupTasks()
+            presentPendingWalletExpenseDraftIfNeeded()
         }
         .onChange(of: scenePhase) { _, newPhase in
             handleScenePhaseChange(newPhase)
         }
+    }
+
+    private func alertContent(pendingRecurringCount: Int) -> some View {
+        lifecycleContent(pendingRecurringCount: pendingRecurringCount)
         .alert("Backup más reciente disponible", isPresented: $showingSyncImportPrompt) {
             Button("Ahora no", role: .cancel) {
                 if let pendingSyncExportDate {
                     ManualSyncService.markDismissed(exportDate: pendingSyncExportDate)
                 }
                 pendingSyncExportDate = nil
+                showingSyncImportPrompt = false
+                schedulePendingWalletExpensePresentation()
             }
             Button("Importar y reemplazar", role: .destructive) {
+                showingSyncImportPrompt = false
                 importLatestBackupFromICloudDrive()
+                schedulePendingWalletExpensePresentation()
             }
         } message: {
             Text("Se encontró en iCloud Drive una copia de seguridad más reciente. Si importas, se reemplazarán todos los datos actuales.")
         }
         .alert("Error de sincronización", isPresented: $showingSyncErrorAlert) {
-            Button("Aceptar", role: .cancel) {}
+            Button("Aceptar", role: .cancel) {
+                showingSyncErrorAlert = false
+                schedulePendingWalletExpensePresentation()
+            }
         } message: {
             Text(syncErrorMessage)
         }
@@ -118,32 +138,47 @@ struct ContentView: View {
         } message: {
             Text(crashReportAlertMessage)
         }
-        .sheet(isPresented: $showingQuickAddExpense) {
-            AddMovementView(preselectedType: .expense)
-        }
-        .onChange(of: deepLinkRouter.pendingAddExpense) { _, shouldOpen in
-            if shouldOpen {
-                deepLinkRouter.pendingAddExpense = false
-                showingQuickAddExpense = true
+    }
+
+    private func quickExpenseContent(pendingRecurringCount: Int) -> some View {
+        alertContent(pendingRecurringCount: pendingRecurringCount)
+        .sheet(item: $quickExpenseSheet, onDismiss: handleQuickExpenseSheetDismissal) { destination in
+            switch destination {
+            case .standard:
+                AddMovementView(preselectedType: .expense)
+            case .wallet(let draft):
+                AddMovementView(walletExpenseDraft: draft)
             }
         }
-        .onAppear {
-            hasAccountsSnapshot = !activeAccounts.isEmpty
+        .onChange(of: deepLinkRouter.pendingAddExpense) { _, shouldOpen in
+            if shouldOpen { presentPendingDeepLinkExpenseIfNeeded() }
         }
-        .onChange(of: accounts.count) { _, _ in
-            hasAccountsSnapshot = !activeAccounts.isEmpty
+        .onChange(of: deepLinkRouter.walletExpenseDraftRevision) { _, _ in
+            presentPendingWalletExpenseDraftIfNeeded()
         }
-        .onChange(of: accounts.map(\.isArchived)) { _, _ in
-            hasAccountsSnapshot = !activeAccounts.isEmpty
+        .onChange(of: persistenceCoordinator.isRestoring) { _, isRestoring in
+            if isRestoring, case .wallet = quickExpenseSheet {
+                // No se confirma el draft: si la restauración cancela la hoja,
+                // el gasto pendiente podrá mostrarse de nuevo al terminar.
+                walletDismissedForRestore = true
+                quickExpenseSheet = nil
+            } else if !isRestoring {
+                presentPendingDeepLinkExpenseIfNeeded()
+            }
+        }
+        .onChange(of: persistenceCoordinator.isBusy) { _, isBusy in
+            guard !isBusy else { return }
+            presentPendingDeepLinkExpenseIfNeeded()
+            schedulePendingWalletExpensePresentation()
         }
     }
 
-    private func checkForSyncUpdates() {
+    private func checkForSyncUpdates() async {
         guard ManualSyncService.isConfigured else { return }
         guard !showingSyncImportPrompt else { return }
+        guard !persistenceCoordinator.isBusy else { return }
 
-        guard ManualSyncService.shouldPromptForNewBackup() else { return }
-        guard let latest = try? ManualSyncService.latestBackup() else { return }
+        guard let latest = try? await ManualSyncService.latestBackupIfPromptNeeded() else { return }
 
         pendingSyncExportDate = latest.exportDate
         showingSyncImportPrompt = true
@@ -168,13 +203,15 @@ struct ContentView: View {
     private func dismissPendingCrashReport() {
         CrashReportService.shared.markPendingReportSeen()
         pendingCrashReport = nil
+        showingCrashReportAlert = false
+        schedulePendingWalletExpensePresentation()
     }
 
-    private func performStartupTasks() {
+    private func performStartupTasks() async {
         presentPendingCrashReportIfNeeded()
 
         guard !showingCrashReportAlert else { return }
-        refreshSyncState()
+        await refreshSyncState()
         MonthlyWrappedService.configureMonthlyReminder()
     }
 
@@ -188,90 +225,169 @@ struct ContentView: View {
 
         CrashReportService.shared.markSessionRunning()
         presentPendingCrashReportIfNeeded()
-        refreshSyncState()
-        MonthlyWrappedService.configureMonthlyReminder()
+        Task { @MainActor in
+            await refreshSyncState()
+            MonthlyWrappedService.configureMonthlyReminder()
+            presentPendingWalletExpenseDraftIfNeeded()
+        }
     }
 
-    private func refreshSyncState() {
-        runAutomaticBackupIfDue()
-        checkForSyncUpdates()
+    private func presentPendingWalletExpenseDraftIfNeeded() {
+        guard quickExpenseSheet == nil else { return }
+        guard !showingSyncImportPrompt, !showingSyncErrorAlert, !showingCrashReportAlert else { return }
+        guard !persistenceCoordinator.isBusy else { return }
+        guard let draft = WalletExpenseDraftStore.nextPending() else { return }
+        activeWalletDraftID = draft.id
+        quickExpenseSheet = .wallet(draft)
     }
 
-    private func runAutomaticBackupIfDue() {
+    private func presentPendingDeepLinkExpenseIfNeeded() {
+        guard !persistenceCoordinator.isBusy,
+              quickExpenseSheet == nil,
+              deepLinkRouter.pendingAddExpense else { return }
+        deepLinkRouter.pendingAddExpense = false
+        quickExpenseSheet = .standard
+    }
+
+    private func handleQuickExpenseSheetDismissal() {
+        if walletDismissedForRestore {
+            walletDismissedForRestore = false
+            activeWalletDraftID = nil
+        } else if !persistenceCoordinator.isRestoring, let activeWalletDraftID {
+            WalletExpenseDraftStore.acknowledge(activeWalletDraftID)
+            self.activeWalletDraftID = nil
+        }
+
+        presentPendingDeepLinkExpenseIfNeeded()
+        presentPendingWalletExpenseDraftIfNeeded()
+    }
+
+    private func schedulePendingWalletExpensePresentation() {
+        guard !persistenceCoordinator.isBusy else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard !persistenceCoordinator.isBusy else { return }
+            presentPendingWalletExpenseDraftIfNeeded()
+        }
+    }
+
+    private func refreshSyncState() async {
+        await runAutomaticBackupIfDue()
+        await checkForSyncUpdates()
+    }
+
+    private func runAutomaticBackupIfDue() async {
         do {
-            _ = try AutoBackupService.performAutoBackupIfDue(
-                banks: banks,
-                accounts: accounts,
-                categories: categories,
-                movements: movements,
-                investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements,
-                budgets: budgets
-            )
+            _ = try await AutoBackupService.performAutoBackupIfDue(in: modelContext)
         } catch {
             return
         }
     }
 
     private func importLatestBackupFromICloudDrive() {
-        do {
-            let (importResult, exportDate) = try ManualSyncService.prepareLatestBackupForRestore(
-                banks: banks,
-                accounts: accounts,
-                categories: categories,
-                movements: movements,
-                investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements,
-                budgets: budgets
-            )
-            _ = try DataExportService.importData(
-                importResult,
-                into: modelContext,
-                mode: .replace,
-                currencyCode: appCurrencyCode
-            )
+        guard persistenceCoordinator.begin(.restore) else { return }
+        Task { @MainActor in
+            defer { persistenceCoordinator.finish(.restore) }
+            do {
+                let (importResult, exportDate, revision) = try await ManualSyncService.prepareLatestBackupForRestoreAsync(
+                    snapshotProvider: {
+                        try DataExportService.fetchSnapshot(in: modelContext)
+                    }
+                )
+                try Task.checkCancellation()
+                guard try await DataExportService.revisionAsync(in: modelContext) == revision else {
+                    throw PersistenceOperationError.localChangesDetected
+                }
+                _ = try DataExportService.importData(
+                    importResult,
+                    into: modelContext,
+                    mode: .replace,
+                    currencyCode: appCurrencyCode
+                )
 
-            ManualSyncService.markImported(exportDate: exportDate)
-            pendingSyncExportDate = nil
-        } catch {
-            syncErrorMessage = "No se pudo importar la copia de iCloud Drive: \(error.localizedDescription)"
-            showingSyncErrorAlert = true
+                ManualSyncService.markImported(exportDate: exportDate)
+                pendingSyncExportDate = nil
+            } catch {
+                if Task.isCancelled { return }
+                syncErrorMessage = "No se pudo importar la copia de iCloud Drive: \(error.localizedDescription)"
+                showingSyncErrorAlert = true
+            }
         }
     }
 
     private func deleteAllData() {
         CrashReportService.shared.recordBreadcrumb("ContentView.deleteAllData")
+        guard let snapshot = try? DataExportService.fetchSnapshot(in: modelContext) else { return }
         withAnimation {
-            for movement in movements {
+            for movement in snapshot.movements {
                 modelContext.delete(movement)
             }
 
-            for snapshot in investmentSnapshots {
-                modelContext.delete(snapshot)
+            for investmentSnapshot in snapshot.investmentSnapshots {
+                modelContext.delete(investmentSnapshot)
             }
 
-            for recurring in recurringMovements {
+            for recurring in snapshot.recurringMovements {
                 modelContext.delete(recurring)
             }
 
-            for budget in budgets {
+            for budget in snapshot.budgets {
                 modelContext.delete(budget)
             }
 
-            for category in categories {
+            for category in snapshot.categories {
                 modelContext.delete(category)
             }
 
-            for account in accounts {
+            for account in snapshot.accounts {
                 modelContext.delete(account)
             }
 
-            for bank in banks {
+            for bank in snapshot.banks {
                 modelContext.delete(bank)
             }
         }
 
         try? modelContext.save()
+    }
+}
+
+/// Mantiene las consultas observables del badge fuera de la vista raíz.
+/// Sólo observa movimientos vinculados a recurrencias y cuentas activas.
+@MainActor
+private struct ContentBadgeReader<Content: View>: View {
+    @AppStorage(AppLaunchUX.hasAccountsSnapshotKey) private var hasAccountsSnapshot = false
+    @Query(filter: #Predicate<BankAccount> { !$0.isArchived }) private var activeAccounts: [BankAccount]
+    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
+    @Query(filter: #Predicate<Movement> { $0.recurringRuleId != nil }) private var confirmedMovements: [Movement]
+
+    let content: (Int) -> Content
+
+    private var pendingRecurringCount: Int {
+        RecurringMovementService.pendingMovements(
+            for: recurringMovements,
+            confirmedMovements: confirmedMovements,
+            horizonDays: 5
+        ).count
+    }
+
+    init(@ViewBuilder content: @escaping (Int) -> Content) {
+        self.content = content
+    }
+
+    var body: some View {
+        content(pendingRecurringCount)
+            .onAppear(perform: updateAccountSnapshot)
+            .onChange(of: activeAccounts.count) { _, _ in
+                updateAccountSnapshot()
+            }
+    }
+
+    private func updateAccountSnapshot() {
+        let newValue = !activeAccounts.isEmpty
+        if hasAccountsSnapshot != newValue {
+            hasAccountsSnapshot = newValue
+        }
     }
 }
 

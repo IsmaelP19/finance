@@ -90,7 +90,7 @@ struct FinanceApp: App {
 
     @State private var sharedModelContainer: ModelContainer?
     @State private var modelContainerError: String?
-    @State private var deepLinkRouter = DeepLinkRouter()
+    @State private var deepLinkRouter = DeepLinkRouter.shared
     @AppStorage(AppLaunchUX.hasAccountsSnapshotKey) private var hasAccountsSnapshot = false
 
     var body: some Scene {

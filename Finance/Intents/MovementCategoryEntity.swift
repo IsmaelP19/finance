@@ -41,18 +41,21 @@ struct MovementCategoryEntity: AppEntity {
 
 struct MovementCategoryEntityQuery: EntityQuery {
     func entities(for identifiers: [UUID]) async throws -> [MovementCategoryEntity] {
+        guard !identifiers.isEmpty else { return [] }
+
         let container = FinanceModelContainerProvider.shared
         let context = ModelContext(container)
+        let identifierValues = identifiers
 
         let descriptor = FetchDescriptor<MovementCategory>(
-            sortBy: [SortDescriptor(\.name)]
+            predicate: #Predicate<MovementCategory> { category in
+                identifierValues.contains(category.id)
+            },
+            sortBy: [SortDescriptor(\.name), SortDescriptor(\.id)]
         )
         let categories = try context.fetch(descriptor)
 
-        let identifierSet = Set(identifiers)
-        return categories
-            .filter { identifierSet.contains($0.id) }
-            .map { MovementCategoryEntity(from: $0) }
+        return categories.map { MovementCategoryEntity(from: $0) }
     }
 
     func suggestedEntities() async throws -> [MovementCategoryEntity] {
@@ -60,7 +63,7 @@ struct MovementCategoryEntityQuery: EntityQuery {
         let context = ModelContext(container)
 
         let descriptor = FetchDescriptor<MovementCategory>(
-            sortBy: [SortDescriptor(\.name)]
+            sortBy: [SortDescriptor(\.name), SortDescriptor(\.id)]
         )
         let categories = try context.fetch(descriptor)
 

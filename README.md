@@ -1,6 +1,6 @@
 # Finance (iOS)
 
-![iOS](https://img.shields.io/badge/iOS-17%2B-0A84FF)
+![iOS](https://img.shields.io/badge/iOS-26.2%2B-0A84FF)
 ![Swift](https://img.shields.io/badge/Swift-6-F05138)
 ![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-0A84FF)
 ![Persistence](https://img.shields.io/badge/Persistence-SwiftData-34C759)
@@ -20,7 +20,7 @@ Aplicacion iOS para gestionar patrimonio financiero personal de forma local: cue
 - SwiftData
 - Swift Charts
 - WidgetKit + App Intents
-- Xcode (iOS 17+)
+- Xcode (iOS 26.2+)
 
 ## Funcionalidades actuales
 
@@ -167,3 +167,28 @@ La aplicacion usa formato monetario con:
 ---
 
 Proyecto personal en evolucion, enfocado en simplicidad, privacidad y control local de datos.
+
+## Distribución con SideStore
+
+La fuente de Finance estará en:
+
+`https://ismaelp19.github.io/finance/source.json`
+
+El repositorio ya es público. GitHub Pages está configurado con **GitHub Actions** y el entorno `github-pages` admite despliegues desde `release/*`.
+
+Para publicar la primera versión:
+
+1. Incluir en el commit el scheme compartido `Finance.xcodeproj/xcshareddata/xcschemes/Finance.xcscheme`, el workflow `.github/workflows/sidestore.yml` y los scripts de `scripts/`.
+2. Crear una rama `release/X` desde la versión que se quiera distribuir y hacer push. Cada push a cualquier rama `release/*` ejecuta el workflow **Publicar en SideStore**. Esperar a que terminen los jobs `build` y `deploy` antes de compartir la URL de la fuente.
+
+El workflow archiva Finance para dispositivo sin firma de distribución, incluye `FinanceWidgetExtension.appex` en `Payload/Finance.app`, genera `Finance.ipa`, lo publica como asset de una GitHub Release y actualiza el JSON en GitHub Pages. Guarda también el JSON junto al IPA en la Release para conservar el historial de versiones. Usa `AppVersion.current` como base y asigna al IPA una versión mayor que la última publicada; también actualiza la versión visible de Ajustes dentro de esa compilación. El build cambia con cada nuevo push. Se conserva el bundle ID `com.getincouch.Finance`.
+
+Para añadir Finance en un iPhone con SideStore ya instalado:
+
+1. Abrir **SideStore → Sources → +** y añadir `https://ismaelp19.github.io/finance/source.json`. También se puede abrir [el enlace directo a la fuente](sidestore://source?url=https%3A%2F%2Fismaelp19.github.io%2Ffinance%2Fsource.json) desde el iPhone.
+2. Instalar Finance desde esa fuente. Al preguntar por la extensión, conservar `FinanceWidgetExtension` si se quiere usar el widget.
+3. Cuando aparezca una nueva versión, pulsar **Update** en SideStore con LocalDevVPN conectado. Publicar un push hace disponible la actualización; cada usuario decide cuándo instalarla.
+
+Con un Apple ID gratuito, SideStore vuelve a firmar la app en cada dispositivo: hay que refrescarla antes de que pasen siete días y se aplica el límite de tres apps activas, contando SideStore. No se usa el flujo **Distribute App** de Xcode ni se necesita Apple Developer Program de pago. [Documentación de fuentes de SideStore](https://docs.sidestore.io/docs/advanced/app-sources) · [Preguntas frecuentes de SideStore](https://docs.sidestore.io/docs/faq).
+
+El IPA probado actualmente exige iOS 26.2 o posterior. La fuente declarará el mínimo de iOS del IPA publicado.

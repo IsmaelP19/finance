@@ -249,9 +249,10 @@ struct AddAccountView: View {
     ) {
         let today = Calendar.current.startOfDay(for: Date())
 
-        if let existing = (account.investmentSnapshots ?? []).first(where: {
-            Calendar.current.isDate($0.snapshotDate, inSameDayAs: today)
-        }) {
+        if let existing = InvestmentSnapshot.latestSnapshot(
+            on: today,
+            from: account.investmentSnapshots ?? []
+        ) {
             existing.investedAmount = investedAmount
             existing.marketValue = marketValue
             existing.updatedAt = Date()
@@ -537,7 +538,7 @@ private struct AccountBankPickerSheet: View {
     @State private var searchText = ""
     @State private var draftSelectionID: UUID?
 
-    private var usageCounts: [UUID: Int] {
+    private func makeUsageCounts() -> [UUID: Int] {
         var counts: [UUID: Int] = [:]
         for movement in recentMovements {
             if let bankID = movement.account?.bank?.id {
@@ -559,17 +560,10 @@ private struct AccountBankPickerSheet: View {
         return !banks.contains { $0.name.localizedCaseInsensitiveCompare(trimmedSearch) == .orderedSame }
     }
 
-    private var filteredBanks: [Bank] {
-        let source = sortedBanks
-        guard !trimmedSearch.isEmpty else { return source }
-        return source.filter { $0.name.localizedCaseInsensitiveContains(trimmedSearch) }
-    }
-
-    private var sortedBanks: [Bank] {
-        let counts = usageCounts
-        return banks.sorted { lhs, rhs in
-            let leftCount = counts[lhs.id, default: 0]
-            let rightCount = counts[rhs.id, default: 0]
+    private func makeSortedBanks(usageCounts: [UUID: Int]) -> [Bank] {
+        banks.sorted { lhs, rhs in
+            let leftCount = usageCounts[lhs.id, default: 0]
+            let rightCount = usageCounts[rhs.id, default: 0]
             if leftCount != rightCount {
                 return leftCount > rightCount
             }
@@ -578,6 +572,12 @@ private struct AccountBankPickerSheet: View {
     }
 
     var body: some View {
+        let usageCounts = makeUsageCounts()
+        let sortedBanks = makeSortedBanks(usageCounts: usageCounts)
+        let filteredBanks = trimmedSearch.isEmpty
+            ? sortedBanks
+            : sortedBanks.filter { $0.name.localizedCaseInsensitiveContains(trimmedSearch) }
+
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.large) {
@@ -593,7 +593,7 @@ private struct AccountBankPickerSheet: View {
                         createBankButton
                     }
 
-                    VStack(spacing: 0) {
+                    LazyVStack(spacing: 0) {
                         ForEach(filteredBanks) { bank in
                             Button {
                                 draftSelectionID = bank.id

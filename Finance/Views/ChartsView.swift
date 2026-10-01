@@ -32,6 +32,21 @@ struct BankBalanceDatum: Identifiable {
     }
 }
 
+private struct ChartsDashboardData {
+    let totalBalance: Decimal
+    let activeAccountCount: Int
+    let typeBalances: [TypeBalanceDatum]
+    let pieTypeBalances: [TypeBalanceDatum]
+    let bankBalances: [BankBalanceDatum]
+    let topBank: BankBalanceDatum?
+    let topType: TypeBalanceDatum?
+    let latestWrappedMonth: WrappedMonth?
+    let hasPendingWrapped: Bool
+    let recoveredReimbursementAmountsByExpenseID: [UUID: Decimal]
+    let pendingReimbursementMovements: [Movement]
+    let totalPendingReimbursement: Decimal
+}
+
 /// Pestana de graficos y resumen del patrimonio.
 struct ChartsView: View {
     @Environment(\.colorScheme) private var colorScheme
@@ -47,104 +62,70 @@ struct ChartsView: View {
     @State private var showingPendingReimbursements = false
     @State private var showingWrappedHistory = false
 
-    private var totalBalance: Decimal {
-        activeAccounts.reduce(Decimal(0)) { $0 + $1.balance }
-    }
+    private var dashboardData: ChartsDashboardData? {
+        let activeAccounts = accounts.filter(\.isActive)
+        guard !activeAccounts.isEmpty else { return nil }
 
-    private var activeAccounts: [BankAccount] {
-        accounts.filter(\.isActive)
-    }
+        let totalBalance = activeAccounts.reduce(Decimal(0)) { $0 + $1.balance }
 
-    private var typeBalances: [TypeBalanceDatum] {
-        let grouped = Dictionary(grouping: activeAccounts) { $0.accountType }
-        return AccountType.allCases.compactMap { type in
-            guard let typeAccounts = grouped[type], !typeAccounts.isEmpty else { return nil }
+        let groupedByType = Dictionary(grouping: activeAccounts) { $0.accountType }
+        let typeBalances = AccountType.allCases.compactMap { type -> TypeBalanceDatum? in
+            guard let typeAccounts = groupedByType[type], !typeAccounts.isEmpty else { return nil }
             let total = typeAccounts.reduce(Decimal(0)) { $0 + $1.balance }
             return TypeBalanceDatum(type: type, amount: total, count: typeAccounts.count)
         }
-    }
 
-    private var pieTypeBalances: [TypeBalanceDatum] {
-        typeBalances.filter { $0.amount > 0 }
-    }
-
-    private var bankBalances: [BankBalanceDatum] {
-        let grouped = Dictionary(grouping: activeAccounts) {
+        let groupedByBank = Dictionary(grouping: activeAccounts) {
             $0.bank?.id.uuidString ?? "no-bank"
         }
-
-        return grouped.compactMap { key, groupedAccounts in
+        let bankBalances = groupedByBank.compactMap { key, groupedAccounts -> BankBalanceDatum? in
             guard let first = groupedAccounts.first else { return nil }
             let total = groupedAccounts.reduce(Decimal(0)) { $0 + $1.balance }
-            let bankName = first.bank?.name ?? "Sin banco"
-            let color = first.bank?.color ?? .gray
-            let icon = first.bank?.iconName ?? "building.columns"
-
             return BankBalanceDatum(
                 id: key,
-                name: bankName,
-                color: color,
-                iconName: icon,
+                name: first.bank?.name ?? "Sin banco",
+                color: first.bank?.color ?? .gray,
+                iconName: first.bank?.iconName ?? "building.columns",
                 amount: total,
                 count: groupedAccounts.count
             )
         }
         .sorted { $0.amount > $1.amount }
-    }
 
-    private var topBank: BankBalanceDatum? {
-        bankBalances.max { $0.amount < $1.amount }
-    }
-
-    private var topType: TypeBalanceDatum? {
-        typeBalances.max { $0.amount < $1.amount }
-    }
-
-    private var latestWrappedMonth: WrappedMonth? {
-        MonthlyWrappedService.latestClosedMonth(from: movements)
-    }
-
-    private var hasPendingWrapped: Bool {
-        guard let latestWrappedMonth else { return false }
-        return !MonthlyWrappedService.hasSeen(month: latestWrappedMonth)
-    }
-
-    private var recoveredReimbursementAmountsByExpenseID: [UUID: Decimal] {
-        reimbursementIncomes.reduce(into: [:]) { partialResult, reimbursement in
+        let recovered = reimbursementIncomes.reduce(into: [UUID: Decimal]()) { result, reimbursement in
             guard let expenseID = reimbursement.reimbursementForId else { return }
-            partialResult[expenseID, default: 0] += reimbursement.amount
+            result[expenseID, default: 0] += reimbursement.amount
         }
-    }
 
-    private var pendingReimbursementMovements: [Movement] {
-        movements
-            .filter { movement in
-                guard movement.type == .expense, movement.isSharedExpense else { return false }
-                let recoveredAmount = recoveredReimbursementAmountsByExpenseID[movement.id] ?? 0
-                return movement.pendingReimbursementAmount(recoveredAmount: recoveredAmount) > 0
-            }
-            .sorted { lhs, rhs in
-                let lhsPending = lhs.pendingReimbursementAmount(
-                    recoveredAmount: recoveredReimbursementAmountsByExpenseID[lhs.id] ?? 0
-                )
-                let rhsPending = rhs.pendingReimbursementAmount(
-                    recoveredAmount: recoveredReimbursementAmountsByExpenseID[rhs.id] ?? 0
-                )
-
-                if lhsPending == rhsPending {
-                    return lhs.occurredAt > rhs.occurredAt
-                }
-
-                return lhsPending > rhsPending
-            }
-    }
-
-    private var totalPendingReimbursement: Decimal {
-        pendingReimbursementMovements.reduce(Decimal(0)) { partialResult, movement in
-            partialResult + movement.pendingReimbursementAmount(
-                recoveredAmount: recoveredReimbursementAmountsByExpenseID[movement.id] ?? 0
-            )
+        var pendingWithAmount: [(movement: Movement, amount: Decimal)] = []
+        pendingWithAmount.reserveCapacity(movements.count)
+        for movement in movements {
+            guard movement.type == .expense, movement.isSharedExpense else { continue }
+            let amount = movement.pendingReimbursementAmount(recoveredAmount: recovered[movement.id] ?? 0)
+            guard amount > 0 else { continue }
+            pendingWithAmount.append((movement, amount))
         }
+        pendingWithAmount.sort { lhs, rhs in
+            lhs.amount == rhs.amount
+                ? lhs.movement.occurredAt > rhs.movement.occurredAt
+                : lhs.amount > rhs.amount
+        }
+
+        let latestWrappedMonth = MonthlyWrappedService.latestClosedMonth(from: movements)
+        return ChartsDashboardData(
+            totalBalance: totalBalance,
+            activeAccountCount: activeAccounts.count,
+            typeBalances: typeBalances,
+            pieTypeBalances: typeBalances.filter { $0.amount > 0 },
+            bankBalances: bankBalances,
+            topBank: bankBalances.max { $0.amount < $1.amount },
+            topType: typeBalances.max { $0.amount < $1.amount },
+            latestWrappedMonth: latestWrappedMonth,
+            hasPendingWrapped: latestWrappedMonth.map { !MonthlyWrappedService.hasSeen(month: $0) } ?? false,
+            recoveredReimbursementAmountsByExpenseID: recovered,
+            pendingReimbursementMovements: pendingWithAmount.map { $0.movement },
+            totalPendingReimbursement: pendingWithAmount.reduce(Decimal(0)) { $0 + $1.amount }
+        )
     }
 
     private var pageBackground: LinearGradient {
@@ -180,19 +161,19 @@ struct ChartsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        let data = dashboardData
+
+        return NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
-                    if activeAccounts.isEmpty {
-                        emptyState
-                    } else {
+                    if let data {
                         homeSubtitle
 
-                        patrimonyHeroCard
+                        patrimonyHeroCard(data: data)
 
                         VStack(spacing: 12) {
-                            pendingReimbursementsCard
-                            wrappedAccessCard
+                            pendingReimbursementsCard(data: data)
+                            wrappedAccessCard(data: data)
                         }
 
                         BudgetsSection(
@@ -201,11 +182,13 @@ struct ChartsView: View {
                             currencyCode: appCurrencyCode
                         )
 
-                        PatrimonyPieChart(data: pieTypeBalances, currencyCode: appCurrencyCode)
+                        PatrimonyPieChart(data: data.pieTypeBalances, currencyCode: appCurrencyCode)
 
-                        BalanceByBankBarChart(data: bankBalances, currencyCode: appCurrencyCode)
+                        BalanceByBankBarChart(data: data.bankBalances, currencyCode: appCurrencyCode)
 
-                        summarySection
+                        summarySection(data: data)
+                    } else {
+                        emptyState
                     }
                 }
                 .padding(.horizontal, 18)
@@ -252,43 +235,45 @@ struct ChartsView: View {
                 MovementStatsView()
             }
             .sheet(isPresented: $showingPendingReimbursements) {
-                PendingReimbursementsListView(
-                    movements: pendingReimbursementMovements,
-                    recoveredReimbursementAmountsByExpenseID: recoveredReimbursementAmountsByExpenseID,
-                    currencyCode: appCurrencyCode
-                )
+                if let data {
+                    PendingReimbursementsListView(
+                        movements: data.pendingReimbursementMovements,
+                        recoveredReimbursementAmountsByExpenseID: data.recoveredReimbursementAmountsByExpenseID,
+                        currencyCode: appCurrencyCode
+                    )
+                }
             }
             .sheet(isPresented: $showingWrappedHistory) {
-                MonthlyWrappedHistoryView(initialMonth: latestWrappedMonth)
+                MonthlyWrappedHistoryView(initialMonth: data?.latestWrappedMonth)
             }
         }
     }
 
     @ViewBuilder
-    private var pendingReimbursementsCard: some View {
-        if !pendingReimbursementMovements.isEmpty {
-            let reimbursementsSubtitle = pendingReimbursementMovements.count == 1 ? "1 movimiento pendiente de reembolso" : "\(pendingReimbursementMovements.count) movimientos pendientes de reembolso"
+    private func pendingReimbursementsCard(data: ChartsDashboardData) -> some View {
+        if !data.pendingReimbursementMovements.isEmpty {
+            let reimbursementsSubtitle = data.pendingReimbursementMovements.count == 1 ? "1 movimiento pendiente de reembolso" : "\(data.pendingReimbursementMovements.count) movimientos pendientes de reembolso"
 
             FinanceHomeActionBanner(
                 title: "Saldo pendiente",
-                value: totalPendingReimbursement.masked(hideBalances, code: appCurrencyCode),
+                value: data.totalPendingReimbursement.masked(hideBalances, code: appCurrencyCode),
                 subtitle: reimbursementsSubtitle,
                 systemImage: "arrow.uturn.left.circle.fill",
-                pillText: "\(pendingReimbursementMovements.count)",
+                pillText: "\(data.pendingReimbursementMovements.count)",
                 tint: Color(red: 0.00, green: 0.66, blue: 0.49),
                 showsChevron: true
             ) {
                 showingPendingReimbursements = true
             }
             .accessibilityLabel(
-                "Saldo pendiente, \(totalPendingReimbursement.masked(hideBalances, code: appCurrencyCode)), \(reimbursementsSubtitle)"
+                "Saldo pendiente, \(data.totalPendingReimbursement.masked(hideBalances, code: appCurrencyCode)), \(reimbursementsSubtitle)"
             )
         }
     }
 
     @ViewBuilder
-    private var wrappedAccessCard: some View {
-        if hasPendingWrapped, let latestWrappedMonth {
+    private func wrappedAccessCard(data: ChartsDashboardData) -> some View {
+        if data.hasPendingWrapped, let latestWrappedMonth = data.latestWrappedMonth {
             FinanceHomeActionBanner(
                 title: "Tu resumen de \(latestWrappedMonth.longLabel) está listo",
                 value: nil,
@@ -303,10 +288,10 @@ struct ChartsView: View {
         }
     }
 
-    private var patrimonyHeroCard: some View {
+    private func patrimonyHeroCard(data: ChartsDashboardData) -> some View {
         FinanceHomeHeroCard(
-            totalBalance: totalBalance,
-            accountCount: activeAccounts.count,
+            totalBalance: data.totalBalance,
+            accountCount: data.activeAccountCount,
             currencyCode: appCurrencyCode,
             hideBalances: hideBalances
         )
@@ -349,7 +334,7 @@ struct ChartsView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var summarySection: some View {
+    private func summarySection(data: ChartsDashboardData) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -368,23 +353,23 @@ struct ChartsView: View {
             }
 
             LazyVGrid(columns: summaryColumns, spacing: 10) {
-                SummaryMetricCard(title: "Patrimonio total", value: totalBalance.masked(hideBalances, code: appCurrencyCode), icon: "creditcard")
-                SummaryMetricCard(title: "Cuentas", value: "\(activeAccounts.count)", icon: "building.columns")
-                SummaryMetricCard(title: "Bancos", value: "\(bankBalances.count)", icon: "building.2")
+                SummaryMetricCard(title: "Patrimonio total", value: data.totalBalance.masked(hideBalances, code: appCurrencyCode), icon: "creditcard")
+                SummaryMetricCard(title: "Cuentas", value: "\(data.activeAccountCount)", icon: "building.columns")
+                SummaryMetricCard(title: "Bancos", value: "\(data.bankBalances.count)", icon: "building.2")
                 SummaryMetricCard(
                     title: "Saldo medio/cuenta",
-                    value: activeAccounts.isEmpty ? Decimal(0).masked(hideBalances, code: appCurrencyCode) : (totalBalance / Decimal(activeAccounts.count)).masked(hideBalances, code: appCurrencyCode),
+                    value: data.activeAccountCount == 0 ? Decimal(0).masked(hideBalances, code: appCurrencyCode) : (data.totalBalance / Decimal(data.activeAccountCount)).masked(hideBalances, code: appCurrencyCode),
                     icon: "divide.circle"
                 )
                 SummaryMetricCard(
                     title: "Banco principal",
-                    value: topBank?.name ?? "-",
-                    icon: topBank?.iconName ?? "building.columns"
+                    value: data.topBank?.name ?? "-",
+                    icon: data.topBank?.iconName ?? "building.columns"
                 )
                 SummaryMetricCard(
                     title: "Tipo principal",
-                    value: topType?.type.displayName ?? "-",
-                    icon: topType?.type.icon ?? "chart.bar"
+                    value: data.topType?.type.displayName ?? "-",
+                    icon: data.topType?.type.icon ?? "chart.bar"
                 )
             }
         }

@@ -91,6 +91,12 @@ private struct MovementListSummary {
     var movementCount: Int = 0
 }
 
+private struct MovementSummaryCollectionRevision: Equatable {
+    let count: Int
+    let latestID: UUID?
+    let latestUpdatedAt: Date?
+}
+
 private struct MovementRowData: Identifiable {
     let movement: Movement
     let recoveredReimbursementAmount: Decimal
@@ -165,11 +171,26 @@ private enum MovementSyncAction {
 }
 
 private struct MovementListScrollOffsetKey: PreferenceKey {
-    static var defaultValue: CGFloat = 0
+    static let defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }
+}
+
+private final class MovementScrollTracker {
+    var lastOffset: CGFloat = 0
+    var hasInitialized = false
+
+    func reset(to offset: CGFloat = 0) {
+        lastOffset = offset
+        hasInitialized = false
+    }
+}
+
+private struct ReceiptScanPresentation: Identifiable {
+    let id = UUID()
+    let draft: ReceiptScanDraft
 }
 
 /// Pantalla principal de movimientos (gastos e ingresos).
@@ -188,6 +209,10 @@ struct MovementsView: View {
     private var reimbursementIncomes: [Movement]
 
     @State private var showingAddMovement = false
+    @State private var showingReceiptScanner = false
+    @State private var pendingReceiptScanDraft: ReceiptScanDraft?
+    @State private var receiptScanPresentation: ReceiptScanPresentation?
+    @State private var shouldOpenManualMovementAfterScannerDismiss = false
     @State private var movementToView: MovementDetailSelection?
     @State private var movementToEdit: MovementEditingSelection?
     @State private var selectedAccountFilterID: UUID?
@@ -223,8 +248,7 @@ struct MovementsView: View {
     @State private var archivedAccountMovementSnapshots: [MovementArchivedAccountSnapshot] = []
     @State private var addMovementBaseline: MovementSheetBaseline?
     @State private var editMovementDismissContext: MovementDetailDismissContext?
-    @State private var lastFiltersMinY: CGFloat = 0
-    @State private var hasInitializedFiltersMinY = false
+    @State private var scrollTracker = MovementScrollTracker()
     @State private var isFloatingFiltersVisible = false
 
     private var calendar: Calendar { .current }
@@ -386,10 +410,11 @@ struct MovementsView: View {
     }
 
     private var visibleMovementRows: [MovementRowData] {
-        visibleFilteredMovements.map { movement in
+        let recoveredAmounts = recoveredReimbursementAmountsByExpenseID
+        return visibleFilteredMovements.map { movement in
             MovementRowData(
                 movement: movement,
-                recoveredReimbursementAmount: recoveredReimbursementAmountsByExpenseID[movement.id] ?? 0,
+                recoveredReimbursementAmount: recoveredAmounts[movement.id] ?? 0,
                 isLocked: movementTouchesArchivedAccount(movement)
             )
         }
@@ -401,7 +426,12 @@ struct MovementsView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            movementsList
+        }
+    }
+
+    private var movementsList: some View {
+        List {
                 if shouldShowFiltersHeader {
                     filtersHeader
                         .padding(.bottom, 2)
@@ -443,60 +473,12 @@ struct MovementsView: View {
 
                     Section {
                         ForEach(pendingRecurringMovements) { pending in
-                            PendingRecurringMovementRowView(
-                                pending: pending,
-                                currencyCode: appCurrencyCode,
-                                hideBalances: hideBalances,
-                                onEditAmount: { pendingRecurringToEditAmount = pending }
-                            )
-                                .listRowBackground(Color.clear)
-                                .listRowSeparator(.hidden)
-                                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button {
-                                        confirmPendingRecurringImmediately(pending)
-                                    } label: {
-                                        Label("Confirmar", systemImage: "checkmark.circle.fill")
-                                    }
-                                    .tint(.green)
-                                }
-
-                                .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                    Button {
-                                        pendingRecurringToEditAmount = pending
-                                    } label: {
-                                        Label("Editar importe", systemImage: "pencil")
-                                    }
-                                    .tint(.financeAccent)
-
-                                    Button {
-                                        pendingRecurringToManage = pending
-                                        showingPendingRecurringActions = true
-                                    } label: {
-                                        Label("Gestionar", systemImage: "ellipsis.circle")
-                                    }
-                                }
+                            pendingRecurringRow(pending)
                         }
                     }
                 }
 
-                if shouldShowPendingRecurringHint {
-                    MovementInlineSectionHeader(
-                        title: "Próximos recurrentes",
-                        systemImage: "repeat",
-                        tint: .blue
-                    )
-
-                    Section {
-                        PendingRecurringPeriodHintRow(
-                            pendingCount: pendingRecurringMovements.count,
-                            periodLabel: activePeriodLabel
-                        )
-                        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 6, trailing: 16))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                    }
-                }
+                pendingRecurringHintSection
 
                 if !hasAnyMovements && pendingRecurringMovements.isEmpty {
                     FinanceEmptyStateContent(
@@ -530,19 +512,20 @@ struct MovementsView: View {
             .coordinateSpace(name: "movementsListScroll")
             .onPreferenceChange(MovementListScrollOffsetKey.self) { offset in
                 guard hasAnyMovements else {
-                    isFloatingFiltersVisible = false
-                    hasInitializedFiltersMinY = false
-                    lastFiltersMinY = offset
+                    scrollTracker.reset(to: offset)
+                    if isFloatingFiltersVisible {
+                        isFloatingFiltersVisible = false
+                    }
                     return
                 }
 
-                guard hasInitializedFiltersMinY else {
-                    hasInitializedFiltersMinY = true
-                    lastFiltersMinY = offset
+                guard scrollTracker.hasInitialized else {
+                    scrollTracker.hasInitialized = true
+                    scrollTracker.lastOffset = offset
                     return
                 }
 
-                let delta = offset - lastFiltersMinY
+                let delta = offset - scrollTracker.lastOffset
                 let isNearTop = offset > -8
                 let isFiltersOffscreen = offset < -26
                 let threshold: CGFloat = 0.8
@@ -567,7 +550,9 @@ struct MovementsView: View {
                     }
                 }
 
-                lastFiltersMinY = offset
+                // Keep frame-to-frame direction in a reference-type tracker so
+                // offset churn does not invalidate the whole view hierarchy.
+                scrollTracker.lastOffset = offset
             }
             .overlay(alignment: .top) {
                 if isFloatingFiltersVisible && shouldShowFiltersHeader {
@@ -630,12 +615,27 @@ struct MovementsView: View {
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        presentAddMovement()
+                    Menu {
+                        Button {
+                            presentAddMovement()
+                        } label: {
+                            Label("Añadir movimiento", systemImage: "plus")
+                        }
+
+                        Button {
+                            pendingReceiptScanDraft = nil
+                            receiptScanPresentation = nil
+                            shouldOpenManualMovementAfterScannerDismiss = false
+                            showingReceiptScanner = true
+                        } label: {
+                            Label("Escanear ticket", systemImage: "doc.viewfinder")
+                        }
+                        .disabled(activeAccounts.isEmpty)
                     } label: {
                         Image(systemName: "plus")
                             .financeToolbarIconStyle()
                     }
+                    .accessibilityLabel("Añadir movimiento")
                     .disabled(activeAccounts.isEmpty)
                 }
             }
@@ -643,6 +643,35 @@ struct MovementsView: View {
                 handleAddMovementDismiss()
             }) {
                 AddMovementView()
+            }
+            .sheet(isPresented: $showingReceiptScanner, onDismiss: {
+                if let pendingReceiptScanDraft {
+                    self.pendingReceiptScanDraft = nil
+                    addMovementBaseline = currentMovementSheetBaseline()
+                    receiptScanPresentation = ReceiptScanPresentation(draft: pendingReceiptScanDraft)
+                    return
+                }
+
+                guard shouldOpenManualMovementAfterScannerDismiss else { return }
+                shouldOpenManualMovementAfterScannerDismiss = false
+                presentAddMovement()
+            }) {
+                ReceiptScanFlowView(
+                    recognize: { images in
+                        try await ReceiptOCRService().scan(images: images)
+                    },
+                    onComplete: { draft in
+                        pendingReceiptScanDraft = draft
+                    },
+                    onManualEntry: {
+                        shouldOpenManualMovementAfterScannerDismiss = true
+                    }
+                )
+            }
+            .sheet(item: $receiptScanPresentation, onDismiss: {
+                handleAddMovementDismiss()
+            }) { presentation in
+                AddMovementView(receiptScanDraft: presentation.draft)
             }
             .sheet(isPresented: $showingCustomPeriodSheet) {
                 MovementCustomMonthSheet(
@@ -697,6 +726,11 @@ struct MovementsView: View {
                 Button("Omitir solo esta ocurrencia") {
                     skipPendingRecurring(pending)
                 }
+                if pending.rule.isActive && pending.rule.endDate == nil {
+                    Button("Pausar recurrencia") {
+                        pausePendingRecurring(pending)
+                    }
+                }
                 Button("Finalizar recurrencia", role: .destructive) {
                     endPendingRecurring(pending)
                 }
@@ -708,6 +742,62 @@ struct MovementsView: View {
                 Button("Aceptar", role: .cancel) {}
             } message: {
                 Text(pendingAlertMessage)
+            }
+    }
+
+    @ViewBuilder
+    private var pendingRecurringHintSection: some View {
+        if shouldShowPendingRecurringHint {
+            MovementInlineSectionHeader(
+                title: "Próximos recurrentes",
+                systemImage: "repeat",
+                tint: .blue
+            )
+
+            Section {
+                PendingRecurringPeriodHintRow(
+                    pendingCount: pendingRecurringMovements.count,
+                    periodLabel: activePeriodLabel
+                )
+                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 6, trailing: 16))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func pendingRecurringRow(_ pending: PendingRecurringMovement) -> some View {
+        PendingRecurringMovementRowView(
+            pending: pending,
+            currencyCode: appCurrencyCode,
+            hideBalances: hideBalances,
+            onEditAmount: { pendingRecurringToEditAmount = pending }
+        )
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button {
+                confirmPendingRecurringImmediately(pending)
+            } label: {
+                Label("Confirmar", systemImage: "checkmark.circle.fill")
+            }
+            .tint(.green)
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            Button {
+                pendingRecurringToEditAmount = pending
+            } label: {
+                Label("Editar importe", systemImage: "pencil")
+            }
+            .tint(.financeAccent)
+
+            Button {
+                pendingRecurringToManage = pending
+                showingPendingRecurringActions = true
+            } label: {
+                Label("Gestionar", systemImage: "ellipsis.circle")
             }
         }
     }
@@ -872,7 +962,10 @@ struct MovementsView: View {
     }
 
     private func handleAddMovementDismiss() {
-        defer { addMovementBaseline = nil }
+        defer {
+            addMovementBaseline = nil
+            receiptScanPresentation = nil
+        }
         guard let baseline = addMovementBaseline else {
             reloadMovements(refreshAvailableYears: true)
             return
@@ -1121,8 +1214,9 @@ struct MovementsView: View {
 
             let loadedIDs = Set(loadedMovements.map(\.id))
             let overflowUnique = overflow.filter { !loadedIDs.contains($0.id) }
+            let overflowUniqueIDs = Set(overflowUnique.map(\.id))
             pendingFilteredMovements.removeAll { loadedIDs.contains($0.id) }
-            pendingFilteredMovements = overflowUnique + pendingFilteredMovements.filter { !Set(overflowUnique.map(\.id)).contains($0.id) }
+            pendingFilteredMovements = overflowUnique + pendingFilteredMovements.filter { !overflowUniqueIDs.contains($0.id) }
         }
     }
 
@@ -1134,7 +1228,10 @@ struct MovementsView: View {
         if lhs.occurredAt != rhs.occurredAt {
             return lhs.occurredAt > rhs.occurredAt
         }
-        return lhs.createdAt > rhs.createdAt
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt > rhs.createdAt
+        }
+        return lhs.id.uuidString < rhs.id.uuidString
     }
 
     private func startSummaryReload(token: UUID, refreshAvailableYears: Bool) {
@@ -1163,33 +1260,57 @@ struct MovementsView: View {
         do {
             if Task.isCancelled || token != reloadToken { return }
 
-            let summaryMovements = try fetchMovementsForSummary()
             let confirmations = try fetchRecurringConfirmationMovements()
 
             if refreshAvailableYears {
                 refreshedAvailableYears = try fetchAvailablePeriodYears()
             }
 
-            for movement in summaryMovements {
+            let initialCollectionRevision = try currentMovementSummaryRevision()
+
+            var summaryOffset = 0
+            var summaryFetchedCount = 0
+            while true {
                 if Task.isCancelled || token != reloadToken { return }
 
-                guard matchesActiveFilters(movement) else { continue }
-                computedSummary.movementCount += 1
+                let batch = try fetchMovementsForSummaryBatch(
+                    offset: summaryOffset,
+                    limit: Self.movementSummaryBatchSize
+                )
+                summaryFetchedCount += batch.count
 
-                switch movement.type {
-                case .income:
-                    computedSummary.totalIncome += movement.statsIncomeAmount
-                case .expense:
-                    computedSummary.totalExpense += movement.statsExpenseAmount
-                case .transfer:
-                    break
+                guard try currentMovementSummaryRevision() == initialCollectionRevision else {
+                    if token == reloadToken, !Task.isCancelled {
+                        reloadMovements(refreshAvailableYears: refreshAvailableYears)
+                    }
+                    return
                 }
+
+                for movement in batch {
+                    if Task.isCancelled || token != reloadToken { return }
+
+                    guard matchesActiveFilters(movement) else { continue }
+                    computedSummary.movementCount += 1
+
+                    switch movement.type {
+                    case .income:
+                        computedSummary.totalIncome += movement.statsIncomeAmount
+                    case .expense:
+                        computedSummary.totalExpense += movement.statsExpenseAmount
+                    case .transfer:
+                        break
+                    }
+                }
+
+                guard batch.count == Self.movementSummaryBatchSize else { break }
+                summaryOffset += batch.count
+                await Task.yield()
             }
 
             guard !Task.isCancelled, token == reloadToken else { return }
             summary = computedSummary
             recurringConfirmationMovements = confirmations
-            hasAnyMovements = (currentMovementCount() ?? summaryMovements.count) > 0
+            hasAnyMovements = (currentMovementCount() ?? summaryFetchedCount) > 0
             if let refreshedAvailableYears {
                 availablePeriodYears = refreshedAvailableYears
             }
@@ -1275,7 +1396,8 @@ struct MovementsView: View {
         var descriptor = FetchDescriptor<Movement>(
             sortBy: [
                 SortDescriptor(\Movement.occurredAt, order: .reverse),
-                SortDescriptor(\Movement.createdAt, order: .reverse)
+                SortDescriptor(\Movement.createdAt, order: .reverse),
+                SortDescriptor(\Movement.id, order: .forward)
             ]
         )
         descriptor.fetchOffset = offset
@@ -1283,20 +1405,42 @@ struct MovementsView: View {
         return try modelContext.fetch(descriptor)
     }
 
-    private func fetchMovementsForSummary() throws -> [Movement] {
+    private func fetchMovementsForSummaryBatch(offset: Int, limit: Int) throws -> [Movement] {
+        var descriptor: FetchDescriptor<Movement>
         if let interval = activeDateInterval {
             let start = interval.start
             let end = interval.end
-            let descriptor = FetchDescriptor<Movement>(
+            descriptor = FetchDescriptor<Movement>(
                 predicate: #Predicate { movement in
                     movement.occurredAt >= start && movement.occurredAt < end
                 }
             )
-            return try modelContext.fetch(descriptor)
+        } else {
+            descriptor = FetchDescriptor<Movement>()
         }
 
-        let descriptor = FetchDescriptor<Movement>()
+        descriptor.sortBy = [
+            SortDescriptor(\Movement.occurredAt, order: .reverse),
+            SortDescriptor(\Movement.createdAt, order: .reverse),
+            SortDescriptor(\Movement.id, order: .forward)
+        ]
+        descriptor.fetchOffset = offset
+        descriptor.fetchLimit = limit
         return try modelContext.fetch(descriptor)
+    }
+
+    private func currentMovementSummaryRevision() throws -> MovementSummaryCollectionRevision {
+        let count = try modelContext.fetchCount(FetchDescriptor<Movement>())
+        var descriptor = FetchDescriptor<Movement>(
+            sortBy: [SortDescriptor(\Movement.updatedAt, order: .reverse)]
+        )
+        descriptor.fetchLimit = 1
+        let latest = try modelContext.fetch(descriptor).first
+        return MovementSummaryCollectionRevision(
+            count: count,
+            latestID: latest?.id,
+            latestUpdatedAt: latest?.updatedAt
+        )
     }
 
     private func fetchRecurringConfirmationMovements() throws -> [Movement] {
@@ -1420,6 +1564,18 @@ struct MovementsView: View {
         } catch {
             modelContext.rollback()
             pendingAlertMessage = "No se pudo finalizar la recurrencia: \(error.localizedDescription)"
+            showingPendingAlert = true
+        }
+    }
+
+    private func pausePendingRecurring(_ pending: PendingRecurringMovement) {
+        do {
+            try RecurringMovementService.pauseRecurrence(pending.rule, in: modelContext)
+            HapticFeedback.success()
+            refreshSummaryAndRecurringStateSilently()
+        } catch {
+            modelContext.rollback()
+            pendingAlertMessage = "No se pudo pausar la recurrencia: \(error.localizedDescription)"
             showingPendingAlert = true
         }
     }
@@ -2228,7 +2384,8 @@ private struct PendingRecurringMovementRowView: View {
     }
 }
 
-private struct MovementRowView: View, Equatable {
+@MainActor
+private struct MovementRowView: View, @MainActor Equatable {
     let movement: Movement
     let currencyCode: String
     let hideBalances: Bool

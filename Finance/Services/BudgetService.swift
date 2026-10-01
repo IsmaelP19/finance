@@ -20,12 +20,41 @@ enum BudgetService {
         let progress: Decimal
     }
 
+    private struct HistoricalWindow {
+        let monthStart: Date
+        let nextMonthStart: Date
+        let firstProjectedDay: Int
+        let firstProjectedDate: Date
+        let daysInMonth: Int
+    }
+
+    private struct HistoricalMonthAggregate {
+        var hadBudgetSpend = false
+        var remainingWindowSpend = Decimal.zero
+    }
+
+    private struct SpendingAggregates {
+        var spentByCategory: [UUID: Decimal] = [:]
+        var spendingDaysByCategory: [UUID: Set<Date>] = [:]
+        var historicalByMonth: [Date: HistoricalMonthAggregate] = [:]
+    }
+
     // MARK: - Spending calculations
 
     static func forecast(for budget: Budget, movements: [Movement], asOf date: Date = Date()) -> SpendingForecast {
-        let spent = totalSpent(for: budget, movements: movements, asOf: date)
-        let spendingDays = monthlySpendingDays(for: budget, movements: movements, asOf: date)
-        let historicalSample = historicalRemainingSpendAverage(for: budget, movements: movements, asOf: date)
+        let categoryIDs = Set(budget.items.compactMap { $0.category?.id })
+        let aggregates = spendingAggregates(
+            for: categoryIDs,
+            movements: movements,
+            asOf: date,
+            includeHistorical: true
+        )
+        let spent = totalSpent(for: budget, aggregates: aggregates)
+        let spendingDays = spendingDayCount(for: categoryIDs, aggregates: aggregates)
+        let historicalSample = historicalRemainingSpendAverage(
+            from: aggregates,
+            asOf: date
+        )
 
         return SpendingForecastCalculator.makeForecast(
             monthlyBudget: budget.totalAmount,
@@ -41,8 +70,13 @@ enum BudgetService {
         // Uso interno heredado para cálculos puntuales por ítem. La experiencia de previsión
         // soportada en producto es solo global para evitar extrapolar gastos puntuales por categoría.
         guard let category = item.category else { return nil }
-        let spent = spentAmount(for: category, movements: movements, asOf: date)
-        let spendingDays = monthlySpendingDays(for: category, movements: movements, asOf: date)
+        let aggregates = spendingAggregates(
+            for: Set([category.id]),
+            movements: movements,
+            asOf: date
+        )
+        let spent = aggregates.spentByCategory[category.id, default: 0]
+        let spendingDays = spendingDayCount(for: Set([category.id]), aggregates: aggregates)
 
         return SpendingForecastCalculator.makeForecast(
             monthlyBudget: item.allocatedAmount,
@@ -58,27 +92,29 @@ enum BudgetService {
         movements: [Movement],
         asOf date: Date = Date()
     ) -> Decimal {
-        let calendar = Calendar.current
-        let year  = calendar.component(.year,  from: date)
-        let month = calendar.component(.month, from: date)
-
-        return movements
-            .filter { movement in
-                guard movement.type == .expense else { return false }
-                guard movement.category?.id == category.id else { return false }
-                guard movement.occurredAt <= date else { return false }
-                let mYear  = calendar.component(.year,  from: movement.occurredAt)
-                let mMonth = calendar.component(.month, from: movement.occurredAt)
-                return mYear == year && mMonth == month
-            }
-            .reduce(Decimal(0)) { $0 + $1.statsExpenseAmount }
+        let aggregates = spendingAggregates(
+            for: Set([category.id]),
+            movements: movements,
+            asOf: date
+        )
+        return aggregates.spentByCategory[category.id, default: 0]
     }
 
     /// Gasto real del mes en todas las categorías del presupuesto.
     static func totalSpent(for budget: Budget, movements: [Movement], asOf date: Date = Date()) -> Decimal {
+        let categoryIDs = Set(budget.items.compactMap { $0.category?.id })
+        let aggregates = spendingAggregates(
+            for: categoryIDs,
+            movements: movements,
+            asOf: date
+        )
+        return totalSpent(for: budget, aggregates: aggregates)
+    }
+
+    private static func totalSpent(for budget: Budget, aggregates: SpendingAggregates) -> Decimal {
         budget.items.reduce(Decimal(0)) { total, item in
-            guard let category = item.category else { return total }
-            return total + spentAmount(for: category, movements: movements, asOf: date)
+            guard let categoryID = item.category?.id else { return total }
+            return total + aggregates.spentByCategory[categoryID, default: 0]
         }
     }
 
@@ -130,7 +166,15 @@ enum BudgetService {
     @MainActor
     static func evaluateAndNotify(budget: Budget, movements: [Movement]) {
         guard budget.isActive else { return }
-        let actions = budget.items.compactMap { notificationAction(for: $0, budget: budget, movements: movements) }
+        let categoryIDs = Set(budget.items.compactMap { $0.category?.id })
+        let aggregates = spendingAggregates(
+            for: categoryIDs,
+            movements: movements,
+            asOf: Date()
+        )
+        let actions = budget.items.compactMap {
+            notificationAction(for: $0, budget: budget, aggregates: aggregates)
+        }
 
         guard !actions.isEmpty else { return }
 
@@ -146,9 +190,13 @@ enum BudgetService {
     private static func notificationAction(
         for item: BudgetItem,
         budget: Budget,
-        movements: [Movement]
+        aggregates: SpendingAggregates
     ) -> BudgetNotificationAction? {
         guard let category = item.category else { return nil }
+        let spent = aggregates.spentByCategory[category.id, default: 0]
+        let progress = item.allocatedAmount > 0
+            ? spent / item.allocatedAmount
+            : Decimal.zero
 
         return BudgetNotificationAction(
             id80: "\(itemNotificationPrefix)\(item.id.uuidString)-80",
@@ -156,7 +204,7 @@ enum BudgetService {
             categoryName: category.name,
             notifyAt80Percent: budget.notifyAt80Percent,
             notifyAt100Percent: budget.notifyAt100Percent,
-            progress: progress(for: item, movements: movements)
+            progress: progress
         )
     }
 
@@ -214,85 +262,124 @@ enum BudgetService {
         center.removeDeliveredNotifications(withIdentifiers: [identifier])
     }
 
-    private static func monthlySpendingDays(for budget: Budget, movements: [Movement], asOf date: Date) -> Int {
-        let categoryIDs = Set(budget.items.compactMap { $0.category?.id })
-        guard !categoryIDs.isEmpty else { return 0 }
-
-        return monthlySpendingDays(for: movements, asOf: date) { movement in
-            guard let categoryID = movement.category?.id else { return false }
-            return categoryIDs.contains(categoryID)
-        }
-    }
-
-    private static func monthlySpendingDays(for category: MovementCategory, movements: [Movement], asOf date: Date) -> Int {
-        monthlySpendingDays(for: movements, asOf: date) { movement in
-            movement.category?.id == category.id
-        }
-    }
-
-    private static func monthlySpendingDays(
-        for movements: [Movement],
-        asOf date: Date,
-        matchesCategory: (Movement) -> Bool
-    ) -> Int {
-        let calendar = Calendar.current
-        let year = calendar.component(.year, from: date)
-        let month = calendar.component(.month, from: date)
-        let days = movements.compactMap { movement -> Date? in
-            guard movement.type == .expense else { return nil }
-            guard matchesCategory(movement) else { return nil }
-            guard movement.occurredAt <= date else { return nil }
-            guard calendar.component(.year, from: movement.occurredAt) == year,
-                  calendar.component(.month, from: movement.occurredAt) == month else { return nil }
-            return calendar.startOfDay(for: movement.occurredAt)
-        }
-
-        return Set(days).count
-    }
-
-    private static func historicalRemainingSpendAverage(
-        for budget: Budget,
+    private static func spendingAggregates(
+        for categoryIDs: Set<UUID>,
         movements: [Movement],
         asOf date: Date,
+        includeHistorical: Bool = false,
         calendar: Calendar = .current
-    ) -> (average: Decimal, monthsUsed: Int)? {
-        let categoryIDs = Set(budget.items.compactMap { $0.category?.id })
-        guard !categoryIDs.isEmpty else { return nil }
+    ) -> SpendingAggregates {
+        guard !categoryIDs.isEmpty else { return SpendingAggregates() }
 
+        let currentYear = calendar.component(.year, from: date)
+        let currentMonth = calendar.component(.month, from: date)
+        let historicalWindows = includeHistorical
+            ? makeHistoricalWindows(asOf: date, calendar: calendar)
+            : []
+        let historicalWindowsByStart = Dictionary(
+            uniqueKeysWithValues: historicalWindows.map { ($0.monthStart, $0) }
+        )
+        var aggregates = SpendingAggregates()
+        for window in historicalWindows {
+            aggregates.historicalByMonth[window.monthStart] = HistoricalMonthAggregate()
+        }
+
+        for movement in movements {
+            guard movement.type == .expense,
+                  let categoryID = movement.category?.id,
+                  categoryIDs.contains(categoryID) else {
+                continue
+            }
+
+            if movement.occurredAt <= date,
+               calendar.component(.year, from: movement.occurredAt) == currentYear,
+               calendar.component(.month, from: movement.occurredAt) == currentMonth {
+                aggregates.spentByCategory[categoryID, default: 0] += movement.statsExpenseAmount
+                aggregates.spendingDaysByCategory[categoryID, default: []].insert(
+                    calendar.startOfDay(for: movement.occurredAt)
+                )
+            }
+
+            guard includeHistorical,
+                  let movementMonthStart = calendar.date(
+                      from: calendar.dateComponents([.year, .month], from: movement.occurredAt)
+                  ),
+                  var monthAggregate = aggregates.historicalByMonth[movementMonthStart],
+                  let window = historicalWindowsByStart[movementMonthStart],
+                  movement.occurredAt >= window.monthStart,
+                  movement.occurredAt < window.nextMonthStart else {
+                continue
+            }
+
+            monthAggregate.hadBudgetSpend = true
+            if window.firstProjectedDay <= window.daysInMonth,
+               movement.occurredAt >= window.firstProjectedDate {
+                monthAggregate.remainingWindowSpend += movement.statsExpenseAmount
+            }
+            aggregates.historicalByMonth[movementMonthStart] = monthAggregate
+        }
+
+        return aggregates
+    }
+
+    private static func spendingDayCount(
+        for categoryIDs: Set<UUID>,
+        aggregates: SpendingAggregates
+    ) -> Int {
+        var days = Set<Date>()
+        for categoryID in categoryIDs {
+            days.formUnion(aggregates.spendingDaysByCategory[categoryID] ?? [])
+        }
+        return days.count
+    }
+
+    private static func makeHistoricalWindows(
+        asOf date: Date,
+        calendar: Calendar
+    ) -> [HistoricalWindow] {
         let currentDay = calendar.component(.day, from: date)
-        let currentMonthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: date)) ?? date
-        let samples = (1...6).compactMap { offset -> Decimal? in
+        let currentMonthStart = calendar.date(
+            from: calendar.dateComponents([.year, .month], from: date)
+        ) ?? date
+
+        return (1...6).compactMap { offset in
             guard let monthStart = calendar.date(byAdding: .month, value: -offset, to: currentMonthStart),
                   let daysRange = calendar.range(of: .day, in: .month, for: monthStart),
                   let nextMonthStart = calendar.date(byAdding: .month, value: 1, to: monthStart) else {
                 return nil
             }
 
-            let daysInHistoricalMonth = daysRange.count
-            let firstProjectedDay = min(currentDay + 1, daysInHistoricalMonth + 1)
+            let daysInMonth = daysRange.count
+            let firstProjectedDay = min(currentDay + 1, daysInMonth + 1)
             let firstProjectedDate = calendar.date(
                 from: DateComponents(
                     year: calendar.component(.year, from: monthStart),
                     month: calendar.component(.month, from: monthStart),
-                    day: min(firstProjectedDay, daysInHistoricalMonth)
+                    day: min(firstProjectedDay, daysInMonth)
                 )
             ) ?? monthStart
 
-            var monthHadBudgetSpend = false
-            var remainingWindowSpend = Decimal(0)
+            return HistoricalWindow(
+                monthStart: monthStart,
+                nextMonthStart: nextMonthStart,
+                firstProjectedDay: firstProjectedDay,
+                firstProjectedDate: firstProjectedDate,
+                daysInMonth: daysInMonth
+            )
+        }
+    }
 
-            for movement in movements {
-                guard movement.type == .expense else { continue }
-                guard let categoryID = movement.category?.id, categoryIDs.contains(categoryID) else { continue }
-                guard movement.occurredAt >= monthStart, movement.occurredAt < nextMonthStart else { continue }
-
-                monthHadBudgetSpend = true
-                if firstProjectedDay <= daysInHistoricalMonth, movement.occurredAt >= firstProjectedDate {
-                    remainingWindowSpend += movement.statsExpenseAmount
-                }
+    private static func historicalRemainingSpendAverage(
+        from aggregates: SpendingAggregates,
+        asOf date: Date,
+        calendar: Calendar = .current
+    ) -> (average: Decimal, monthsUsed: Int)? {
+        let samples = makeHistoricalWindows(asOf: date, calendar: calendar).compactMap { window -> Decimal? in
+            guard let monthAggregate = aggregates.historicalByMonth[window.monthStart],
+                  monthAggregate.hadBudgetSpend else {
+                return nil
             }
-
-            return monthHadBudgetSpend ? remainingWindowSpend : nil
+            return monthAggregate.remainingWindowSpend
         }
 
         guard samples.count >= 2 else { return nil }

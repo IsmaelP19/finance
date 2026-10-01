@@ -73,7 +73,7 @@ struct MovementAccountPickerSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.large) {
+                LazyVStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.large) {
                     FinanceGlassSectionHeader(
                         title: "Elige una cuenta",
                         systemImage: "building.columns.fill",
@@ -231,7 +231,7 @@ struct MovementAccountPickerSheet: View {
                 .tracking(0.6)
                 .padding(.horizontal, 4)
 
-            VStack(spacing: 0) {
+            LazyVStack(spacing: 0) {
                 ForEach(section.accounts, id: \.id) { account in
                     Button {
                         draftSelectsAllAccounts = false

@@ -44,14 +44,13 @@ enum AutoBackupService {
         refreshBackgroundScheduleFromSettings()
 
         do {
-            _ = try await MainActor.run {
-                try performAutoBackupIfDue(modelContainer: modelContainer)
-            }
+            _ = try await performAutoBackupIfDueAsync(modelContainer: modelContainer)
         } catch {
             return
         }
     }
 
+    @MainActor
     @discardableResult
     static func performAutoBackupIfDue(
         banks: [Bank],
@@ -62,6 +61,157 @@ enum AutoBackupService {
         recurringMovements: [RecurringMovement],
         budgets: [Budget],
         now: Date = Date()
+    ) throws -> Bool {
+        guard let lease = AutomaticBackupSerializationLease() else {
+            return false
+        }
+        defer { _ = lease }
+        return try performAutoBackupIfDueUnlocked(
+            banks: banks,
+            accounts: accounts,
+            categories: categories,
+            movements: movements,
+            investmentSnapshots: investmentSnapshots,
+            recurringMovements: recurringMovements,
+            budgets: budgets,
+            now: now
+        )
+    }
+
+    /// Ejecuta el backup a partir de una captura puntual. La lectura de SwiftData
+    /// se realiza antes de este método y la serialización/filesystem se delegan.
+    @MainActor
+    @discardableResult
+    static func performAutoBackupIfDue(
+        snapshot: DataExportService.DataSnapshot,
+        now: Date = Date()
+    ) async throws -> Bool {
+        guard PersistenceOperationCoordinator.shared.begin(.automaticBackup) else {
+            return false
+        }
+        defer { PersistenceOperationCoordinator.shared.finish(.automaticBackup) }
+
+        guard let lease = AutomaticBackupSerializationLease() else {
+            return false
+        }
+        defer { _ = lease }
+        return try await performAutoBackupIfDueUnlocked(snapshot: snapshot, now: now)
+    }
+
+    @MainActor
+    private static func performAutoBackupIfDueUnlocked(
+        snapshot: DataExportService.DataSnapshot,
+        now: Date
+    ) async throws -> Bool {
+
+        let hour = configuredHour
+        let minute = configuredMinute
+
+        guard isBackupDue(now: now, enabled: isEnabledInSettings, hour: hour, minute: minute) else {
+            return false
+        }
+
+        _ = try await ManualSyncService.exportToSyncDirectoryAsync(snapshot: snapshot)
+
+        UserDefaults.standard.set(now, forKey: lastAutoBackupAtStorageKey)
+        refreshBackgroundSchedule(enabled: true, hour: hour, minute: minute)
+        return true
+    }
+
+    @MainActor
+    @discardableResult
+    static func performAutoBackupIfDue(
+        in modelContext: ModelContext,
+        now: Date = Date()
+    ) async throws -> Bool {
+        guard PersistenceOperationCoordinator.shared.begin(.automaticBackup) else {
+            return false
+        }
+        defer { PersistenceOperationCoordinator.shared.finish(.automaticBackup) }
+
+        guard let lease = AutomaticBackupSerializationLease() else {
+            return false
+        }
+        defer { _ = lease }
+        let hour = configuredHour
+        let minute = configuredMinute
+        guard isBackupDue(now: now, enabled: isEnabledInSettings, hour: hour, minute: minute) else {
+            return false
+        }
+
+        let snapshot = try DataExportService.fetchSnapshot(in: modelContext)
+        return try await performAutoBackupIfDueUnlocked(snapshot: snapshot, now: now)
+    }
+
+    @MainActor
+    private static func performAutoBackupIfDueAsync(
+        modelContainer: ModelContainer,
+        now: Date = Date()
+    ) async throws -> Bool {
+        guard PersistenceOperationCoordinator.shared.begin(.automaticBackup) else {
+            return false
+        }
+        defer { PersistenceOperationCoordinator.shared.finish(.automaticBackup) }
+
+        guard let lease = AutomaticBackupSerializationLease() else {
+            return false
+        }
+        defer { _ = lease }
+        let hour = configuredHour
+        let minute = configuredMinute
+        guard isBackupDue(now: now, enabled: isEnabledInSettings, hour: hour, minute: minute) else {
+            return false
+        }
+
+        let context = ModelContext(modelContainer)
+        let snapshot = try DataExportService.fetchSnapshot(in: context)
+        return try await performAutoBackupIfDueUnlocked(snapshot: snapshot, now: now)
+    }
+
+    @MainActor
+    @discardableResult
+    static func performAutoBackupIfDue(modelContainer: ModelContainer, now: Date = Date()) throws -> Bool {
+        guard PersistenceOperationCoordinator.shared.begin(.automaticBackup) else {
+            return false
+        }
+        defer { PersistenceOperationCoordinator.shared.finish(.automaticBackup) }
+
+        guard let lease = AutomaticBackupSerializationLease() else {
+            return false
+        }
+        defer { _ = lease }
+
+        let hour = configuredHour
+        let minute = configuredMinute
+        guard isBackupDue(now: now, enabled: isEnabledInSettings, hour: hour, minute: minute) else {
+            return false
+        }
+
+        let context = ModelContext(modelContainer)
+        let snapshot = try DataExportService.fetchSnapshot(in: context)
+
+        return try performAutoBackupIfDueUnlocked(
+            banks: snapshot.banks,
+            accounts: snapshot.accounts,
+            categories: snapshot.categories,
+            movements: snapshot.movements,
+            investmentSnapshots: snapshot.investmentSnapshots,
+            recurringMovements: snapshot.recurringMovements,
+            budgets: snapshot.budgets,
+            now: now
+        )
+    }
+
+    @MainActor
+    private static func performAutoBackupIfDueUnlocked(
+        banks: [Bank],
+        accounts: [BankAccount],
+        categories: [MovementCategory],
+        movements: [Movement],
+        investmentSnapshots: [InvestmentSnapshot],
+        recurringMovements: [RecurringMovement],
+        budgets: [Budget],
+        now: Date
     ) throws -> Bool {
         let hour = configuredHour
         let minute = configuredMinute
@@ -83,45 +233,6 @@ enum AutoBackupService {
         UserDefaults.standard.set(now, forKey: lastAutoBackupAtStorageKey)
         refreshBackgroundSchedule(enabled: true, hour: hour, minute: minute)
         return true
-    }
-
-    @MainActor
-    @discardableResult
-    static func performAutoBackupIfDue(modelContainer: ModelContainer, now: Date = Date()) throws -> Bool {
-        let context = ModelContext(modelContainer)
-
-        let banks = try context.fetch(
-            FetchDescriptor<Bank>(sortBy: [SortDescriptor(\Bank.name)])
-        )
-        let accounts = try context.fetch(
-            FetchDescriptor<BankAccount>(sortBy: [SortDescriptor(\BankAccount.name)])
-        )
-        let categories = try context.fetch(
-            FetchDescriptor<MovementCategory>(sortBy: [SortDescriptor(\MovementCategory.name)])
-        )
-        let movements = try context.fetch(
-            FetchDescriptor<Movement>(sortBy: [SortDescriptor(\Movement.occurredAt, order: .reverse)])
-        )
-        let snapshots = try context.fetch(
-            FetchDescriptor<InvestmentSnapshot>(sortBy: [SortDescriptor(\InvestmentSnapshot.snapshotDate, order: .reverse)])
-        )
-        let recurringMovements = try context.fetch(
-            FetchDescriptor<RecurringMovement>(sortBy: [SortDescriptor(\RecurringMovement.updatedAt, order: .reverse)])
-        )
-        let budgets = try context.fetch(
-            FetchDescriptor<Budget>(sortBy: [SortDescriptor(\Budget.createdAt)])
-        )
-
-        return try performAutoBackupIfDue(
-            banks: banks,
-            accounts: accounts,
-            categories: categories,
-            movements: movements,
-            investmentSnapshots: snapshots,
-            recurringMovements: recurringMovements,
-            budgets: budgets,
-            now: now
-        )
     }
 
     private static var isEnabledInSettings: Bool {
@@ -175,5 +286,40 @@ enum AutoBackupService {
 
         return calendar.date(byAdding: .day, value: 1, to: todayScheduledDate)
             ?? referenceDate.addingTimeInterval(24 * 60 * 60)
+    }
+
+}
+
+private final class AutomaticBackupSerializationState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isInFlight = false
+
+    func acquire() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !isInFlight else { return false }
+        isInFlight = true
+        return true
+    }
+
+    func release() {
+        lock.lock()
+        isInFlight = false
+        lock.unlock()
+    }
+}
+
+/// Reserva única para todas las sobrecargas (síncronas y asíncronas). La
+/// reserva no mantiene bloqueado el hilo durante un `await`, pero impide que
+/// otra ejecución entre mientras la copia y su marca/poda están en curso.
+private final class AutomaticBackupSerializationLease {
+    private static let state = AutomaticBackupSerializationState()
+
+    init?() {
+        guard Self.state.acquire() else { return nil }
+    }
+
+    deinit {
+        Self.state.release()
     }
 }

@@ -134,7 +134,7 @@ enum CategoryColor: String, CaseIterable, Identifiable, Codable {
 
 // MARK: - Codable DTO para Export/Import JSON
 
-struct MovementCategoryDTO: Codable {
+nonisolated struct MovementCategoryDTO: Codable, Sendable {
     let id: UUID
     let name: String
     let icon: String

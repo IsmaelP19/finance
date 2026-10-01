@@ -18,6 +18,8 @@ struct AccountListView: View {
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
 
+    @Query(sort: \InvestmentSnapshot.snapshotDate, order: .forward) private var investmentSnapshots: [InvestmentSnapshot]
+
     @State private var showingAddAccount = false
     @State private var editingAccount: BankAccount?
     @State private var pendingAccountsDeletion: [BankAccount] = []
@@ -63,6 +65,14 @@ struct AccountListView: View {
         investmentAccounts.reduce(Decimal(0)) { $0 + $1.effectiveMarketValue }
     }
 
+    private var maximumInvestmentReturn: InvestmentPeakMetric? {
+        let snapshots = investmentSnapshots.filter {
+            $0.account?.accountType == .investment && $0.account?.isActive == true
+        }
+        let dailyTotals = InvestmentSnapshot.aggregatedDailyTotals(from: snapshots)
+        return InvestmentDailyTotal.maximumReturnPercent(in: dailyTotals)
+    }
+
     var body: some View {
         NavigationStack(path: $navigationPath) {
             List {
@@ -80,6 +90,7 @@ struct AccountListView: View {
                             InvestmentPerformanceCard(
                                 totalInvested: totalInvestedInInvestments,
                                 totalMarketValue: totalMarketValueInInvestments,
+                                maximumReturnPercent: maximumInvestmentReturn,
                                 currencyCode: appCurrencyCode
                             )
                         }

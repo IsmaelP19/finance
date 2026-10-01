@@ -7,9 +7,63 @@
 
 import Foundation
 import SwiftData
+import Combine
+
+/// Barrera común para operaciones costosas iniciadas desde la UI. Vive solo en
+/// memoria y no introduce persistencia nueva.
+@MainActor
+final class PersistenceOperationCoordinator: ObservableObject {
+    enum Operation: Equatable {
+        case export
+        case importData
+        case restore
+        case delete
+        case repair
+        case automaticBackup
+    }
+
+    static let shared = PersistenceOperationCoordinator()
+
+    @Published private(set) var activeOperation: Operation?
+
+    var isBusy: Bool { activeOperation != nil }
+    var isRestoring: Bool { activeOperation == .restore }
+
+    private init() {}
+
+    @discardableResult
+    func begin(_ operation: Operation) -> Bool {
+        guard activeOperation == nil else { return false }
+        activeOperation = operation
+        return true
+    }
+
+    func finish(_ operation: Operation) {
+        guard activeOperation == operation else { return }
+        activeOperation = nil
+    }
+}
+
+enum PersistenceOperationError: LocalizedError {
+    case localChangesDetected
+    case localBackupUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .localChangesDetected:
+            return "La restauración se canceló porque los datos locales cambiaron mientras se preparaba."
+        case .localBackupUnavailable:
+            return "No se pudo crear y verificar el backup local previo."
+        }
+    }
+}
+
+private enum BackupFileSerializationLock {
+    nonisolated static let value = NSLock()
+}
 
 enum ManualSyncService {
-    struct BackupInfo {
+    struct BackupInfo: Sendable {
         let url: URL
         let exportDate: Date
     }
@@ -34,11 +88,11 @@ enum ManualSyncService {
         }
     }
 
-    private static let bookmarkKey = "manualSyncFolderBookmark"
-    private static let lastImportedExportDateKey = "manualSyncLastImportedExportDate"
-    private static let lastDismissedExportDateKey = "manualSyncLastDismissedExportDate"
-    private static let lastExportedExportDateKey = "manualSyncLastExportedExportDate"
-    private static let maxBackupFiles = 2
+    private nonisolated static let bookmarkKey = "manualSyncFolderBookmark"
+    private nonisolated static let lastImportedExportDateKey = "manualSyncLastImportedExportDate"
+    private nonisolated static let lastDismissedExportDateKey = "manualSyncLastDismissedExportDate"
+    private nonisolated static let lastExportedExportDateKey = "manualSyncLastExportedExportDate"
+    private nonisolated static let maxBackupFiles = 2
 
     static var isConfigured: Bool {
         UserDefaults.standard.data(forKey: bookmarkKey) != nil
@@ -69,6 +123,7 @@ enum ManualSyncService {
     }
 
     @discardableResult
+    @MainActor
     static func exportToSyncDirectory(
         banks: [Bank],
         accounts: [BankAccount],
@@ -90,6 +145,25 @@ enum ManualSyncService {
                 in: directoryURL
             )
         }
+    }
+
+    /// Variante asíncrona: la captura se prepara en el actor principal y la
+    /// codificación, copia y poda del backup se ejecutan fuera de él.
+    @MainActor
+    static func exportToSyncDirectoryAsync(
+        snapshot: DataExportService.DataSnapshot
+    ) async throws -> BackupInfo {
+        let directoryURL = try resolveSyncDirectory()
+        let didAccess = directoryURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                directoryURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard didAccess else { throw SyncError.cannotAccessFolder }
+        let tempURL = try await DataExportService.exportDataAsync(snapshot: snapshot)
+        return try await finalizeExport(tempURL: tempURL, in: directoryURL)
     }
 
     /// Decodifica la copia remota y crea el backup verificable del estado actual
@@ -121,6 +195,59 @@ enum ManualSyncService {
         }
     }
 
+    /// Mantiene el orden seguro de restauración: primero valida/decodifica la
+    /// copia remota, después guarda el estado local y sólo entonces devuelve el
+    /// resultado para que el caller pueda mutar SwiftData.
+    @MainActor
+    static func prepareLatestBackupForRestoreAsync(
+        snapshot: DataExportService.DataSnapshot
+    ) async throws -> (DataExportService.ImportResult, Date) {
+        let directoryURL = try resolveSyncDirectory()
+        let didAccess = directoryURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                directoryURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard didAccess else { throw SyncError.cannotAccessFolder }
+        let latest = try await latestBackupAsync(in: directoryURL)
+        let importResult = try await DataExportService.importDataAsync(from: latest.url)
+        _ = try await exportSnapshotAsync(snapshot, in: directoryURL)
+        return (importResult, latest.exportDate)
+    }
+
+    /// Variante segura para restauraciones iniciadas desde una vista. El estado
+    /// se captura después de decodificar la copia remota y justo antes de crear
+    /// el backup previo, reduciendo la ventana en la que pueden entrar cambios.
+    /// La huella devuelta debe comprobarse inmediatamente antes de mutar el
+    /// `ModelContext`.
+    @MainActor
+    static func prepareLatestBackupForRestoreAsync(
+        snapshotProvider: @escaping @MainActor () throws -> DataExportService.DataSnapshot
+    ) async throws -> (DataExportService.ImportResult, Date, DataExportService.DataRevision) {
+        let directoryURL = try resolveSyncDirectory()
+        let didAccess = directoryURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                directoryURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard didAccess else {
+            throw SyncError.cannotAccessFolder
+        }
+
+        let latest = try await latestBackupAsync(in: directoryURL)
+        let importResult = try await DataExportService.importDataAsync(from: latest.url)
+        try Task.checkCancellation()
+
+        let snapshot = try snapshotProvider()
+        let revision = await DataExportService.revisionAsync(of: snapshot)
+        _ = try await exportSnapshotAsync(snapshot, in: directoryURL)
+        return (importResult, latest.exportDate, revision)
+    }
+
     @MainActor
     static func createVerifiedPreRestoreBackup(
         banks: [Bank],
@@ -147,6 +274,23 @@ enum ManualSyncService {
     }
 
     @MainActor
+    static func createVerifiedPreRestoreBackupAsync(
+        snapshot: DataExportService.DataSnapshot
+    ) async throws {
+        guard isConfigured else { throw SyncError.preRestoreBackupUnavailable }
+        let directoryURL = try resolveSyncDirectory()
+        let didAccess = directoryURL.startAccessingSecurityScopedResource()
+        defer {
+            if didAccess {
+                directoryURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        guard didAccess else { throw SyncError.cannotAccessFolder }
+        _ = try await exportSnapshotAsync(snapshot, in: directoryURL)
+    }
+
+    @MainActor
     static func latestBackup() throws -> BackupInfo {
         try withSyncDirectoryAccess { directoryURL in
             try latestBackup(in: directoryURL)
@@ -162,16 +306,25 @@ enum ManualSyncService {
         }
     }
 
-    static func markImported(exportDate: Date) {
+    @MainActor
+    static func importLatestBackupAsync() async throws -> (DataExportService.ImportResult, Date) {
+        try await withSyncDirectoryAccessAsync { directoryURL in
+            let latest = try await latestBackupAsync(in: directoryURL)
+            let result = try await DataExportService.importDataAsync(from: latest.url)
+            return (result, latest.exportDate)
+        }
+    }
+
+    nonisolated static func markImported(exportDate: Date) {
         UserDefaults.standard.set(exportDate, forKey: lastImportedExportDateKey)
         UserDefaults.standard.removeObject(forKey: lastDismissedExportDateKey)
     }
 
-    static func markExported(exportDate: Date) {
+    nonisolated static func markExported(exportDate: Date) {
         UserDefaults.standard.set(exportDate, forKey: lastExportedExportDateKey)
     }
 
-    static func markDismissed(exportDate: Date) {
+    nonisolated static func markDismissed(exportDate: Date) {
         UserDefaults.standard.set(exportDate, forKey: lastDismissedExportDateKey)
     }
 
@@ -186,6 +339,14 @@ enum ManualSyncService {
         guard let latest = try? latestBackup(in: directoryURL) else { return false }
 
         return shouldPromptForNewBackup(latestExportDate: latest.exportDate)
+    }
+
+    /// Obtiene el último backup una sola vez y conserva el filtrado de estado
+    /// (importado, descartado o exportado) antes de mostrar el prompt.
+    @MainActor
+    static func latestBackupIfPromptNeeded() async throws -> BackupInfo? {
+        let latest = try await latestBackupAsync()
+        return shouldPromptForNewBackup(latestExportDate: latest.exportDate) ? latest : nil
     }
 
     private static func shouldPromptForNewBackup(latestExportDate: Date) -> Bool {
@@ -209,8 +370,7 @@ enum ManualSyncService {
         }
     }
 
-    @MainActor
-    private static func listBackups(in directoryURL: URL) throws -> [BackupInfo] {
+    private nonisolated static func listBackups(in directoryURL: URL) throws -> [BackupInfo] {
         let files = try FileManager.default.contentsOfDirectory(
             at: directoryURL,
             includingPropertiesForKeys: nil,
@@ -231,8 +391,7 @@ enum ManualSyncService {
             }
     }
 
-    @MainActor
-    private static func pruneBackups(in directoryURL: URL) throws {
+    private nonisolated static func pruneBackups(in directoryURL: URL) throws {
         let backups = try listBackups(in: directoryURL)
         guard backups.count > maxBackupFiles else { return }
 
@@ -252,34 +411,35 @@ enum ManualSyncService {
         budgets: [Budget],
         in directoryURL: URL
     ) throws -> BackupInfo {
-        let tempURL = try DataExportService.exportData(
-            banks: banks,
-            accounts: accounts,
-            categories: categories,
-            movements: movements,
-            investmentSnapshots: investmentSnapshots,
-            recurringMovements: recurringMovements,
-            budgets: budgets
-        )
+        try withBackupFileSerialization {
+            let tempURL = try DataExportService.exportData(
+                banks: banks,
+                accounts: accounts,
+                categories: categories,
+                movements: movements,
+                investmentSnapshots: investmentSnapshots,
+                recurringMovements: recurringMovements,
+                budgets: budgets
+            )
 
-        let destinationURL = directoryURL.appendingPathComponent(tempURL.lastPathComponent)
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
+            let destinationURL = directoryURL.appendingPathComponent(tempURL.lastPathComponent)
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
+            try FileManager.default.copyItem(at: tempURL, to: destinationURL)
+
+            guard FileManager.default.fileExists(atPath: destinationURL.path),
+                  let exportDate = DataExportService.readExportDate(from: destinationURL) else {
+                throw SyncError.preRestoreBackupUnavailable
+            }
+
+            try pruneBackups(in: directoryURL)
+            markExported(exportDate: exportDate)
+            return BackupInfo(url: destinationURL, exportDate: exportDate)
         }
-        try FileManager.default.copyItem(at: tempURL, to: destinationURL)
-
-        guard FileManager.default.fileExists(atPath: destinationURL.path),
-              let exportDate = DataExportService.readExportDate(from: destinationURL) else {
-            throw SyncError.preRestoreBackupUnavailable
-        }
-
-        try pruneBackups(in: directoryURL)
-        markExported(exportDate: exportDate)
-        return BackupInfo(url: destinationURL, exportDate: exportDate)
     }
 
-    @MainActor
-    static func latestBackup(in directoryURL: URL) throws -> BackupInfo {
+    nonisolated static func latestBackup(in directoryURL: URL) throws -> BackupInfo {
         let backups = try listBackups(in: directoryURL)
         guard let latest = backups.first else {
             throw SyncError.noBackupsFound
@@ -287,7 +447,25 @@ enum ManualSyncService {
         return latest
     }
 
-    private static func resolveSyncDirectory() throws -> URL {
+    nonisolated static func latestBackupAsync() async throws -> BackupInfo {
+        try await withSyncDirectoryAccessAsync { directoryURL in
+            try await latestBackupAsync(in: directoryURL)
+        }
+    }
+
+    nonisolated private static func latestBackupAsync(in directoryURL: URL) async throws -> BackupInfo {
+        let task = Task.detached(priority: .utility) { () throws -> BackupInfo in
+            try Task.checkCancellation()
+            return try latestBackup(in: directoryURL)
+        }
+        return try await withTaskCancellationHandler(operation: {
+            try await task.value
+        }, onCancel: {
+            task.cancel()
+        })
+    }
+
+    private nonisolated static func resolveSyncDirectory() throws -> URL {
         guard let bookmark = UserDefaults.standard.data(forKey: bookmarkKey) else {
             throw SyncError.folderNotConfigured
         }
@@ -308,7 +486,7 @@ enum ManualSyncService {
         return resolvedURL
     }
 
-    static func withSyncDirectoryAccess<T>(_ action: (URL) throws -> T) throws -> T {
+    nonisolated static func withSyncDirectoryAccess<T>(_ action: (URL) throws -> T) throws -> T {
         let folderURL = try resolveSyncDirectory()
         let didAccess = folderURL.startAccessingSecurityScopedResource()
         defer {
@@ -324,7 +502,7 @@ enum ManualSyncService {
         return try action(folderURL)
     }
 
-    static func withSyncDirectoryAccessAsync<T>(_ action: (URL) async throws -> T) async throws -> T {
+    nonisolated static func withSyncDirectoryAccessAsync<T>(_ action: (URL) async throws -> T) async throws -> T {
         let folderURL = try resolveSyncDirectory()
         let didAccess = folderURL.startAccessingSecurityScopedResource()
         defer {
@@ -338,5 +516,49 @@ enum ManualSyncService {
         }
 
         return try await action(folderURL)
+    }
+
+    @MainActor
+    private static func exportSnapshotAsync(
+        _ snapshot: DataExportService.DataSnapshot,
+        in directoryURL: URL
+    ) async throws -> BackupInfo {
+        let tempURL = try await DataExportService.exportDataAsync(snapshot: snapshot)
+        return try await finalizeExport(tempURL: tempURL, in: directoryURL)
+    }
+
+    private nonisolated static func finalizeExport(tempURL: URL, in directoryURL: URL) async throws -> BackupInfo {
+        let task = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            return try withBackupFileSerialization {
+                let destinationURL = directoryURL.appendingPathComponent(tempURL.lastPathComponent)
+                if FileManager.default.fileExists(atPath: destinationURL.path) {
+                    try FileManager.default.removeItem(at: destinationURL)
+                }
+                try FileManager.default.copyItem(at: tempURL, to: destinationURL)
+
+                guard FileManager.default.fileExists(atPath: destinationURL.path),
+                      let exportDate = DataExportService.readExportDate(from: destinationURL) else {
+                    throw SyncError.preRestoreBackupUnavailable
+                }
+
+                try pruneBackups(in: directoryURL)
+                markExported(exportDate: exportDate)
+                return BackupInfo(url: destinationURL, exportDate: exportDate)
+            }
+        }
+        return try await withTaskCancellationHandler(operation: {
+            try await task.value
+        }, onCancel: {
+            task.cancel()
+        })
+    }
+
+    private nonisolated static func withBackupFileSerialization<T>(
+        _ operation: () throws -> T
+    ) rethrows -> T {
+        BackupFileSerializationLock.value.lock()
+        defer { BackupFileSerializationLock.value.unlock() }
+        return try operation()
     }
 }

@@ -14,18 +14,34 @@ private struct RelatedMovementSelection: Identifiable {
 }
 
 struct MovementDetailView: View {
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
-    @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
+    @Query private var linkedReimbursementsQuery: [Movement]
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
 
     let movement: Movement
     let currencyCode: String
 
+    init(movement: Movement, currencyCode: String) {
+        self.movement = movement
+        self.currencyCode = currencyCode
+
+        let movementID = movement.id
+        _linkedReimbursementsQuery = Query(
+            filter: #Predicate<Movement> { reimbursement in
+                reimbursement.typeRaw == "income"
+                    && reimbursement.reimbursementForId == movementID
+            },
+            sort: [SortDescriptor(\Movement.occurredAt, order: .reverse)]
+        )
+    }
+
     @State private var showingQuickReimbursementSheet = false
     @State private var showingEditSheet = false
+    @State private var showingDuplicateSheet = false
     @State private var relatedMovementToView: RelatedMovementSelection?
     @State private var hasAnimatedIn = false
     @State private var showingArchivedAccountAlert = false
@@ -36,14 +52,17 @@ struct MovementDetailView: View {
 
     private var linkedReimbursements: [Movement] {
         guard movement.type == .expense else { return [] }
-        return movements
-            .filter { $0.type == .income && $0.reimbursementForId == movement.id }
-            .sorted { $0.occurredAt > $1.occurredAt }
+        return linkedReimbursementsQuery
     }
 
     private var reimbursementSourceExpense: Movement? {
         guard movement.isReimbursementIncome, let reimbursementForId = movement.reimbursementForId else { return nil }
-        return movements.first(where: { $0.id == reimbursementForId && $0.type == .expense })
+        do {
+            let source = try fetchMovement(id: reimbursementForId)
+            return source?.type == .expense ? source : nil
+        } catch {
+            return nil
+        }
     }
 
     private var displayAmount: Decimal {
@@ -105,7 +124,12 @@ struct MovementDetailView: View {
         }
 
         guard movement.type == .income, let reimbursementForId = movement.reimbursementForId else { return false }
-        return movements.first(where: { $0.id == reimbursementForId })?.account?.isArchived == true
+        do {
+            return try fetchMovement(id: reimbursementForId)?.account?.isArchived == true
+        } catch {
+            // If the directed lookup fails, keep the historical movement locked.
+            return true
+        }
     }
 
     private var quickReimbursementAccount: BankAccount? {
@@ -168,6 +192,15 @@ struct MovementDetailView: View {
                         reimbursementSourceCard
                             .revolutReveal(index: 4, shown: hasAnimatedIn)
                     }
+
+                    actionButton(
+                        title: "Duplicar movimiento",
+                        systemImage: "doc.on.doc",
+                        tint: .financeAccent
+                    ) {
+                        showingDuplicateSheet = true
+                    }
+                    .revolutReveal(index: 5, shown: hasAnimatedIn)
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 12)
@@ -209,6 +242,9 @@ struct MovementDetailView: View {
             }
             .sheet(isPresented: $showingEditSheet) {
                 AddMovementView(movementToEdit: movement)
+            }
+            .sheet(isPresented: $showingDuplicateSheet) {
+                AddMovementView(movementToDuplicate: movement)
             }
             .sheet(item: $relatedMovementToView) { selection in
                 MovementDetailView(
@@ -459,6 +495,7 @@ struct MovementDetailView: View {
                     }
                 }
             }
+
         }
     }
 
@@ -563,6 +600,14 @@ struct MovementDetailView: View {
         categoryLabel = movement.category?.name ?? "Sin categoría"
         categoryIconName = movement.category?.iconName ?? "tag"
         categoryTint = movement.category?.color ?? .secondary
+    }
+
+    private func fetchMovement(id: UUID) throws -> Movement? {
+        var descriptor = FetchDescriptor<Movement>(predicate: #Predicate { movement in
+            movement.id == id
+        })
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first
     }
 
 }

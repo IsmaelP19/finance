@@ -34,6 +34,7 @@ struct AddMovementView: View {
     @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
+    @Query private var linkedReimbursementIncomes: [Movement]
     @Query(sort: \Budget.createdAt) private var budgets: [Budget]
 
     @State private var selectedAccount: BankAccount?
@@ -66,6 +67,8 @@ struct AddMovementView: View {
 
     @State private var amountCalculatorError: String?
     @State private var amountCalculatorErrorHaptic = 0
+    @State private var hasConfirmedReceiptAmount = false
+    @State private var hasConfirmedReceiptCurrencyMismatch = false
 
     @State private var showingValidationAlert = false
     @State private var validationMessage = ""
@@ -80,9 +83,16 @@ struct AddMovementView: View {
     private let preselectedAccountID: UUID?
     private let prefilledConcept: String?
     private let linkedReimbursementExpenseID: UUID?
+    private let movementToDuplicate: Movement?
+    private let walletExpenseDraft: WalletExpenseDraft?
+    private let receiptScanDraft: ReceiptScanDraft?
 
     private var isEditing: Bool {
         movementToEdit != nil
+    }
+
+    private var isDuplicating: Bool {
+        movementToDuplicate != nil
     }
 
     private var linkedRecurringRuleForEditing: RecurringMovement? {
@@ -93,8 +103,17 @@ struct AddMovementView: View {
         if isEditing {
             return "Editar movimiento"
         }
+        if isDuplicating {
+            return "Duplicar movimiento"
+        }
         if linkedReimbursementExpenseID != nil {
             return "Registrar reembolso"
+        }
+        if walletExpenseDraft != nil {
+            return "Gasto de Wallet"
+        }
+        if receiptScanDraft != nil {
+            return "Gasto desde ticket"
         }
         return "Nuevo movimiento"
     }
@@ -112,13 +131,33 @@ struct AddMovementView: View {
         preselectedType: MovementType? = nil,
         preselectedAccountID: UUID? = nil,
         prefilledConcept: String? = nil,
-        linkedReimbursementExpenseID: UUID? = nil
+        linkedReimbursementExpenseID: UUID? = nil,
+        movementToDuplicate: Movement? = nil,
+        walletExpenseDraft: WalletExpenseDraft? = nil,
+        receiptScanDraft: ReceiptScanDraft? = nil
     ) {
         self.movementToEdit = movementToEdit
         self.preselectedType = preselectedType
         self.preselectedAccountID = preselectedAccountID
         self.prefilledConcept = prefilledConcept
         self.linkedReimbursementExpenseID = linkedReimbursementExpenseID
+        self.movementToDuplicate = movementToDuplicate
+        self.walletExpenseDraft = walletExpenseDraft
+        self.receiptScanDraft = receiptScanDraft
+
+        // Scope this query to the expense currently being edited. The empty
+        // sentinel is used only for create/duplicate contexts where the result
+        // is not consumed.
+        let expenseID = movementToEdit?.type == .expense
+            ? (movementToEdit?.id ?? UUID())
+            : UUID()
+        _linkedReimbursementIncomes = Query(
+            filter: #Predicate<Movement> { reimbursement in
+                reimbursement.typeRaw == "income"
+                    && reimbursement.reimbursementForId == expenseID
+            },
+            sort: [SortDescriptor(\Movement.occurredAt, order: .reverse)]
+        )
     }
 
     private var filteredCategories: [MovementCategory] {
@@ -219,11 +258,19 @@ struct AddMovementView: View {
         isLinkedReimbursementContext || linkedRecurringRuleForEditing != nil
     }
 
+    private var receiptCurrencyMismatch: Bool {
+        guard let sourceCurrencyCode = receiptScanDraft?.currencyCode,
+              receiptScanDraft?.amount != nil else { return false }
+        return sourceCurrencyCode != appCurrencyCode.uppercased()
+    }
+
+    private var receiptAmountIsAmbiguous: Bool {
+        receiptScanDraft?.amountStatus == .ambiguous
+    }
+
     private var linkedReimbursementsForEditedExpense: [Movement] {
         guard let movementToEdit, movementToEdit.type == .expense else { return [] }
-        return movements
-            .filter { $0.type == .income && $0.reimbursementForId == movementToEdit.id }
-            .sorted { $0.occurredAt > $1.occurredAt }
+        return linkedReimbursementIncomes
     }
 
     private var expectedReimbursementForDraftExpense: Decimal {
@@ -271,6 +318,123 @@ struct AddMovementView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if let walletExpenseDraft {
+                    Section {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("Borrador desde Wallet", systemImage: "wallet.pass.fill")
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+
+                            Text("Revisa el importe y el comercio, elige la cuenta y la categoría y pulsa Guardar. Finance no registrará nada antes de esa confirmación.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+
+                            if let cardName = walletExpenseDraft.cardName {
+                                Label(cardName, systemImage: "creditcard")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if let sourceCurrencyCode = walletExpenseDraft.currencyCode,
+                               sourceCurrencyCode != appCurrencyCode {
+                                Label(
+                                    "Wallet indicó \(sourceCurrencyCode), pero Finance usa \(appCurrencyCode). Revisa el importe antes de guardar.",
+                                    systemImage: "exclamationmark.triangle.fill"
+                                )
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .financeGlassColorCard(
+                            gradient: LinearGradient(
+                                colors: [Color.blue.opacity(0.18), Color.financeAccent.opacity(0.08)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            cornerRadius: FinanceGlassTokens.Radius.card
+                        )
+                        .accessibilityElement(children: .combine)
+                    }
+                    .financeGlassClearListRow()
+                }
+
+                if receiptScanDraft != nil {
+                    Section {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Label("Borrador desde ticket", systemImage: "doc.viewfinder.fill")
+                                .font(.headline)
+
+                            Text("Revisa los datos detectados, completa la cuenta y la categoría y pulsa Guardar. Finance no registrará nada hasta tu confirmación.")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+
+                            Label("Cuenta y categoría: selección manual", systemImage: "hand.tap.fill")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            if let receiptScanDraft {
+                                ForEach(receiptScanDraft.warnings, id: \.self) { warning in
+                                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundStyle(Color(red: 0.66, green: 0.29, blue: 0.03))
+                                            .accessibilityHidden(true)
+
+                                        Text(warning)
+                                            .foregroundStyle(.primary)
+                                    }
+                                    .font(.caption)
+                                }
+
+                                if receiptScanDraft.amountStatus == .ambiguous {
+                                    Toggle("Confirmar importe sugerido", isOn: $hasConfirmedReceiptAmount)
+                                        .font(.caption)
+                                        .tint(.orange)
+                                }
+
+                                if receiptCurrencyMismatch {
+                                    Label {
+                                        Text("El ticket está en \(receiptScanDraft.currencyCode ?? "otra moneda") y Finance registra importes en \(appCurrencyCode). Convierte o revisa el importe manualmente.")
+                                            .foregroundStyle(.primary)
+                                    } icon: {
+                                        Image(systemName: "exclamationmark.triangle.fill")
+                                            .foregroundStyle(Color(red: 0.66, green: 0.29, blue: 0.03))
+                                    }
+                                    .font(.caption)
+
+                                    Toggle("He revisado o convertido el importe", isOn: $hasConfirmedReceiptCurrencyMismatch)
+                                        .font(.caption)
+                                        .tint(.orange)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .financeGlassColorCard(
+                            gradient: LinearGradient(
+                                colors: [Color.financeAccent.opacity(0.18), Color.teal.opacity(0.08)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            cornerRadius: FinanceGlassTokens.Radius.card
+                        )
+                        .accessibilityElement(children: .combine)
+                    }
+                    .financeGlassClearListRow()
+                }
+
+                if isDuplicating {
+                    Section {
+                        Label(
+                            "Se creará un movimiento nuevo con estos datos. La fecha será la de ahora y no se copiarán saldo, reembolso ni recurrencia.",
+                            systemImage: "doc.on.doc"
+                        )
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .accessibilityElement(children: .combine)
+                    }
+                    .financeGlassClearListRow()
+                }
+
                 Section {
                     MovementDraftHero(
                         title: $concept,
@@ -625,6 +789,9 @@ struct AddMovementView: View {
             .onAppear {
                 refreshCachedAccountGroups()
                 setupDefaults()
+                if !isEditing, !isDuplicating, linkedReimbursementExpenseID == nil {
+                    heroFocusedField = walletExpenseDraft == nil && receiptScanDraft == nil ? .concept : nil
+                }
             }
             .onChange(of: accountGroupingSignature) { _, _ in
                 refreshCachedAccountGroups()
@@ -736,7 +903,7 @@ struct AddMovementView: View {
             if movementToEdit.type == .income,
                let reimbursementForId = movementToEdit.reimbursementForId {
                 isReimbursementIncome = true
-                selectedReimbursementExpense = movements.first(where: { $0.id == reimbursementForId && $0.type == .expense })
+                selectedReimbursementExpense = fetchExpenseMovement(id: reimbursementForId)
             } else {
                 isReimbursementIncome = false
                 selectedReimbursementExpense = nil
@@ -773,6 +940,72 @@ struct AddMovementView: View {
             return
         }
 
+                if !didLoadExistingData, let walletExpenseDraft {
+            movementType = .expense
+            amountText = walletExpenseDraft.amount?.asEditableAmount() ?? ""
+            amountExpression = ""
+            concept = walletExpenseDraft.suggestedConcept
+            selectedAccount = nil
+            selectedDestinationAccount = nil
+            selectedCategory = nil
+            occurredAt = walletExpenseDraft.transactionDate
+            notes = ""
+            isRecurring = false
+            isSharedExpense = false
+            isReimbursementIncome = false
+            selectedReimbursementExpense = nil
+            recurringFrequency = .monthly
+            recurringStartDate = recurringCalendar.startOfDay(for: occurredAt)
+            recurringHasEndDate = false
+            recurringEndDate = recurringStartDate
+            didLoadExistingData = true
+            refreshCachedAccountGroups()
+            return
+        }
+
+        if !didLoadExistingData, let receiptScanDraft {
+            movementType = .expense
+            amountText = receiptScanDraft.amount?.asEditableAmount() ?? ""
+            amountExpression = ""
+            concept = receiptScanDraft.merchant ?? "Gasto escaneado"
+            selectedAccount = nil
+            selectedDestinationAccount = nil
+            selectedCategory = nil
+            occurredAt = receiptScanDraft.occurredAt ?? Date()
+            notes = ""
+            isRecurring = false
+            isSharedExpense = false
+            isReimbursementIncome = false
+            selectedReimbursementExpense = nil
+            recurringFrequency = .monthly
+            recurringStartDate = recurringCalendar.startOfDay(for: occurredAt)
+            recurringHasEndDate = false
+            recurringEndDate = recurringStartDate
+            didLoadExistingData = true
+            refreshCachedAccountGroups()
+            return
+        }
+
+        if !didLoadExistingData, let movementToDuplicate {
+            let draft = movementToDuplicate.duplicatedForNewEntry()
+            selectedAccount = draft.account?.isActive == true ? draft.account : nil
+            selectedDestinationAccount = draft.destinationAccount?.isActive == true ? draft.destinationAccount : nil
+            movementType = draft.type
+            amountText = draft.amount.asEditableAmount()
+            concept = draft.concept
+            selectedCategory = draft.category
+            occurredAt = draft.occurredAt
+            notes = draft.notes
+            isSharedExpense = draft.type == .expense && draft.normalizedPersonalAmount != nil
+            if isSharedExpense, let personalAmount = draft.normalizedPersonalAmount {
+                personalAmountText = personalAmount.asEditableAmount()
+            }
+            isRecurring = false
+            isReimbursementIncome = false
+            selectedReimbursementExpense = nil
+            didLoadExistingData = true
+        }
+
         if let preselectedType {
             movementType = preselectedType
         }
@@ -789,7 +1022,7 @@ struct AddMovementView: View {
         }
 
         if let linkedReimbursementExpenseID,
-           let linkedExpense = movements.first(where: { $0.id == linkedReimbursementExpenseID && $0.type == .expense }) {
+           let linkedExpense = fetchExpenseMovement(id: linkedReimbursementExpenseID) {
             selectedReimbursementExpense = linkedExpense
             isReimbursementIncome = true
             selectedCategory = linkedExpense.category
@@ -964,6 +1197,19 @@ struct AddMovementView: View {
             showingValidationAlert = true
             return
         }
+
+        if receiptCurrencyMismatch && !hasConfirmedReceiptCurrencyMismatch {
+            validationMessage = "Revisa o convierte manualmente el importe del ticket antes de guardarlo y confirma la casilla correspondiente."
+            showingValidationAlert = true
+            return
+        }
+
+        if receiptAmountIsAmbiguous && !hasConfirmedReceiptAmount {
+            validationMessage = "Revisa el importe sugerido por el ticket y confirma la casilla correspondiente antes de guardarlo."
+            showingValidationAlert = true
+            return
+        }
+
         recordSaveDiagnostic("parse_amount_after", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
 
         let personalAmountForStats: Decimal?
@@ -1002,7 +1248,7 @@ struct AddMovementView: View {
             if let linkedExpense = selectedReimbursementExpense {
                 reimbursementForID = linkedExpense.id
             } else if let existingReimbursementForID = movementToEdit?.reimbursementForId,
-                      movements.contains(where: { $0.id == existingReimbursementForID && $0.type == .expense }) {
+                      fetchExpenseMovement(id: existingReimbursementForID) != nil {
                 reimbursementForID = existingReimbursementForID
             } else {
                 recordSaveDiagnostic("resolve_reimbursement_failed", accountID: selectedAccount.id, categoryID: selectedCategory?.id)
@@ -1122,7 +1368,14 @@ struct AddMovementView: View {
 
             let shouldUnlinkExistingReimbursements = movementType != .expense || normalizedPersonalAmountForStats == nil
             if shouldUnlinkExistingReimbursements {
-                unlinkReimbursementsLinkedToExpense(expenseID: movementToEdit.id)
+                do {
+                    try unlinkReimbursementsLinkedToExpense(expenseID: movementToEdit.id)
+                } catch {
+                    modelContext.rollback()
+                    validationMessage = "No se pudieron actualizar los reembolsos vinculados: \(error.localizedDescription)"
+                    showingValidationAlert = true
+                    return
+                }
             }
 
             if let recurring = linkedRecurringRule(for: movementToEdit) {
@@ -1417,14 +1670,44 @@ struct AddMovementView: View {
         }
 
         guard movement.type == .income, let reimbursementForId = movement.reimbursementForId else { return false }
-        return movements.first(where: { $0.id == reimbursementForId })?.account?.isArchived == true
+        do {
+            return try fetchMovement(id: reimbursementForId)?.account?.isArchived == true
+        } catch {
+            // Keep the historical movement locked if the directed lookup fails.
+            return true
+        }
     }
 
-    private func unlinkReimbursementsLinkedToExpense(expenseID: UUID) {
-        for movement in movements where movement.type == .income && movement.reimbursementForId == expenseID {
+    private func unlinkReimbursementsLinkedToExpense(expenseID: UUID) throws {
+        let linkedReimbursements = try fetchReimbursements(for: expenseID)
+        for movement in linkedReimbursements {
             movement.reimbursementForId = nil
             movement.updatedAt = Date()
         }
+    }
+
+    private func fetchExpenseMovement(id: UUID) -> Movement? {
+        do {
+            let movement = try fetchMovement(id: id)
+            return movement?.type == .expense ? movement : nil
+        } catch {
+            return nil
+        }
+    }
+
+    private func fetchMovement(id: UUID) throws -> Movement? {
+        var descriptor = FetchDescriptor<Movement>(predicate: #Predicate { movement in
+            movement.id == id
+        })
+        descriptor.fetchLimit = 1
+        return try modelContext.fetch(descriptor).first
+    }
+
+    private func fetchReimbursements(for expenseID: UUID) throws -> [Movement] {
+        let descriptor = FetchDescriptor<Movement>(predicate: #Predicate { movement in
+            movement.typeRaw == "income" && movement.reimbursementForId == expenseID
+        })
+        return try modelContext.fetch(descriptor)
     }
 
     private func linkedRecurringRule(for movement: Movement) -> RecurringMovement? {
@@ -1769,14 +2052,25 @@ private struct MovementEditorSectionHeader: View {
 }
 
 private struct DismissAmountKeyboardKey: EnvironmentKey {
+#if swift(>=6.0)
+    static let defaultValue: @MainActor @Sendable () -> Void = {}
+#else
     static let defaultValue: () -> Void = {}
+#endif
 }
 
 private extension EnvironmentValues {
+#if swift(>=6.0)
+    var dismissAmountKeyboard: @MainActor @Sendable () -> Void {
+        get { self[DismissAmountKeyboardKey.self] }
+        set { self[DismissAmountKeyboardKey.self] = newValue }
+    }
+#else
     var dismissAmountKeyboard: () -> Void {
         get { self[DismissAmountKeyboardKey.self] }
         set { self[DismissAmountKeyboardKey.self] = newValue }
     }
+#endif
 }
 
 private struct MovementEditorDetailSectionModifier: ViewModifier {

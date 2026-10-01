@@ -1,0 +1,170 @@
+name: Publicar en SideStore
+
+on:
+  push:
+    branches:
+      - 'release/*'
+
+concurrency:
+  group: sidestore-publication
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: macos-26
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recuperar la fuente publicada
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          releases = json.loads(subprocess.check_output(
+              ['gh', 'release', 'list', '--limit', '1000', '--json', 'tagName,isDraft'],
+              text=True,
+          ))
+          tags = [
+              (int(match.group(1)), item['tagName'])
+              for item in releases
+              if not item['isDraft']
+              if (match := re.fullmatch(r'sidestore-(\d+)', item['tagName']))
+          ]
+          if tags:
+              folder = Path(os.environ['RUNNER_TEMP']) / 'previous-release'
+              folder.mkdir()
+              subprocess.run(
+                  ['gh', 'release', 'download', max(tags)[1], '--pattern', 'source.json',
+                   '--dir', str(folder)],
+                  check=True,
+              )
+              (folder / 'source.json').replace(
+                  Path(os.environ['RUNNER_TEMP']) / 'previous-source.json'
+              )
+          PY
+
+      - name: Preparar versión única para este push
+        id: version
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          version_file = Path('Finance/Utilities/AppVersion.swift')
+          source = version_file.read_text()
+          pattern = r'(static\s+let\s+current\s*=\s*")(\d+\.\d+\.\d+)(")'
+          match = re.search(pattern, source)
+          if not match:
+              raise SystemExit('AppVersion.current no tiene una versión de tres componentes')
+          base = tuple(map(int, match.group(2).split('.')))
+          chosen = base
+          previous_file = Path(os.environ['RUNNER_TEMP']) / 'previous-source.json'
+          if previous_file.exists():
+              previous = json.loads(previous_file.read_text())
+              latest = previous['apps'][0]['versions'][0]
+              old = tuple(map(int, latest['version'].split('.')))
+              if base[:2] < old[:2]:
+                  raise SystemExit('AppVersion.current retrocede respecto a la fuente publicada')
+              if base[:2] == old[:2]:
+                  if latest.get('buildVersion') == os.environ['GITHUB_RUN_NUMBER']:
+                      chosen = old  # Reintento del mismo workflow.
+                  else:
+                      chosen = (*base[:2], max(base[2], old[2] + 1))
+          version = '.'.join(map(str, chosen))
+          version_file.write_text(source[:match.start(2)] + version + source[match.end(2):])
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'value={version}\n')
+          PY
+
+      - name: Archivar para iPhone sin distribución de Apple
+        shell: bash
+        run: |
+          xcodebuild archive \
+            -project Finance.xcodeproj \
+            -scheme Finance \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Finance.xcarchive" \
+            "MARKETING_VERSION=${{ steps.version.outputs.value }}" \
+            "CURRENT_PROJECT_VERSION=$GITHUB_RUN_NUMBER" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            'CODE_SIGN_IDENTITY=' \
+            'DEVELOPMENT_TEAM='
+
+      - name: Empaquetar app y widget en Finance.ipa
+        shell: bash
+        run: |
+          bash scripts/make_sidestore_ipa.sh \
+            "$RUNNER_TEMP/Finance.xcarchive" \
+            "$RUNNER_TEMP/Finance.ipa"
+
+      - name: Reutilizar el IPA si se repite el workflow
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="sidestore-$GITHUB_RUN_NUMBER"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            mkdir -p "$RUNNER_TEMP/existing"
+            gh release download "$tag" --pattern Finance.ipa --dir "$RUNNER_TEMP/existing"
+            cp "$RUNNER_TEMP/existing/Finance.ipa" "$RUNNER_TEMP/Finance.ipa"
+          fi
+
+      - name: Generar fuente SideStore
+        shell: bash
+        run: |
+          mkdir -p site
+          python3 scripts/update_sidestore_source.py \
+            --ipa "$RUNNER_TEMP/Finance.ipa" \
+            --previous "$RUNNER_TEMP/previous-source.json" \
+            --source-url 'https://ismaelp19.github.io/finance/source.json' \
+            --download-url "https://github.com/$GITHUB_REPOSITORY/releases/download/sidestore-$GITHUB_RUN_NUMBER/Finance.ipa" \
+            --icon-url 'https://ismaelp19.github.io/finance/icon.png' \
+            --output site/source.json
+          cp Finance/Assets.xcassets/AppIcon.appiconset/appicon-light.png site/icon.png
+          touch site/.nojekyll
+
+      - name: Publicar IPA como GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="sidestore-$GITHUB_RUN_NUMBER"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" "$RUNNER_TEMP/Finance.ipa" site/source.json \
+              --target "$GITHUB_SHA" \
+              --title "Finance ${{ steps.version.outputs.value }} ($GITHUB_RUN_NUMBER)" \
+              --notes "Compilación de $GITHUB_REF_NAME en $GITHUB_SHA para SideStore." \
+              --latest
+          fi
+
+      - name: Subir fuente para GitHub Pages
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar fuente
+        id: deployment
+        uses: actions/deploy-pages@v4

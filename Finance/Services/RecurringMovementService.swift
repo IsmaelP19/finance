@@ -46,12 +46,24 @@ struct PendingRecurringMovement: Identifiable {
     }
 }
 
+struct SkippedRecurringOccurrence: Identifiable {
+    let rule: RecurringMovement
+    let dueDate: Date
+
+    var id: String {
+        "\(rule.id.uuidString)-\(Int(dueDate.timeIntervalSince1970))"
+    }
+}
+
 enum RecurringMovementServiceError: LocalizedError {
     case invalidAmount
     case transferNotSupported
     case missingAccount
     case inactiveAccount
     case occurrenceAlreadyResolved
+    case occurrenceNotSkipped
+    case recurrenceNotActive
+    case recurrenceNotPaused
 
     var errorDescription: String? {
         switch self {
@@ -65,16 +77,49 @@ enum RecurringMovementServiceError: LocalizedError {
             return "La cuenta asociada está archivada. Finaliza o edita la recurrencia para continuar."
         case .occurrenceAlreadyResolved:
             return "Esta ocurrencia ya estaba confirmada u omitida."
+        case .occurrenceNotSkipped:
+            return "Esta ocurrencia no está omitida."
+        case .recurrenceNotActive:
+            return "Solo se puede pausar una recurrencia activa y abierta."
+        case .recurrenceNotPaused:
+            return "Solo se puede reactivar una recurrencia pausada."
         }
     }
 }
 
 enum RecurringMovementService {
+    private struct OccurrenceKey: Hashable {
+        let ruleID: UUID
+        let date: Date
+    }
+
     nonisolated static var recurrenceCalendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "es_ES")
         calendar.timeZone = .autoupdatingCurrent
         return calendar
+    }
+
+    static func skippedOccurrences(
+        for rules: [RecurringMovement],
+        calendar: Calendar = recurrenceCalendar
+    ) -> [SkippedRecurringOccurrence] {
+        rules
+            .filter { $0.type != .transfer }
+            .flatMap { rule in
+                rule.skippedOccurrenceDates.map { skippedDate in
+                    SkippedRecurringOccurrence(
+                        rule: rule,
+                        dueDate: calendar.startOfDay(for: skippedDate)
+                    )
+                }
+            }
+            .sorted { lhs, rhs in
+                if lhs.dueDate != rhs.dueDate {
+                    return lhs.dueDate > rhs.dueDate
+                }
+                return lhs.rule.id.uuidString < rhs.rule.id.uuidString
+            }
     }
 
     static func pendingMovements(
@@ -87,19 +132,33 @@ enum RecurringMovementService {
         let today = calendar.startOfDay(for: now)
         let pendingInterval = pendingWindow(for: now, horizonDays: horizonDays, calendar: calendar)
 
+        let confirmedOccurrences = Set(
+            confirmedMovements.compactMap { movement -> OccurrenceKey? in
+                guard let ruleID = movement.recurringRuleId else { return nil }
+                let scheduledDate = movement.recurringScheduledAt ?? movement.occurredAt
+                return OccurrenceKey(
+                    ruleID: ruleID,
+                    date: calendar.startOfDay(for: scheduledDate)
+                )
+            }
+        )
         var pending: [PendingRecurringMovement] = []
 
         for rule in rules {
             guard (rule.isActive || rule.endDate != nil), rule.type != .transfer else { continue }
             guard rule.account?.isActive == true else { continue }
+            let skippedOccurrences = Set(
+                rule.skippedOccurrenceDates.map { calendar.startOfDay(for: $0) }
+            )
 
             let dueDates = dueDates(of: rule, in: pendingInterval, calendar: calendar)
 
             for dueDate in dueDates {
-                guard !isOccurrenceConfirmed(ruleID: rule.id, dueDate: dueDate, movements: confirmedMovements, calendar: calendar) else {
+                let occurrenceKey = OccurrenceKey(ruleID: rule.id, date: dueDate)
+                guard !confirmedOccurrences.contains(occurrenceKey) else {
                     continue
                 }
-                guard !isOccurrenceSkipped(rule: rule, dueDate: dueDate, calendar: calendar) else {
+                guard !skippedOccurrences.contains(dueDate) else {
                     continue
                 }
 
@@ -138,8 +197,19 @@ enum RecurringMovementService {
         }
 
         var dueDates: [Date] = []
-        var occurrenceIndex = 0
         let maxIterations = 10000
+        let firstRelevantDate = max(interval.start, normalizedStart)
+        var occurrenceIndex = firstOccurrenceIndex(
+            onOrAfter: firstRelevantDate,
+            frequency: rule.frequency,
+            startDate: normalizedStart,
+            anchorDay: rule.dayOfMonth,
+            calendar: calendar
+        )
+
+        // Keep the historical iteration cap while skipping occurrences that
+        // are necessarily before the requested interval.
+        guard occurrenceIndex < maxIterations else { return [] }
 
         while occurrenceIndex < maxIterations {
             guard let candidate = dateForOccurrence(
@@ -160,7 +230,7 @@ enum RecurringMovementService {
                 break
             }
 
-            if candidate >= normalizedStart, candidate >= interval.start {
+            if candidate >= firstRelevantDate {
                 dueDates.append(candidate)
             }
 
@@ -168,6 +238,57 @@ enum RecurringMovementService {
         }
 
         return dueDates
+    }
+
+    private static func firstOccurrenceIndex(
+        onOrAfter date: Date,
+        frequency: RecurringMovementFrequency,
+        startDate: Date,
+        anchorDay: Int,
+        calendar: Calendar
+    ) -> Int {
+        let estimatedIndex: Int
+
+        switch frequency {
+        case .weekly:
+            let days = calendar.dateComponents([.day], from: startDate, to: date).day ?? 0
+            estimatedIndex = days / 7
+        case .monthly:
+            let startComponents = calendar.dateComponents([.year, .month], from: startDate)
+            let targetComponents = calendar.dateComponents([.year, .month], from: date)
+            estimatedIndex =
+                ((targetComponents.year ?? startComponents.year ?? 0) - (startComponents.year ?? 0)) * 12
+                + (targetComponents.month ?? startComponents.month ?? 0) - (startComponents.month ?? 0)
+        case .yearly:
+            estimatedIndex =
+                (calendar.component(.year, from: date) - calendar.component(.year, from: startDate))
+        }
+
+        var index = max(estimatedIndex, 0)
+
+        while index > 0,
+              let previousDate = dateForOccurrence(
+                  at: index - 1,
+                  frequency: frequency,
+                  startDate: startDate,
+                  anchorDay: anchorDay,
+                  calendar: calendar
+              ),
+              previousDate >= date {
+            index -= 1
+        }
+
+        while let occurrenceDate = dateForOccurrence(
+            at: index,
+            frequency: frequency,
+            startDate: startDate,
+            anchorDay: anchorDay,
+            calendar: calendar
+        ), occurrenceDate < date {
+            index += 1
+        }
+
+        return index
     }
 
     private static func pendingWindow(for date: Date, horizonDays: Int, calendar: Calendar) -> DateInterval {
@@ -392,6 +513,25 @@ enum RecurringMovementService {
     }
 
     @MainActor
+    static func restoreSkippedOccurrence(
+        rule: RecurringMovement,
+        dueDate: Date,
+        in modelContext: ModelContext,
+        calendar: Calendar = recurrenceCalendar
+    ) throws {
+        guard isOccurrenceSkipped(rule: rule, dueDate: dueDate, calendar: calendar) else {
+            throw RecurringMovementServiceError.occurrenceNotSkipped
+        }
+
+        let normalizedDueDate = calendar.startOfDay(for: dueDate)
+        rule.skippedOccurrenceDates = rule.skippedOccurrenceDates.filter { skippedDate in
+            calendar.startOfDay(for: skippedDate) != normalizedDueDate
+        }
+        rule.updatedAt = Date()
+        try modelContext.save()
+    }
+
+    @MainActor
     static func endRecurrence(
         _ rule: RecurringMovement,
         before dueDate: Date,
@@ -403,6 +543,58 @@ enum RecurringMovementService {
         rule.isActive = false
         rule.updatedAt = Date()
         try modelContext.save()
+    }
+
+    @MainActor
+    static func pauseRecurrence(
+        _ rule: RecurringMovement,
+        in modelContext: ModelContext
+    ) throws {
+        guard rule.isActive, rule.endDate == nil else {
+            throw RecurringMovementServiceError.recurrenceNotActive
+        }
+
+        rule.isActive = false
+        rule.endDate = nil
+        rule.updatedAt = Date()
+        try modelContext.save()
+    }
+
+    @MainActor
+    static func resumeRecurrence(
+        _ rule: RecurringMovement,
+        in modelContext: ModelContext,
+        now: Date = Date(),
+        calendar: Calendar = recurrenceCalendar
+    ) throws {
+        guard !rule.isActive, rule.endDate == nil else {
+            throw RecurringMovementServiceError.recurrenceNotPaused
+        }
+
+        if let nextOccurrenceDate = nextOccurrenceDate(
+            for: rule,
+            after: now,
+            calendar: calendar
+        ) {
+            rule.startDate = nextOccurrenceDate
+        }
+        rule.isActive = true
+        rule.updatedAt = Date()
+        try modelContext.save()
+    }
+
+    private static func nextOccurrenceDate(
+        for rule: RecurringMovement,
+        after date: Date,
+        calendar: Calendar
+    ) -> Date? {
+        let start = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: date)) ?? date
+        let end = calendar.date(byAdding: .year, value: 2, to: start) ?? start
+        return dueDates(
+            of: rule,
+            in: DateInterval(start: start, end: end),
+            calendar: calendar
+        ).first
     }
 
     @MainActor

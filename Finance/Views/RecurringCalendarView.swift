@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import Combine
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -104,12 +105,50 @@ private struct RecurringCalendarOccurrence: Identifiable {
     }
 }
 
+private struct RecurringOccurrenceKey: Hashable {
+    let ruleID: UUID
+    let date: Date
+}
+
+private struct RecurringOccurrenceIntervalKey: Hashable {
+    let start: Date
+    let end: Date
+    let includeConfirmed: Bool
+}
+
+private struct RecurringOccurrenceDataRevision: Equatable {
+    let externalModelChangeGeneration: Int
+    let movementCount: Int
+    let latestMovementID: UUID?
+    let latestMovementUpdatedAt: Date?
+    let recurringCount: Int
+    let latestRecurringID: UUID?
+    let latestRecurringUpdatedAt: Date?
+    let accountCount: Int
+    let latestAccountID: UUID?
+    let latestAccountUpdatedAt: Date?
+}
+
+private struct RecurringOccurrenceIndex {
+    var movementsByRuleID: [UUID: [Movement]] = [:]
+    var confirmedMovements: [RecurringOccurrenceKey: Movement] = [:]
+    var skippedDatesByRuleID: [UUID: Set<Date>] = [:]
+}
+
+private final class RecurringOccurrenceIndexCache {
+    var index: RecurringOccurrenceIndex?
+    var revision: RecurringOccurrenceDataRevision?
+    var occurrencesByInterval: [RecurringOccurrenceIntervalKey: [RecurringCalendarOccurrence]] = [:]
+}
+
 struct RecurringCalendarView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
-    @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
+    @Query(sort: \Movement.updatedAt, order: .reverse) private var movements: [Movement]
+    @Query(sort: \BankAccount.updatedAt, order: .reverse) private var accounts: [BankAccount]
 
     @State private var selectedDate: Date = Date()
     @State private var visibleMonthDate: Date = Date()
@@ -118,8 +157,17 @@ struct RecurringCalendarView: View {
     @State private var showingActionAlert = false
     @State private var actionAlertMessage = ""
     @State private var occurrenceToEditAmount: RecurringCalendarOccurrence?
+    @State private var movementToEdit: Movement?
     @State private var occurrenceToManage: RecurringCalendarOccurrence?
     @State private var showingOccurrenceActions = false
+    @State private var occurrenceToRestore: RecurringCalendarOccurrence?
+    @State private var showingRestoreOccurrenceConfirmation = false
+    @State private var showingPausedRecurringMovements = false
+    @State private var showingSkippedRecurringOccurrences = false
+    @State private var occurrenceIndexCache = RecurringOccurrenceIndexCache()
+    // Bumped by the external save notification so imports/syncs invalidate the
+    // index even when replacement rows happen to retain the same timestamps.
+    @State private var externalModelChangeGeneration = 0
 
     private var recurringCalendar: Calendar {
         RecurringMovementService.recurrenceCalendar
@@ -222,6 +270,74 @@ struct RecurringCalendarView: View {
         return occurrences(in: interval, includeConfirmed: false)
     }
 
+    private var occurrenceDataRevision: RecurringOccurrenceDataRevision {
+        // Every editor/service mutation that affects occurrence resolution also
+        // bumps updatedAt. Reading the count and newest revision is O(1) and
+        // invalidates the full cache without hashing all model fields per body.
+        RecurringOccurrenceDataRevision(
+            externalModelChangeGeneration: externalModelChangeGeneration,
+            movementCount: movements.count,
+            latestMovementID: movements.first?.id,
+            latestMovementUpdatedAt: movements.first?.updatedAt,
+            recurringCount: recurringMovements.count,
+            latestRecurringID: recurringMovements.first?.id,
+            latestRecurringUpdatedAt: recurringMovements.first?.updatedAt,
+            accountCount: accounts.count,
+            latestAccountID: accounts.first?.id,
+            latestAccountUpdatedAt: accounts.first?.updatedAt
+        )
+    }
+
+    private func refreshOccurrenceIndexIfNeeded() {
+        let revision = occurrenceDataRevision
+        guard occurrenceIndexCache.revision != revision else { return }
+
+        var index = RecurringOccurrenceIndex()
+        for movement in movements {
+            guard let ruleID = movement.recurringRuleId else { continue }
+            index.movementsByRuleID[ruleID, default: []].append(movement)
+
+            let scheduledDate = movement.recurringScheduledAt ?? movement.occurredAt
+            let key = RecurringOccurrenceKey(
+                ruleID: ruleID,
+                date: recurringCalendar.startOfDay(for: scheduledDate)
+            )
+            // Prefer the same newest-occurrence ordering used by the movement list
+            // when malformed data duplicates an occurrence.
+            if let existing = index.confirmedMovements[key] {
+                if movement.occurredAt > existing.occurredAt
+                    || (movement.occurredAt == existing.occurredAt && movement.createdAt > existing.createdAt) {
+                    index.confirmedMovements[key] = movement
+                }
+            } else {
+                index.confirmedMovements[key] = movement
+            }
+        }
+
+        for rule in recurringMovements where rule.type != .transfer {
+            index.skippedDatesByRuleID[rule.id] = Set(
+                rule.skippedOccurrenceDates.map { recurringCalendar.startOfDay(for: $0) }
+            )
+        }
+
+        occurrenceIndexCache.index = index
+        occurrenceIndexCache.revision = revision
+        occurrenceIndexCache.occurrencesByInterval.removeAll(keepingCapacity: true)
+    }
+
+    private var pausedRecurringMovements: [RecurringMovement] {
+        recurringMovements.filter { recurring in
+            !recurring.isActive && recurring.endDate == nil && recurring.account?.isActive == true
+        }
+    }
+
+    private var skippedRecurringOccurrences: [SkippedRecurringOccurrence] {
+        RecurringMovementService.skippedOccurrences(
+            for: recurringMovements,
+            calendar: recurringCalendar
+        )
+    }
+
     private var decorationInterval: DateInterval {
         let monthStart = recurringCalendar.date(
             from: recurringCalendar.dateComponents([.year, .month], from: visibleMonthDate)
@@ -320,6 +436,8 @@ struct RecurringCalendarView: View {
             .financeGlassListContainer()
             .navigationTitle("Calendario")
             .onAppear {
+                invalidateOccurrenceCache()
+                refreshOccurrenceIndexIfNeeded()
                 let initialMonth = monthStart(for: selectedDate)
                 visibleMonthDate = initialMonth
                 setCalendarHeightMonthDate(initialMonth)
@@ -330,6 +448,31 @@ struct RecurringCalendarView: View {
                     visibleMonthDate = newMonthStart
                     scheduleCalendarHeightUpdate(for: newMonthStart)
                 }
+            }
+            .onChange(of: occurrenceDataRevision) { _, _ in
+                refreshOccurrenceIndexIfNeeded()
+            }
+            .onChange(of: scenePhase) { _, newPhase in
+                guard newPhase == .active else { return }
+                // Imports/restores can replace rows while the view remains in
+                // memory; rebuild when the app becomes active again.
+                invalidateOccurrenceCache()
+                refreshOccurrenceIndexIfNeeded()
+            }
+            .onReceive(
+                NotificationCenter.default.publisher(
+                    for: ModelContext.didSave
+                )
+                .receive(on: RunLoop.main)
+            ) { notification in
+                // ModelContext.didSave identifies the originating context, so
+                // ignore unrelated stores while still catching imports/syncs
+                // that save through this view's context. scenePhase remains the
+                // fallback for replacement paths that emit no save notification.
+                guard let savedContext = notification.object as? ModelContext,
+                      savedContext == modelContext else { return }
+                externalModelChangeGeneration &+= 1
+                invalidateOccurrenceCache()
             }
             .onChange(of: visibleMonthDate) { _, newValue in
                 scheduleCalendarHeightUpdate(for: newValue)
@@ -352,22 +495,55 @@ struct RecurringCalendarView: View {
                     .accessibilityLabel(hideBalances ? "Mostrar saldos" : "Ocultar saldos")
                 }
 
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if !pausedRecurringMovements.isEmpty {
+                        Button {
+                            showingPausedRecurringMovements = true
+                        } label: {
+                            Image(systemName: "pause.circle")
+                                .financeToolbarIconStyle()
+                        }
+                        .accessibilityLabel("Ver recurrentes pausados")
+                    }
+
+                    if !skippedRecurringOccurrences.isEmpty {
+                        Button {
+                            showingSkippedRecurringOccurrences = true
+                        } label: {
+                            Image(systemName: "arrow.uturn.backward.circle")
+                                .financeToolbarIconStyle()
+                        }
+                        .accessibilityLabel("Ver ocurrencias omitidas")
+                    }
+
                     if shouldShowTodayShortcut {
-                        Button("Hoy") {
+                        RecurringCalendarTodayButton {
                             let today = recurringCalendar.startOfDay(for: Date())
                             let todayMonth = monthStart(for: today)
                             selectedDate = today
                             visibleMonthDate = todayMonth
                             setCalendarHeightMonthDate(todayMonth)
                         }
-                        .font(.subheadline.weight(.semibold))
-                        .financeGlassPill(tint: .blue, isSelected: false)
                     }
                 }
             }
             .sheet(item: $occurrenceToEditAmount) { occurrence in
                 amountEditor(for: occurrence)
+            }
+            .sheet(item: $movementToEdit, onDismiss: invalidateOccurrenceCache) { movement in
+                AddMovementView(movementToEdit: movement)
+            }
+            .sheet(isPresented: $showingPausedRecurringMovements, onDismiss: invalidateOccurrenceCache) {
+                PausedRecurringMovementsSheet(
+                    currencyCode: appCurrencyCode,
+                    hideBalances: hideBalances
+                )
+            }
+            .sheet(isPresented: $showingSkippedRecurringOccurrences, onDismiss: invalidateOccurrenceCache) {
+                SkippedRecurringMovementsSheet(
+                    currencyCode: appCurrencyCode,
+                    hideBalances: hideBalances
+                )
             }
             .confirmationDialog(
                 "Gestionar recurrencia",
@@ -378,6 +554,23 @@ struct RecurringCalendarView: View {
                 occurrenceManagementActions(for: occurrence)
             } message: { occurrence in
                 occurrenceManagementMessage(for: occurrence)
+            }
+            .confirmationDialog(
+                "¿Restaurar ocurrencia?",
+                isPresented: $showingRestoreOccurrenceConfirmation,
+                titleVisibility: .visible,
+                presenting: occurrenceToRestore
+            ) { occurrence in
+                Button("Restaurar") {
+                    restoreSkippedOccurrence(occurrence)
+                }
+                Button("Cancelar", role: .cancel) {}
+            } message: { occurrence in
+                if occurrence.rule.isActive || occurrence.rule.endDate != nil {
+                    Text("\(occurrence.rule.concept) volverá a aparecer como pendiente el \(occurrence.dueDate.asSpanishShortDate()).")
+                } else {
+                    Text("Se quitará la omisión de \(occurrence.rule.concept), pero la recurrencia está pausada y esta ocurrencia puede dejar de aparecer.")
+                }
             }
             .alert("Acción no disponible", isPresented: $showingActionAlert) {
                 Button("Aceptar", role: .cancel) {}
@@ -467,6 +660,13 @@ struct RecurringCalendarView: View {
             },
             onEditAmount: {
                 occurrenceToEditAmount = occurrence
+            },
+            onEditMovement: { movement in
+                movementToEdit = movement
+            },
+            onRestoreSkipped: {
+                occurrenceToRestore = occurrence
+                showingRestoreOccurrenceConfirmation = true
             }
         )
     }
@@ -475,6 +675,15 @@ struct RecurringCalendarView: View {
     private func occurrenceManagementActions(for occurrence: RecurringCalendarOccurrence) -> some View {
         Button("Omitir solo esta ocurrencia") {
             skipOccurrence(occurrence)
+        }
+        if occurrence.rule.isActive && occurrence.rule.endDate == nil {
+            Button("Pausar recurrencia") {
+                pauseRecurrence(occurrence)
+            }
+        } else if occurrence.rule.endDate == nil {
+            Button("Reactivar recurrencia") {
+                resumeRecurrence(occurrence)
+            }
         }
         Button("Finalizar recurrencia", role: .destructive) {
             endRecurrence(occurrence)
@@ -491,6 +700,17 @@ struct RecurringCalendarView: View {
     }
 
     private func occurrences(in interval: DateInterval, includeConfirmed: Bool) -> [RecurringCalendarOccurrence] {
+        refreshOccurrenceIndexIfNeeded()
+        let intervalKey = RecurringOccurrenceIntervalKey(
+            start: interval.start,
+            end: interval.end,
+            includeConfirmed: includeConfirmed
+        )
+        if let cachedOccurrences = occurrenceIndexCache.occurrencesByInterval[intervalKey] {
+            return cachedOccurrences
+        }
+
+        let index = occurrenceIndexCache.index ?? RecurringOccurrenceIndex()
         var results: [RecurringCalendarOccurrence] = []
 
         for rule in recurringMovements where rule.type != .transfer {
@@ -505,7 +725,7 @@ struct RecurringCalendarView: View {
                 dueDateSet.formUnion(scheduledDates.map { recurringCalendar.startOfDay(for: $0) })
             }
 
-            for movement in movements where movement.recurringRuleId == rule.id {
+            for movement in index.movementsByRuleID[rule.id] ?? [] {
                 let scheduledDate = movement.recurringScheduledAt ?? movement.occurredAt
                 let normalizedDate = recurringCalendar.startOfDay(for: scheduledDate)
                 if interval.contains(normalizedDate) {
@@ -513,25 +733,16 @@ struct RecurringCalendarView: View {
                 }
             }
 
-            for skippedDate in rule.skippedOccurrenceDates {
-                let normalizedDate = recurringCalendar.startOfDay(for: skippedDate)
+            for normalizedDate in index.skippedDatesByRuleID[rule.id] ?? [] {
                 if interval.contains(normalizedDate) {
                     dueDateSet.insert(normalizedDate)
                 }
             }
 
             for dueDate in dueDateSet {
-                let confirmedMovement = RecurringMovementService.confirmedMovement(
-                    ruleID: rule.id,
-                    dueDate: dueDate,
-                    movements: movements,
-                    calendar: recurringCalendar
-                )
-                let skipped = RecurringMovementService.isOccurrenceSkipped(
-                    rule: rule,
-                    dueDate: dueDate,
-                    calendar: recurringCalendar
-                )
+                let key = RecurringOccurrenceKey(ruleID: rule.id, date: dueDate)
+                let confirmedMovement = index.confirmedMovements[key]
+                let skipped = index.skippedDatesByRuleID[rule.id]?.contains(dueDate) == true
 
                 if includeConfirmed || (confirmedMovement == nil && !skipped) {
                     results.append(
@@ -546,9 +757,15 @@ struct RecurringCalendarView: View {
             }
         }
 
-        return results.sorted { lhs, rhs in
+        let sortedResults = results.sorted { lhs, rhs in
             lhs.dueDate < rhs.dueDate
         }
+        if occurrenceIndexCache.occurrencesByInterval.count >= 8,
+           let staleKey = occurrenceIndexCache.occurrencesByInterval.keys.first {
+            occurrenceIndexCache.occurrencesByInterval.removeValue(forKey: staleKey)
+        }
+        occurrenceIndexCache.occurrencesByInterval[intervalKey] = sortedResults
+        return sortedResults
     }
 
     private func status(for occurrence: RecurringCalendarOccurrence) -> RecurringCalendarStatus {
@@ -588,6 +805,7 @@ struct RecurringCalendarView: View {
                 in: modelContext,
                 calendar: recurringCalendar
             )
+            invalidateOccurrenceCache()
             HapticFeedback.success()
         } catch {
             modelContext.rollback()
@@ -615,10 +833,29 @@ struct RecurringCalendarView: View {
                 in: modelContext,
                 calendar: recurringCalendar
             )
+            invalidateOccurrenceCache()
             HapticFeedback.success()
         } catch {
             modelContext.rollback()
             actionAlertMessage = "No se pudo omitir la ocurrencia: \(error.localizedDescription)"
+            showingActionAlert = true
+        }
+    }
+
+    private func restoreSkippedOccurrence(_ occurrence: RecurringCalendarOccurrence) {
+        do {
+            try RecurringMovementService.restoreSkippedOccurrence(
+                rule: occurrence.rule,
+                dueDate: occurrence.dueDate,
+                in: modelContext,
+                calendar: recurringCalendar
+            )
+            invalidateOccurrenceCache()
+            HapticFeedback.success()
+            occurrenceToRestore = nil
+        } catch {
+            modelContext.rollback()
+            actionAlertMessage = "No se pudo restaurar la ocurrencia: \(error.localizedDescription)"
             showingActionAlert = true
         }
     }
@@ -631,10 +868,35 @@ struct RecurringCalendarView: View {
                 in: modelContext,
                 calendar: recurringCalendar
             )
+            invalidateOccurrenceCache()
             HapticFeedback.success()
         } catch {
             modelContext.rollback()
             actionAlertMessage = "No se pudo finalizar la recurrencia: \(error.localizedDescription)"
+            showingActionAlert = true
+        }
+    }
+
+    private func pauseRecurrence(_ occurrence: RecurringCalendarOccurrence) {
+        do {
+            try RecurringMovementService.pauseRecurrence(occurrence.rule, in: modelContext)
+            invalidateOccurrenceCache()
+            HapticFeedback.success()
+        } catch {
+            modelContext.rollback()
+            actionAlertMessage = "No se pudo pausar la recurrencia: \(error.localizedDescription)"
+            showingActionAlert = true
+        }
+    }
+
+    private func resumeRecurrence(_ occurrence: RecurringCalendarOccurrence) {
+        do {
+            try RecurringMovementService.resumeRecurrence(occurrence.rule, in: modelContext)
+            invalidateOccurrenceCache()
+            HapticFeedback.success()
+        } catch {
+            modelContext.rollback()
+            actionAlertMessage = "No se pudo reactivar la recurrencia: \(error.localizedDescription)"
             showingActionAlert = true
         }
     }
@@ -650,6 +912,11 @@ struct RecurringCalendarView: View {
 
         calendarHeightUpdateTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: task)
+    }
+
+    private func invalidateOccurrenceCache() {
+        occurrenceIndexCache.revision = nil
+        occurrenceIndexCache.occurrencesByInterval.removeAll(keepingCapacity: true)
     }
 
     private func setCalendarHeightMonthDate(_ monthDate: Date) {
@@ -753,6 +1020,35 @@ private struct RecurringCalendarSectionHeader: View {
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct RecurringCalendarTodayButton: View {
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text("Hoy")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 11)
+                .padding(.vertical, 8)
+                .background(
+                    LinearGradient(
+                        colors: [Color.secondary.opacity(0.12), Color.secondary.opacity(0.08)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    in: Capsule()
+                )
+                .overlay(
+                    Capsule()
+                        .strokeBorder(Color.white.opacity(0.26), lineWidth: 0.75)
+                )
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Ir a hoy")
     }
 }
 
@@ -936,17 +1232,50 @@ private struct InteractiveRecurringCalendarRow: View {
     let onConfirm: () -> Void
     let onManage: () -> Void
     let onEditAmount: () -> Void
+    let onEditMovement: (Movement) -> Void
+    let onRestoreSkipped: () -> Void
 
     var body: some View {
-        RecurringCalendarRow(
-            occurrence: occurrence,
-            currencyCode: currencyCode,
-            hideBalances: hideBalances,
-            status: status
+        Button {
+            if occurrence.isSkipped {
+                onRestoreSkipped()
+                return
+            }
+
+            if let confirmedMovement = occurrence.confirmedMovement {
+                onEditMovement(confirmedMovement)
+            } else {
+                onEditAmount()
+            }
+        } label: {
+            RecurringCalendarRow(
+                occurrence: occurrence,
+                currencyCode: currencyCode,
+                hideBalances: hideBalances,
+                status: status
+            )
+        }
+        .buttonStyle(.plain)
+        .financeGlassClearListRow(insets: EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+        .accessibilityHint(
+            occurrence.isConfirmed
+                ? "Pulsa para editar el movimiento"
+                : occurrence.isSkipped
+                    ? "Pulsa para restaurar la ocurrencia omitida"
+                    : "Pulsa para editar el importe"
         )
-        .financeGlassClearListRow()
         .contextMenu {
-            if !occurrence.isConfirmed && !occurrence.isSkipped {
+            if occurrence.isSkipped {
+                Button(action: onRestoreSkipped) {
+                    Label("Restaurar ocurrencia", systemImage: "arrow.uturn.backward")
+                }
+            } else if occurrence.isConfirmed, let confirmedMovement = occurrence.confirmedMovement {
+                Button {
+                    onEditMovement(confirmedMovement)
+                } label: {
+                    Label("Editar movimiento", systemImage: "pencil")
+                }
+            } else if !occurrence.isConfirmed && !occurrence.isSkipped {
                 Button(action: onEditAmount) {
                     Label("Editar importe", systemImage: "pencil")
                 }
@@ -956,7 +1285,12 @@ private struct InteractiveRecurringCalendarRow: View {
             }
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            if !occurrence.isConfirmed && !occurrence.isSkipped {
+            if occurrence.isSkipped {
+                Button(action: onRestoreSkipped) {
+                    Label("Restaurar", systemImage: "arrow.uturn.backward")
+                }
+                .tint(.financeAccent)
+            } else if !occurrence.isConfirmed {
                 Button(action: onConfirm) {
                     Label("Confirmar", systemImage: "checkmark.circle.fill")
                 }
@@ -974,6 +1308,283 @@ private struct InteractiveRecurringCalendarRow: View {
                     Label("Gestionar", systemImage: "ellipsis.circle")
                 }
             }
+        }
+    }
+}
+
+private struct PausedRecurringCalendarRow: View {
+    let recurring: RecurringMovement
+    let currencyCode: String
+    let hideBalances: Bool
+    let onResumeRequest: () -> Void
+
+    private var amountText: String {
+        switch recurring.type {
+        case .expense, .income:
+            return (recurring.amount * recurring.type.signMultiplier).masked(hideBalances, code: currencyCode)
+        case .transfer:
+            return recurring.amount.masked(hideBalances, code: currencyCode)
+        }
+    }
+
+    var body: some View {
+        Button(action: onResumeRequest) {
+            RecurringMovementRowContent(
+                type: recurring.type,
+                concept: recurring.concept,
+                detailLines: [recurring.account?.name ?? "Cuenta no disponible"],
+                amountText: amountText,
+                trailingPill: MovementTrailingPill(title: "Pausado", color: .orange),
+                dateText: recurring.startDate.asSpanishShortDate(),
+                style: .movementListCard
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(action: onResumeRequest) {
+                Label("Reactivar recurrencia", systemImage: "play.fill")
+            }
+        }
+        .accessibilityLabel("Reactivar recurrencia: \(recurring.concept)")
+        .accessibilityHint("Pulsa para solicitar confirmación de reactivación")
+    }
+}
+
+private struct PausedRecurringMovementsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
+
+    let currencyCode: String
+    let hideBalances: Bool
+
+    @State private var showingError = false
+    @State private var errorMessage = ""
+    @State private var recurringToConfirmResume: RecurringMovement?
+    @State private var showingResumeConfirmation = false
+
+    private var pausedRecurringMovements: [RecurringMovement] {
+        recurringMovements.filter { recurring in
+            !recurring.isActive && recurring.endDate == nil && recurring.account?.isActive == true
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                ForEach(pausedRecurringMovements) { recurring in
+                    PausedRecurringCalendarRow(
+                        recurring: recurring,
+                        currencyCode: currencyCode,
+                        hideBalances: hideBalances,
+                        onResumeRequest: {
+                            recurringToConfirmResume = recurring
+                            showingResumeConfirmation = true
+                        }
+                    )
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button {
+                            resumeRecurrence(recurring)
+                        } label: {
+                            Label("Reactivar", systemImage: "play.fill")
+                        }
+                        .tint(.green)
+                    }
+                }
+            }
+            .financeGlassListContainer()
+            .navigationTitle("Recurrentes pausados")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cerrar") {
+                        dismiss()
+                    }
+                }
+            }
+            .confirmationDialog(
+                "¿Reactivar recurrencia?",
+                isPresented: $showingResumeConfirmation,
+                titleVisibility: .visible,
+                presenting: recurringToConfirmResume
+            ) { recurring in
+                Button("Reactivar") {
+                    resumeRecurrence(recurring)
+                }
+                Button("Cancelar", role: .cancel) {}
+            } message: { recurring in
+                Text("\(recurring.concept) volverá a generar sus próximas ocurrencias.")
+            }
+            .alert("Acción no disponible", isPresented: $showingError) {
+                Button("Aceptar", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func resumeRecurrence(_ recurring: RecurringMovement) {
+        do {
+            let shouldDismiss = pausedRecurringMovements.count == 1
+            try RecurringMovementService.resumeRecurrence(recurring, in: modelContext)
+            HapticFeedback.success()
+            if shouldDismiss {
+                dismiss()
+            }
+        } catch {
+            modelContext.rollback()
+            errorMessage = "No se pudo reactivar la recurrencia: \(error.localizedDescription)"
+            showingError = true
+        }
+    }
+}
+
+private struct SkippedRecurringCalendarRow: View {
+    let occurrence: RecurringCalendarOccurrence
+    let currencyCode: String
+    let hideBalances: Bool
+    let onRestoreRequest: () -> Void
+
+    var body: some View {
+        Button(action: onRestoreRequest) {
+            RecurringCalendarRow(
+                occurrence: occurrence,
+                currencyCode: currencyCode,
+                hideBalances: hideBalances,
+                status: .skipped
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Pulsa para solicitar confirmación de restauración")
+        .contextMenu {
+            Button(action: onRestoreRequest) {
+                Label("Restaurar ocurrencia", systemImage: "arrow.uturn.backward")
+            }
+        }
+    }
+}
+
+private struct SkippedRecurringMovementsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
+
+    let currencyCode: String
+    let hideBalances: Bool
+
+    @State private var skippedOccurrenceToRestore: RecurringCalendarOccurrence?
+    @State private var showingRestoreConfirmation = false
+    @State private var showingError = false
+    @State private var errorMessage = ""
+
+    private var skippedOccurrences: [SkippedRecurringOccurrence] {
+        RecurringMovementService.skippedOccurrences(
+            for: recurringMovements,
+            calendar: RecurringMovementService.recurrenceCalendar
+        )
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if skippedOccurrences.isEmpty {
+                    FinanceEmptyStateContent(
+                        "No hay ocurrencias omitidas",
+                        systemImage: "checkmark.circle",
+                        description: Text("Cuando omitas una ocurrencia recurrente, aparecerá aquí para que puedas restaurarla.")
+                    )
+                    .financeGlassClearListRow()
+                } else {
+                    ForEach(skippedOccurrences) { skippedOccurrence in
+                        let occurrence = RecurringCalendarOccurrence(
+                            rule: skippedOccurrence.rule,
+                            dueDate: skippedOccurrence.dueDate,
+                            confirmedMovement: nil,
+                            isSkipped: true
+                        )
+
+                        SkippedRecurringCalendarRow(
+                            occurrence: occurrence,
+                            currencyCode: currencyCode,
+                            hideBalances: hideBalances,
+                            onRestoreRequest: {
+                                skippedOccurrenceToRestore = occurrence
+                                showingRestoreConfirmation = true
+                            }
+                        )
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button {
+                                skippedOccurrenceToRestore = occurrence
+                                showingRestoreConfirmation = true
+                            } label: {
+                                Label("Restaurar", systemImage: "arrow.uturn.backward")
+                            }
+                            .tint(.financeAccent)
+                        }
+                    }
+                }
+            }
+            .financeGlassListContainer()
+            .navigationTitle("Ocurrencias omitidas")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cerrar") {
+                        dismiss()
+                    }
+                }
+            }
+            .confirmationDialog(
+                "¿Restaurar ocurrencia?",
+                isPresented: $showingRestoreConfirmation,
+                titleVisibility: .visible,
+                presenting: skippedOccurrenceToRestore
+            ) { occurrence in
+                Button("Restaurar") {
+                    restoreSkippedOccurrence(occurrence)
+                }
+                Button("Cancelar", role: .cancel) {}
+            } message: { occurrence in
+                if occurrence.rule.isActive || occurrence.rule.endDate != nil {
+                    Text("\(occurrence.rule.concept) volverá a aparecer como pendiente el \(occurrence.dueDate.asSpanishShortDate()).")
+                } else {
+                    Text("Se quitará la omisión de \(occurrence.rule.concept), pero la recurrencia está pausada y esta ocurrencia puede dejar de aparecer.")
+                }
+            }
+            .alert("Acción no disponible", isPresented: $showingError) {
+                Button("Aceptar", role: .cancel) {}
+            } message: {
+                Text(errorMessage)
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func restoreSkippedOccurrence(_ occurrence: RecurringCalendarOccurrence) {
+        do {
+            try RecurringMovementService.restoreSkippedOccurrence(
+                rule: occurrence.rule,
+                dueDate: occurrence.dueDate,
+                in: modelContext,
+                calendar: RecurringMovementService.recurrenceCalendar
+            )
+            HapticFeedback.success()
+            skippedOccurrenceToRestore = nil
+        } catch {
+            modelContext.rollback()
+            errorMessage = "No se pudo restaurar la ocurrencia: \(error.localizedDescription)"
+            showingError = true
         }
     }
 }
@@ -1022,7 +1633,8 @@ private struct RecurringCalendarRow: View {
             detailLines: [accountText],
             amountText: amountText,
             trailingPill: MovementTrailingPill(title: status.title, color: status.color),
-            dateText: occurrence.dueDate.asSpanishShortDate()
+            dateText: occurrence.dueDate.asSpanishShortDate(),
+            style: .movementListCard
         )
     }
 }

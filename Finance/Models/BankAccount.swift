@@ -131,7 +131,7 @@ final class BankAccount {
 
 /// Representación Codable de BankAccount para exportar/importar datos.
 /// SwiftData @Model no soporta Codable directamente, por lo que usamos un DTO.
-struct BankAccountDTO: Codable {
+nonisolated struct BankAccountDTO: Codable, Sendable {
     let id: UUID
     let name: String
     let bankId: UUID?

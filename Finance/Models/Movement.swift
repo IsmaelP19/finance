@@ -85,6 +85,20 @@ final class Movement {
         return max(max(recoveredAmount, 0) - expectedReimbursementAmount, 0)
     }
 
+    func duplicatedForNewEntry(on date: Date = Date()) -> Movement {
+        Movement(
+            concept: concept,
+            amount: amount,
+            type: type,
+            occurredAt: date,
+            account: account,
+            destinationAccount: destinationAccount,
+            category: category,
+            notes: notes,
+            personalAmount: personalAmount
+        )
+    }
+
     init(
         concept: String,
         amount: Decimal,
@@ -121,7 +135,7 @@ final class Movement {
 
 // MARK: - Codable DTO para Export/Import JSON
 
-struct MovementDTO: Codable {
+nonisolated struct MovementDTO: Codable, Sendable {
     let id: UUID
     let concept: String
     let amount: Decimal

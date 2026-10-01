@@ -10,17 +10,12 @@ import SwiftData
 import UniformTypeIdentifiers
 
 /// Ajustes de la aplicacion: bancos, importacion/exportacion y borrado total.
+@MainActor
 struct SettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.modelContext) private var modelContext
+    @ObservedObject private var persistenceCoordinator = PersistenceOperationCoordinator.shared
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
-    @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
-    @Query(sort: \Bank.name) private var banks: [Bank]
-    @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
-    @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
-    @Query(sort: \InvestmentSnapshot.snapshotDate, order: .reverse) private var investmentSnapshots: [InvestmentSnapshot]
-    @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
-    @Query(sort: \Budget.createdAt) private var budgets: [Budget]
 
     @AppStorage("investmentReminderEnabled") private var investmentReminderEnabled = false
     @AppStorage("investmentReminderHour") private var investmentReminderHour = 21
@@ -41,13 +36,14 @@ struct SettingsView: View {
     @State private var pendingImportURL: URL?
     @State private var showingDeleteAllConfirmation = false
     @State private var showingHistoricalRepairConfirmation = false
+    @State private var syncFolderName = "No configurada"
+    @State private var historicalMovementCount = 0
+    @State private var deleteCounts: DataExportService.ImportCounts?
+    @State private var exportedFileURL: URL?
+    @State private var operationTask: Task<Void, Never>?
     @State private var showingAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
-
-    private var syncFolderName: String {
-        ManualSyncService.syncFolderDisplayName()
-    }
 
     var body: some View {
         NavigationStack {
@@ -87,6 +83,18 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                     }
 
+                    if !persistenceCoordinator.isRestoring {
+                        SettingsPanel(title: "Pagos con Wallet", subtitle: "Automatizaciones por tarjeta", systemImage: "wallet.pass.fill") {
+                            NavigationLink {
+                                WalletAutomationSetupView()
+                            } label: {
+                                SettingsActionLabel(title: "Configurar en Atajos", systemImage: "bolt.horizontal.circle")
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("Abre la guía para preparar gastos de Wallet con una automatización personal.")
+                        }
+                    }
+
                     SettingsPanel(title: "Datos", subtitle: "Exportación, importación y borrado", systemImage: "externaldrive.fill") {
                         Button {
                             exportData()
@@ -104,7 +112,7 @@ struct SettingsView: View {
                         SettingsDivider()
 
                         Button {
-                            showingHistoricalRepairConfirmation = true
+                            prepareHistoricalRepairConfirmation()
                         } label: {
                             SettingsActionLabel(title: "Reparar saldos históricos", systemImage: "arrow.clockwise")
                         }
@@ -122,7 +130,7 @@ struct SettingsView: View {
                         SettingsDivider()
 
                         Button(role: .destructive) {
-                            showingDeleteAllConfirmation = true
+                            prepareDeleteAllConfirmation()
                         } label: {
                             SettingsActionLabel(title: "Eliminar todos los datos", systemImage: "trash", tint: .red)
                         }
@@ -254,7 +262,7 @@ struct SettingsView: View {
                 CategoryManagementView()
             }
             .sheet(isPresented: $showingExportSheet) {
-                if let url = DataExportService.getExportFileURL() {
+                if let url = exportedFileURL {
                     ShareSheet(activityItems: [url])
                 }
             }
@@ -304,7 +312,7 @@ struct SettingsView: View {
                     repairHistoricalBalances()
                 }
             } message: {
-                Text("Se creará un backup local antes de revisar y recalcular los saldos de \(movements.count) movimiento(s).")
+                Text("Se creará un backup local antes de revisar y recalcular los saldos de \(historicalMovementCount) movimiento(s).")
             }
             .alert("Eliminar todos los datos", isPresented: $showingDeleteAllConfirmation) {
                 Button("Cancelar", role: .cancel) {}
@@ -312,7 +320,7 @@ struct SettingsView: View {
                     deleteAllData(showSuccessAlert: true)
                 }
             } message: {
-                Text("Se eliminaran \(banks.count) banco(s), \(accounts.count) cuenta(s), \(categories.count) categoria(s), \(movements.count) movimiento(s), \(investmentSnapshots.count) snapshot(s) de inversión y \(recurringMovements.count) recurrencia(s). Esta accion no se puede deshacer.")
+                Text(deleteConfirmationMessage)
             }
             .alert(alertTitle, isPresented: $showingAlert) {
                 Button("Aceptar", role: .cancel) {}
@@ -320,7 +328,10 @@ struct SettingsView: View {
                 Text(alertMessage)
             }
         }
-        .onAppear(perform: applyGlobalCurrencyToAccounts)
+        .onAppear {
+            syncFolderName = ManualSyncService.syncFolderDisplayName()
+            applyGlobalCurrencyToAccounts()
+        }
         .onAppear {
             updateInvestmentReminderSchedule()
             updateAutoBackupSchedule()
@@ -346,6 +357,10 @@ struct SettingsView: View {
         .onChange(of: autoBackupMinute) { _, _ in
             updateAutoBackupSchedule()
         }
+        .onDisappear {
+            operationTask?.cancel()
+        }
+        .disabled(persistenceCoordinator.isBusy)
     }
 
     private var settingsBackground: some View {
@@ -394,20 +409,32 @@ struct SettingsView: View {
             .padding(.top, 2)
     }
 
+    private func startPersistenceOperation(
+        _ operation: PersistenceOperationCoordinator.Operation,
+        action: @escaping @MainActor () async -> Void
+    ) {
+        guard persistenceCoordinator.begin(operation) else { return }
+
+        operationTask?.cancel()
+        operationTask = Task { @MainActor in
+            defer { persistenceCoordinator.finish(operation) }
+            await action()
+        }
+    }
+
     private func exportData() {
-        do {
-            try DataExportService.exportData(
-                banks: banks,
-                accounts: accounts,
-                categories: categories,
-                movements: movements,
-                investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements,
-                budgets: budgets
-            )
-            showingExportSheet = true
-        } catch {
-            showError("Error al exportar: \(error.localizedDescription)")
+        startPersistenceOperation(.export) { @MainActor in
+            do {
+                let snapshot = try DataExportService.fetchSnapshot(in: modelContext)
+                let url = try await DataExportService.exportDataAsync(snapshot: snapshot)
+                guard !Task.isCancelled else { return }
+                exportedFileURL = url
+                showingExportSheet = true
+            } catch {
+                if !Task.isCancelled {
+                    showError("Error al exportar: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
@@ -426,63 +453,73 @@ struct SettingsView: View {
         guard let url = pendingImportURL else { return }
         pendingImportURL = nil
 
-        guard url.startAccessingSecurityScopedResource() else {
-            showError("No se pudo acceder al archivo seleccionado.")
-            return
-        }
-        defer { url.stopAccessingSecurityScopedResource() }
-
-        do {
-            let importResult = try DataExportService.importData(from: url)
-
-            if replaceExistingData {
-                try ManualSyncService.createVerifiedPreRestoreBackup(
-                    banks: banks,
-                    accounts: accounts,
-                    categories: categories,
-                    movements: movements,
-                    investmentSnapshots: investmentSnapshots,
-                    recurringMovements: recurringMovements,
-                    budgets: budgets
-                )
+        startPersistenceOperation(replaceExistingData ? .restore : .importData) { @MainActor in
+            guard url.startAccessingSecurityScopedResource() else {
+                showError("No se pudo acceder al archivo seleccionado.")
+                return
             }
+            defer { url.stopAccessingSecurityScopedResource() }
 
-            let report = try DataExportService.importData(
-                importResult,
-                into: modelContext,
-                mode: replaceExistingData ? .replace : .merge,
-                currencyCode: appCurrencyCode
-            )
+            do {
+                let importResult = try await DataExportService.importDataAsync(from: url)
+                guard !Task.isCancelled else { return }
 
-            alertTitle = report.alertTitle
-            alertMessage = report.summary
-            showingAlert = true
-        } catch {
-            showError("Error al importar: \(error.localizedDescription)")
+                if replaceExistingData {
+                    let snapshot = try DataExportService.fetchSnapshot(in: modelContext)
+                    let revision = await DataExportService.revisionAsync(of: snapshot)
+                    try await ManualSyncService.createVerifiedPreRestoreBackupAsync(snapshot: snapshot)
+                    guard !Task.isCancelled else { return }
+                    guard try await DataExportService.revisionAsync(in: modelContext) == revision else {
+                        throw PersistenceOperationError.localChangesDetected
+                    }
+                }
+
+                let report = try DataExportService.importData(
+                    importResult,
+                    into: modelContext,
+                    mode: replaceExistingData ? .replace : .merge,
+                    currencyCode: appCurrencyCode
+                )
+
+                alertTitle = report.alertTitle
+                alertMessage = report.summary
+                showingAlert = true
+            } catch {
+                if !Task.isCancelled {
+                    showError("Error al importar: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
     private func repairHistoricalBalances() {
-        do {
-            let backup = try LocalRepairBackupService.createVerifiedBackup(
-                banks: banks,
-                accounts: accounts,
-                categories: categories,
-                movements: movements,
-                investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements,
-                budgets: budgets
-            )
-            let report = try MovementBalanceService.repair(in: modelContext)
+        startPersistenceOperation(.repair) { @MainActor in
+            guard !Task.isCancelled else { return }
+            var repairDidMutateContext = false
+            do {
+                let snapshot = try DataExportService.fetchSnapshot(in: modelContext)
+                let revision = await DataExportService.revisionAsync(of: snapshot)
+                let backupURL = try await createLocalPreRestoreBackupAsync(snapshot: snapshot)
+                guard !Task.isCancelled else { return }
+                guard try await DataExportService.revisionAsync(in: modelContext) == revision else {
+                    throw PersistenceOperationError.localChangesDetected
+                }
+                repairDidMutateContext = true
+                let report = try MovementBalanceService.repair(in: modelContext)
 
-            alertTitle = report.accountsChanged == 0 && report.movementsChanged == 0
-                ? "Saldos históricos verificados"
-                : "Saldos históricos reparados"
-            alertMessage = "Se revisaron \(report.accountsChecked) cuenta(s) y \(report.movementsChecked) movimiento(s). Se actualizaron \(report.accountsChanged) cuenta(s) y \(report.movementsChanged) movimiento(s). Backup local: \(backup.url.lastPathComponent)."
-            showingAlert = true
-        } catch {
-            modelContext.rollback()
-            showError("No se pudieron reparar los saldos históricos: \(error.localizedDescription)")
+                alertTitle = report.accountsChanged == 0 && report.movementsChanged == 0
+                    ? "Saldos históricos verificados"
+                    : "Saldos históricos reparados"
+                alertMessage = "Se revisaron \(report.accountsChecked) cuenta(s) y \(report.movementsChecked) movimiento(s). Se actualizaron \(report.accountsChanged) cuenta(s) y \(report.movementsChanged) movimiento(s). Backup local: \(backupURL.lastPathComponent)."
+                showingAlert = true
+            } catch {
+                if !Task.isCancelled {
+                    if repairDidMutateContext {
+                        modelContext.rollback()
+                    }
+                    showError("No se pudieron reparar los saldos históricos: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
@@ -495,89 +532,200 @@ struct SettingsView: View {
         }
     }
 
+    /// Crea el backup previo de una restauración local sin bloquear MainActor.
+    /// Solo se captura el snapshot en MainActor; la conversión JSON, copia,
+    /// validación y poda trabajan con valores Sendable y filesystem.
+    private func createLocalPreRestoreBackupAsync(
+        snapshot: DataExportService.DataSnapshot
+    ) async throws -> URL {
+        let tempURL = try await DataExportService.exportDataAsync(snapshot: snapshot)
+        let task = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            defer { try? FileManager.default.removeItem(at: tempURL) }
+
+            let applicationSupportURL = try FileManager.default.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
+            )
+            let directoryURL = applicationSupportURL.appendingPathComponent("PreRepairBackups", isDirectory: true)
+            try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = "yyyyMMdd_HHmmss_SSS"
+            let fileName = "Finance_pre_repair_\(formatter.string(from: Date())).json"
+            let destinationURL = directoryURL.appendingPathComponent(fileName)
+
+            if FileManager.default.fileExists(atPath: destinationURL.path) {
+                try FileManager.default.removeItem(at: destinationURL)
+            }
+            try FileManager.default.copyItem(at: tempURL, to: destinationURL)
+
+            guard FileManager.default.fileExists(atPath: destinationURL.path),
+                  DataExportService.readExportDate(from: destinationURL) != nil else {
+                throw PersistenceOperationError.localBackupUnavailable
+            }
+
+            do {
+                try DataExportService.validateExportFile(from: destinationURL)
+            } catch {
+                throw PersistenceOperationError.localBackupUnavailable
+            }
+
+            let backupURLs = try FileManager.default.contentsOfDirectory(
+                at: directoryURL,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            )
+            .filter {
+                $0.lastPathComponent.hasPrefix("Finance_pre_repair_")
+                    && $0.pathExtension.lowercased() == "json"
+            }
+            .sorted {
+                let lhsDate = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? nil
+                let rhsDate = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? nil
+                return (lhsDate ?? .distantPast) > (rhsDate ?? .distantPast)
+            }
+
+            for backupURL in backupURLs.dropFirst(2) {
+                try? FileManager.default.removeItem(at: backupURL)
+            }
+
+            return destinationURL
+        }
+        return try await withTaskCancellationHandler(operation: {
+            try await task.value
+        }, onCancel: {
+            task.cancel()
+        })
+    }
+
     private func restoreLocalBackup(_ backup: LocalRepairBackupService.BackupInfo) {
-        do {
-            let importResult = try LocalRepairBackupService.prepareForRestore(backup)
-            let currentBackup = try LocalRepairBackupService.createVerifiedBackup(
-                banks: banks,
-                accounts: accounts,
-                categories: categories,
-                movements: movements,
-                investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements,
-                budgets: budgets
-            )
+        showingLocalBackups = false
+        startPersistenceOperation(.restore) { @MainActor in
+            do {
+                let importResult = try await DataExportService.importDataAsync(from: backup.url)
+                guard !Task.isCancelled else { return }
 
-            _ = try DataExportService.importData(
-                importResult,
-                into: modelContext,
-                mode: .replace,
-                currencyCode: appCurrencyCode
-            )
+                let snapshot = try DataExportService.fetchSnapshot(in: modelContext)
+                let revision = await DataExportService.revisionAsync(of: snapshot)
+                let currentBackupURL = try await createLocalPreRestoreBackupAsync(snapshot: snapshot)
 
-            alertTitle = "Backup restaurado"
-            let repairedReferencesMessage = importResult.repairedReferences > 0
-                ? " Se repararon \(importResult.repairedReferences) referencias opcionales inválidas."
-                : ""
-            alertMessage = "Se restauró la copia del \(backup.exportDate.formatted(date: .abbreviated, time: .shortened)).\(repairedReferencesMessage) Backup del estado anterior: \(currentBackup.url.lastPathComponent)."
-            showingAlert = true
-        } catch {
-            modelContext.rollback()
-            showError("No se pudo restaurar el backup local: \(error.localizedDescription)")
+                guard !Task.isCancelled,
+                      try await DataExportService.revisionAsync(in: modelContext) == revision else {
+                    throw PersistenceOperationError.localChangesDetected
+                }
+
+                _ = try DataExportService.importData(
+                    importResult,
+                    into: modelContext,
+                    mode: .replace,
+                    currencyCode: appCurrencyCode
+                )
+
+                alertTitle = "Backup restaurado"
+                let repairedReferencesMessage = importResult.repairedReferences > 0
+                    ? " Se repararon \(importResult.repairedReferences) referencias opcionales inválidas."
+                    : ""
+                alertMessage = "Se restauró la copia del \(backup.exportDate.formatted(date: .abbreviated, time: .shortened)).\(repairedReferencesMessage) Backup del estado anterior: \(currentBackupURL.lastPathComponent)."
+                showingAlert = true
+            } catch {
+                if !Task.isCancelled {
+                    showError("No se pudo restaurar el backup local: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
-    @discardableResult
-    private func deleteAllData(showSuccessAlert: Bool) -> Bool {
-        CrashReportService.shared.recordBreadcrumb("SettingsView.deleteAllData")
+    private func deleteAllData(showSuccessAlert: Bool) {
+        startPersistenceOperation(.delete) { @MainActor in
+            guard !Task.isCancelled else { return }
+            CrashReportService.shared.recordBreadcrumb("SettingsView.deleteAllData")
 
-        withAnimation {
-            for movement in movements {
-                modelContext.delete(movement)
+            guard let snapshot = try? DataExportService.fetchSnapshot(in: modelContext) else {
+                showError("Error al cargar los datos para eliminar.")
+                return
+            }
+            guard !Task.isCancelled else { return }
+
+            withAnimation {
+                for movement in snapshot.movements {
+                    modelContext.delete(movement)
+                }
+
+                for investmentSnapshot in snapshot.investmentSnapshots {
+                    modelContext.delete(investmentSnapshot)
+                }
+
+                for recurring in snapshot.recurringMovements {
+                    modelContext.delete(recurring)
+                }
+
+                for budget in snapshot.budgets {
+                    modelContext.delete(budget)
+                }
+
+                for category in snapshot.categories {
+                    modelContext.delete(category)
+                }
+
+                for account in snapshot.accounts {
+                    modelContext.delete(account)
+                }
+
+                for bank in snapshot.banks {
+                    modelContext.delete(bank)
+                }
             }
 
-            for snapshot in investmentSnapshots {
-                modelContext.delete(snapshot)
+            do {
+                try modelContext.save()
+            } catch {
+                modelContext.rollback()
+                showError("Error al eliminar los datos: \(error.localizedDescription)")
+                return
             }
 
-            for recurring in recurringMovements {
-                modelContext.delete(recurring)
-            }
-
-            for budget in budgets {
-                modelContext.delete(budget)
-            }
-
-            for category in categories {
-                modelContext.delete(category)
-            }
-
-            for account in accounts {
-                modelContext.delete(account)
-            }
-
-            for bank in banks {
-                modelContext.delete(bank)
-            }
-        }
-
-        do {
-            try modelContext.save()
-        } catch {
-            modelContext.rollback()
-            showError("Error al eliminar los datos: \(error.localizedDescription)")
-            return false
-        }
-
-        if showSuccessAlert {
+            guard showSuccessAlert else { return }
             alertTitle = "Datos eliminados"
             alertMessage = "Se eliminaron todos los datos de la aplicacion."
-            DispatchQueue.main.async {
-                showingAlert = true
-            }
+            showingAlert = true
         }
+    }
 
-        return true
+    private func prepareHistoricalRepairConfirmation() {
+        do {
+            historicalMovementCount = try DataExportService.fetchMovementCount(in: modelContext)
+            showingHistoricalRepairConfirmation = true
+        } catch {
+            showError("No se pudo contar los movimientos: \(error.localizedDescription)")
+        }
+    }
+
+    private func prepareDeleteAllConfirmation() {
+        do {
+            let snapshot = try DataExportService.fetchSnapshot(in: modelContext)
+            deleteCounts = DataExportService.ImportCounts(
+                banks: snapshot.banks.count,
+                accounts: snapshot.accounts.count,
+                categories: snapshot.categories.count,
+                movements: snapshot.movements.count,
+                investmentSnapshots: snapshot.investmentSnapshots.count,
+                recurringMovements: snapshot.recurringMovements.count,
+                budgets: snapshot.budgets.count,
+                budgetItems: snapshot.budgets.flatMap(\.items).count
+            )
+            showingDeleteAllConfirmation = true
+        } catch {
+            showError("No se pudieron cargar los datos: \(error.localizedDescription)")
+        }
+    }
+
+    private var deleteConfirmationMessage: String {
+        "Se eliminaran \(deleteCounts?.banks ?? 0) banco(s), \(deleteCounts?.accounts ?? 0) cuenta(s), \(deleteCounts?.categories ?? 0) categoria(s), \(deleteCounts?.movements ?? 0) movimiento(s), \(deleteCounts?.investmentSnapshots ?? 0) snapshot(s) de inversión y \(deleteCounts?.recurringMovements ?? 0) recurrencia(s). Esta accion no se puede deshacer."
     }
 
     private func showError(_ message: String) {
@@ -604,6 +752,7 @@ struct SettingsView: View {
 
             do {
                 try ManualSyncService.setSyncDirectory(url)
+                syncFolderName = url.lastPathComponent
                 updateAutoBackupSchedule()
                 alertTitle = "Carpeta configurada"
                 alertMessage = "Se guardarán backups en \(url.lastPathComponent)."
@@ -617,62 +766,65 @@ struct SettingsView: View {
     }
 
     private func exportToICloudDrive() {
-        do {
-            let backup = try ManualSyncService.exportToSyncDirectory(
-                banks: banks,
-                accounts: accounts,
-                categories: categories,
-                movements: movements,
-                investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements,
-                budgets: budgets
-            )
+        startPersistenceOperation(.export) { @MainActor in
+            do {
+                let snapshot = try DataExportService.fetchSnapshot(in: modelContext)
+                let backup = try await ManualSyncService.exportToSyncDirectoryAsync(snapshot: snapshot)
+                guard !Task.isCancelled else { return }
 
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            formatter.timeStyle = .short
+                let formatter = DateFormatter()
+                formatter.dateStyle = .short
+                formatter.timeStyle = .short
 
-            alertTitle = "Backup exportado"
-            alertMessage = "Se guardó \(backup.url.lastPathComponent) en iCloud Drive (\(formatter.string(from: backup.exportDate)))."
-            showingAlert = true
-        } catch {
-            showError("Error al exportar a iCloud Drive: \(error.localizedDescription)")
+                alertTitle = "Backup exportado"
+                alertMessage = "Se guardó \(backup.url.lastPathComponent) en iCloud Drive (\(formatter.string(from: backup.exportDate)))."
+                showingAlert = true
+            } catch {
+                if !Task.isCancelled {
+                    showError("Error al exportar a iCloud Drive: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
     private func importLatestFromICloudDriveReplacingData() {
-        do {
-            let (importResult, exportDate) = try ManualSyncService.prepareLatestBackupForRestore(
-                banks: banks,
-                accounts: accounts,
-                categories: categories,
-                movements: movements,
-                investmentSnapshots: investmentSnapshots,
-                recurringMovements: recurringMovements,
-                budgets: budgets
-            )
-            _ = try DataExportService.importData(
-                importResult,
-                into: modelContext,
-                mode: .replace,
-                currencyCode: appCurrencyCode
-            )
+        startPersistenceOperation(.restore) { @MainActor in
+            do {
+                let (importResult, exportDate, revision) = try await ManualSyncService.prepareLatestBackupForRestoreAsync(
+                    snapshotProvider: {
+                        try DataExportService.fetchSnapshot(in: modelContext)
+                    }
+                )
+                try Task.checkCancellation()
+                guard try await DataExportService.revisionAsync(in: modelContext) == revision else {
+                    throw PersistenceOperationError.localChangesDetected
+                }
+                _ = try DataExportService.importData(
+                    importResult,
+                    into: modelContext,
+                    mode: .replace,
+                    currencyCode: appCurrencyCode
+                )
 
-            ManualSyncService.markImported(exportDate: exportDate)
+                ManualSyncService.markImported(exportDate: exportDate)
 
-            let formatter = DateFormatter()
-            formatter.dateStyle = .short
-            formatter.timeStyle = .short
+                let formatter = DateFormatter()
+                formatter.dateStyle = .short
+                formatter.timeStyle = .short
 
-            alertTitle = "Importación completada"
-            alertMessage = "Se importó la copia de iCloud Drive del \(formatter.string(from: exportDate))."
-            showingAlert = true
-        } catch {
-            showError("Error al importar desde iCloud Drive: \(error.localizedDescription)")
+                alertTitle = "Importación completada"
+                alertMessage = "Se importó la copia de iCloud Drive del \(formatter.string(from: exportDate))."
+                showingAlert = true
+            } catch {
+                if !Task.isCancelled {
+                    showError("Error al importar desde iCloud Drive: \(error.localizedDescription)")
+                }
+            }
         }
     }
 
     private func applyGlobalCurrencyToAccounts() {
+        guard let accounts = try? DataExportService.fetchBankAccounts(in: modelContext) else { return }
         for account in accounts where account.currency != appCurrencyCode {
             account.currency = appCurrencyCode
             account.updatedAt = Date()

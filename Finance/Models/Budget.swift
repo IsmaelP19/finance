@@ -48,7 +48,7 @@ final class Budget {
 
 // MARK: - Codable DTO para Export/Import JSON
 
-struct BudgetDTO: Codable {
+nonisolated struct BudgetDTO: Codable, Sendable {
     let id: UUID
     let totalAmount: Decimal
     let isActive: Bool

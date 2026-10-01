@@ -9,6 +9,26 @@ import SwiftUI
 import SwiftData
 import Combine
 
+private struct WrappedMovementSnapshotKey: Equatable {
+    private let movements: [WrappedMovementValue]
+
+    init(values: [WrappedMovementValue]) {
+        self.movements = values
+    }
+}
+
+private struct WrappedHistoryCache {
+    let movementKey: WrappedMovementSnapshotKey
+    let currentMonth: WrappedMonth
+    let months: [WrappedMonth]
+    let summaries: [WrappedMonth: WrappedSummary]
+}
+
+private struct WrappedHistoryTaskKey: Equatable {
+    let movementKey: WrappedMovementSnapshotKey
+    let currentMonth: WrappedMonth
+}
+
 struct MonthlyWrappedHistoryView: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
@@ -17,22 +37,25 @@ struct MonthlyWrappedHistoryView: View {
     let initialMonth: WrappedMonth?
 
     @State private var selectedMonthForStories: WrappedMonth?
-
-    private var availableMonths: [WrappedMonth] {
-        MonthlyWrappedService.closedMonths(from: movements)
-    }
-
-    private var latestMonth: WrappedMonth? {
-        availableMonths.first
-    }
-
-    private var summariesByMonth: [WrappedMonth: WrappedSummary] {
-        Dictionary(uniqueKeysWithValues: availableMonths.map { month in
-            (month, MonthlyWrappedService.summary(for: month, movements: movements))
-        })
-    }
+    @State private var historyCache: WrappedHistoryCache?
+    @State private var wrappedNow = Date()
+    @State private var activeTaskKey: WrappedHistoryTaskKey?
 
     var body: some View {
+        let movementsSnapshot = movements
+        let movementValues = MonthlyWrappedService.movementValues(from: movementsSnapshot)
+        let snapshotKey = WrappedMovementSnapshotKey(values: movementValues)
+        let currentMonth = WrappedMonth(
+            year: Calendar.current.component(.year, from: wrappedNow),
+            month: Calendar.current.component(.month, from: wrappedNow)
+        )
+        let taskKey = WrappedHistoryTaskKey(movementKey: snapshotKey, currentMonth: currentMonth)
+        let cachedHistory = historyCache
+        let cacheIsCurrent = cachedHistory?.movementKey == snapshotKey && cachedHistory?.currentMonth == currentMonth
+        let availableMonths: [WrappedMonth] = cacheIsCurrent ? cachedHistory?.months ?? [] : []
+        let summariesByMonth: [WrappedMonth: WrappedSummary] = cacheIsCurrent ? cachedHistory?.summaries ?? [:] : [:]
+        let latestMonth = availableMonths.first
+
         NavigationStack {
             List {
                 if let latestMonth, let latestSummary = summariesByMonth[latestMonth] {
@@ -50,7 +73,7 @@ struct MonthlyWrappedHistoryView: View {
                         WrappedLatestCard(
                             summary: latestSummary,
                             currencyCode: appCurrencyCode,
-                            highlighted: isMonthPending(latestMonth)
+                            highlighted: isMonthPending(latestMonth, latestMonth: latestMonth)
                         )
                     }
                     .buttonStyle(.plain)
@@ -66,12 +89,19 @@ struct MonthlyWrappedHistoryView: View {
                 .financeGlassClearListRow()
 
                 if availableMonths.isEmpty {
-                    FinanceEmptyStateContent(
-                        "Sin wrappeds disponibles",
-                        systemImage: "sparkles.rectangle.stack",
-                        description: Text("Registra movimientos en varios meses para generar tu historial mensual.")
-                    )
-                    .financeGlassClearListRow()
+                    if cacheIsCurrent {
+                        FinanceEmptyStateContent(
+                            "Sin wrappeds disponibles",
+                            systemImage: "sparkles.rectangle.stack",
+                            description: Text("Registra movimientos en varios meses para generar tu historial mensual.")
+                        )
+                        .financeGlassClearListRow()
+                    } else {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 32)
+                            .financeGlassClearListRow()
+                    }
                 } else {
                     ForEach(availableMonths) { month in
                         if let summary = summariesByMonth[month] {
@@ -81,7 +111,7 @@ struct MonthlyWrappedHistoryView: View {
                                 WrappedHistoryRow(
                                     summary: summary,
                                     currencyCode: appCurrencyCode,
-                                    showPendingBadge: isMonthPending(month)
+                                    showPendingBadge: isMonthPending(month, latestMonth: latestMonth)
                                 )
                             }
                             .buttonStyle(.plain)
@@ -124,13 +154,61 @@ struct MonthlyWrappedHistoryView: View {
         .sheet(item: $selectedMonthForStories) { month in
             MonthlyWrappedStoriesView(month: month, movements: movements)
         }
+        .onChange(of: taskKey, initial: true) { _, newValue in
+            activeTaskKey = newValue
+        }
+        .task(id: taskKey) {
+            guard let historyValues = await MonthlyWrappedService.cancellableHistoryValues(
+                for: currentMonth,
+                movements: movementValues
+            ) else { return }
+
+            guard !Task.isCancelled else { return }
+            let summaries = MonthlyWrappedService.materializeSummaries(historyValues.summaries)
+            let liveDate = Date()
+            let liveCalendar = Calendar.current
+            let liveMonth = WrappedMonth(
+                year: liveCalendar.component(.year, from: liveDate),
+                month: liveCalendar.component(.month, from: liveDate)
+            )
+            guard liveMonth == currentMonth, activeTaskKey == taskKey else { return }
+            historyCache = WrappedHistoryCache(
+                movementKey: snapshotKey,
+                currentMonth: currentMonth,
+                months: historyValues.months,
+                summaries: summaries
+            )
+        }
+        .task(id: currentMonth) {
+            wrappedNow = Date()
+
+            while !Task.isCancelled {
+                let calendar = Calendar.current
+                let now = Date()
+                let monthStart = calendar.date(
+                    from: calendar.dateComponents([.year, .month], from: now)
+                ) ?? now
+                guard let nextMonthStart = calendar.date(byAdding: .month, value: 1, to: monthStart) else { return }
+                let waitInterval = max(nextMonthStart.timeIntervalSinceNow, 1)
+                let nanoseconds = UInt64(waitInterval * 1_000_000_000)
+
+                do {
+                    try await Task.sleep(nanoseconds: nanoseconds)
+                } catch {
+                    return
+                }
+
+                guard !Task.isCancelled else { return }
+                wrappedNow = Date()
+            }
+        }
     }
 
     private func openWrappedStories(for month: WrappedMonth) {
         selectedMonthForStories = month
     }
 
-    private func isMonthPending(_ month: WrappedMonth) -> Bool {
+    private func isMonthPending(_ month: WrappedMonth, latestMonth: WrappedMonth?) -> Bool {
         guard let latestMonth else { return false }
         guard month == latestMonth else { return false }
         return !MonthlyWrappedService.hasSeen(month: month)
@@ -340,13 +418,12 @@ struct MonthlyWrappedStoriesView: View {
 
     private let storyDuration: Double = 5
     private let storyTick: Double = 0.05
-    private let storyTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
     private let tapAsHoldThreshold: TimeInterval = 0.22
     private let holdActivationDelay: TimeInterval = 0.14
     private let dismissSwipeThreshold: CGFloat = 110
 
     @State private var currentStoryIndex = 0
-    @State private var currentStoryProgress: Double = 0
+    @State private var storyProgressResetToken = 0
     @State private var isHoldingTouch = false
     @State private var touchStartedAt: Date?
     @State private var holdActivationTask: DispatchWorkItem?
@@ -536,9 +613,6 @@ struct MonthlyWrappedStoriesView: View {
                 tapZonesOverlay(safeTop: geometry.safeAreaInsets.top)
             }
             .simultaneousGesture(dismissGesture)
-            .onReceive(storyTimer) { _ in
-                handleStoryTick()
-            }
             .onAppear {
                 MonthlyWrappedService.markSeen(month: month)
                 restartStories()
@@ -577,12 +651,15 @@ struct MonthlyWrappedStoriesView: View {
 
     private func topOverlay(safeTop: CGFloat) -> some View {
         VStack(spacing: 10) {
-            HStack(spacing: 8) {
-                ForEach(0..<storyCount, id: \.self) { index in
-                    storyProgressSegment(index: index)
-                }
-            }
-            .padding(.horizontal, 12)
+            WrappedStoryProgressView(
+                storyCount: storyCount,
+                currentStoryIndex: currentStoryIndex,
+                progressResetToken: storyProgressResetToken,
+                isHoldingTouch: isHoldingTouch,
+                storyDuration: storyDuration,
+                storyTick: storyTick,
+                onStoryCompleted: goToNextStory
+            )
 
             HStack {
                 Label(month.longLabel.capitalized, systemImage: "sparkles")
@@ -614,36 +691,6 @@ struct MonthlyWrappedStoriesView: View {
         }
         .padding(.top, safeTop + 8)
         .padding(.horizontal, 16)
-    }
-
-    private func storyProgressSegment(index: Int) -> some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Capsule()
-                    .fill(Color.white.opacity(0.22))
-
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.98), Color.white.opacity(0.88)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: geometry.size.width * progressValue(for: index))
-            }
-        }
-        .frame(height: 3.5)
-    }
-
-    private func progressValue(for index: Int) -> CGFloat {
-        if index < currentStoryIndex {
-            return 1
-        }
-        if index == currentStoryIndex {
-            return CGFloat(max(0, min(currentStoryProgress, 1)))
-        }
-        return 0
     }
 
     private func tapZonesOverlay(safeTop: CGFloat) -> some View {
@@ -1648,22 +1695,10 @@ struct MonthlyWrappedStoriesView: View {
         return "\(week.startDate.asSpanishShortDate()) - \(endDate.asSpanishShortDate())"
     }
 
-    private func handleStoryTick() {
-        guard !isHoldingTouch else { return }
-
-        let increment = storyTick / storyDuration
-        currentStoryProgress += increment
-
-        if currentStoryProgress >= 1 {
-            goToNextStory()
-        }
-    }
-
     private func goToNextStory() {
         if currentStoryIndex < storyCount - 1 {
             withAnimation(.easeInOut(duration: 0.24)) {
                 currentStoryIndex += 1
-                currentStoryProgress = 0
             }
         } else {
             dismiss()
@@ -1672,19 +1707,17 @@ struct MonthlyWrappedStoriesView: View {
 
     private func goToPreviousStory() {
         guard currentStoryIndex > 0 else {
-            currentStoryProgress = 0
+            storyProgressResetToken += 1
             return
         }
 
         withAnimation(.easeInOut(duration: 0.24)) {
             currentStoryIndex -= 1
-            currentStoryProgress = 0
         }
     }
 
     private func restartStories() {
         currentStoryIndex = 0
-        currentStoryProgress = 0
     }
 
     private func startRevealSequence() {
@@ -1770,6 +1803,82 @@ struct MonthlyWrappedStoriesView: View {
     private func cancelHoldActivation() {
         holdActivationTask?.cancel()
         holdActivationTask = nil
+    }
+}
+
+private struct WrappedStoryProgressView: View {
+    let storyCount: Int
+    let currentStoryIndex: Int
+    let progressResetToken: Int
+    let isHoldingTouch: Bool
+    let storyDuration: Double
+    let storyTick: Double
+    let onStoryCompleted: () -> Void
+
+    private let storyTimer = Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()
+
+    @State private var currentStoryProgress: Double = 0
+    @State private var didCompleteCurrentStory = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(0..<storyCount, id: \.self) { index in
+                GeometryReader { geometry in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.white.opacity(0.22))
+
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.98), Color.white.opacity(0.88)],
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(width: geometry.size.width * progressValue(for: index))
+                    }
+                }
+                .frame(height: 3.5)
+            }
+        }
+        .padding(.horizontal, 12)
+        .onReceive(storyTimer) { _ in
+            handleStoryTick()
+        }
+        .onAppear {
+            currentStoryProgress = 0
+            didCompleteCurrentStory = false
+        }
+        .onChange(of: currentStoryIndex) { _, _ in
+            currentStoryProgress = 0
+            didCompleteCurrentStory = false
+        }
+        .onChange(of: progressResetToken) { _, _ in
+            currentStoryProgress = 0
+            didCompleteCurrentStory = false
+        }
+    }
+
+    private func progressValue(for index: Int) -> CGFloat {
+        if index < currentStoryIndex {
+            return 1
+        }
+        if index == currentStoryIndex {
+            return CGFloat(max(0, min(currentStoryProgress, 1)))
+        }
+        return 0
+    }
+
+    private func handleStoryTick() {
+        guard !isHoldingTouch, !didCompleteCurrentStory else { return }
+
+        currentStoryProgress += storyTick / storyDuration
+
+        if currentStoryProgress >= 1 {
+            didCompleteCurrentStory = true
+            onStoryCompleted()
+        }
     }
 }
 

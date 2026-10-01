@@ -30,9 +30,9 @@ struct AccountDetailView: View {
     @State private var showingMarketValueUpdateSheet = false
 
     private var accountSnapshots: [InvestmentSnapshot] {
-        snapshots
-            .filter { $0.account?.id == account.id }
-            .sorted { $0.snapshotDate < $1.snapshotDate }
+        InvestmentSnapshot.dailySnapshots(
+            from: snapshots.filter { $0.account?.id == account.id }
+        )
     }
 
     var body: some View {
@@ -47,23 +47,8 @@ struct AccountDetailView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         FinanceGlassSectionHeader(title: "Evolución", systemImage: "chart.line.uptrend.xyaxis")
 
-                        Group {
-                            if accountSnapshots.isEmpty {
-                                FinanceEmptyStateContent(
-                                    "Sin histórico",
-                                    systemImage: "chart.line.uptrend.xyaxis",
-                                    description: Text("Actualiza inversión y valor de mercado para empezar la serie temporal")
-                                )
-                                .padding(.vertical, 22)
-                            } else {
-                                InvestmentHistoryChartView(
-                                    snapshots: accountSnapshots,
-                                    currencyCode: appCurrencyCode,
-                                    hideBalances: hideBalances
-                                )
-                            }
-                        }
-                        .investmentGlassPanel()
+                        investmentHistoryContent(for: self.accountSnapshots)
+                            .investmentGlassPanel()
                     }
                 }
                 .financeGlassClearListRow()
@@ -73,6 +58,7 @@ struct AccountDetailView: View {
                         FinanceGlassSectionHeader(title: "Inversión", systemImage: "chart.pie.fill")
                         InvestmentSummaryCard(
                             account: account,
+                            snapshots: accountSnapshots,
                             currencyCode: appCurrencyCode,
                             hideBalances: hideBalances
                         )
@@ -212,6 +198,24 @@ struct AccountDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private func investmentHistoryContent(for accountSnapshots: [InvestmentSnapshot]) -> some View {
+        if accountSnapshots.isEmpty {
+            FinanceEmptyStateContent(
+                "Sin histórico",
+                systemImage: "chart.line.uptrend.xyaxis",
+                description: Text("Actualiza inversión y valor de mercado para empezar la serie temporal")
+            )
+            .padding(.vertical, 22)
+        } else {
+            InvestmentHistoryChartView(
+                snapshots: accountSnapshots,
+                currencyCode: appCurrencyCode,
+                hideBalances: hideBalances
+            )
+        }
+    }
+
     private func deleteAccount() {
         CrashReportService.shared.recordBreadcrumb("Eliminando cuenta desde su detalle")
 
@@ -230,7 +234,10 @@ struct AccountDetailView: View {
     private func upsertInvestmentSnapshot(on date: Date, investedAmount: Decimal?, marketValue: Decimal?) {
         let normalizedDate = Calendar.current.startOfDay(for: date)
 
-        if let existing = accountSnapshots.first(where: { Calendar.current.isDate($0.snapshotDate, inSameDayAs: normalizedDate) }) {
+        if let existing = InvestmentSnapshot.latestSnapshot(
+            on: normalizedDate,
+            from: snapshots.filter { $0.account?.id == account.id }
+        ) {
             if let investedAmount {
                 existing.investedAmount = investedAmount
             }
@@ -409,6 +416,7 @@ private struct AccountMetricTile: View {
 
 private struct InvestmentSummaryCard: View {
     let account: BankAccount
+    let snapshots: [InvestmentSnapshot]
     let currencyCode: String
     let hideBalances: Bool
 
@@ -420,38 +428,59 @@ private struct InvestmentSummaryCard: View {
         account.investmentReturnPercent?.asPercent() ?? "—"
     }
 
+    private var maximumReturnSnapshot: (snapshot: InvestmentSnapshot, percentage: Decimal)? {
+        InvestmentSnapshot.maximumReturnSnapshot(from: snapshots)
+    }
+
     var body: some View {
         VStack(spacing: 14) {
-            HStack(spacing: 10) {
-                InvestmentSummaryMetric(
-                    title: "Invertido",
-                    value: account.effectiveInvestedAmount.masked(hideBalances, code: currencyCode),
-                    systemImage: "tray.and.arrow.down.fill",
-                    tint: .purple
-                )
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    InvestmentMetricTile(
+                        title: "Invertido",
+                        value: account.effectiveInvestedAmount.masked(hideBalances, code: currencyCode),
+                        systemImage: "tray.and.arrow.down.fill",
+                        tint: .purple
+                    )
 
-                InvestmentSummaryMetric(
-                    title: "Mercado",
-                    value: account.effectiveMarketValue.masked(hideBalances, code: currencyCode),
-                    systemImage: "chart.line.uptrend.xyaxis",
-                    tint: .blue
-                )
-            }
+                    InvestmentMetricTile(
+                        title: "Mercado",
+                        value: account.effectiveMarketValue.masked(hideBalances, code: currencyCode),
+                        systemImage: "chart.line.uptrend.xyaxis",
+                        tint: .blue
+                    )
+                }
 
-            HStack(spacing: 10) {
-                InvestmentSummaryMetric(
-                    title: "Rentabilidad",
-                    value: account.investmentProfit.masked(hideBalances, code: currencyCode),
-                    systemImage: account.investmentProfit.isNegative ? "arrow.down.right" : "arrow.up.right",
-                    tint: profitTint
-                )
+                HStack(spacing: 10) {
+                    InvestmentMetricTile(
+                        title: "Rentabilidad",
+                        value: account.investmentProfit.masked(hideBalances, code: currencyCode),
+                        systemImage: account.investmentProfit.isNegative ? "arrow.down.right" : "arrow.up.right",
+                        tint: profitTint,
+                        valueColor: profitTint
+                    )
 
-                InvestmentSummaryMetric(
-                    title: "Rentabilidad %",
-                    value: hideBalances ? "••••" : returnPercentText,
-                    systemImage: "percent",
-                    tint: profitTint
-                )
+                    InvestmentMetricTile(
+                        title: "Rentabilidad %",
+                        value: hideBalances ? "••••" : returnPercentText,
+                        systemImage: "percent",
+                        tint: profitTint,
+                        valueColor: profitTint
+                    )
+                }
+
+                if let maximumReturnSnapshot {
+                    InvestmentMetricTile(
+                        title: "Máxima rentabilidad",
+                        value: hideBalances ? "••••" : maximumReturnSnapshot.percentage.asPercent(),
+                        systemImage: "percent",
+                        tint: maximumReturnSnapshot.percentage.isNegative ? .red : .green,
+                        valueColor: maximumReturnSnapshot.percentage.isNegative ? .red : .green,
+                        secondarySubtitle: "Equivale a \((maximumReturnSnapshot.snapshot.marketValue - maximumReturnSnapshot.snapshot.investedAmount).masked(hideBalances, code: currencyCode))",
+                        subtitle: "Registrada el \(maximumReturnSnapshot.snapshot.snapshotDate.asSpanishShortDate())",
+                        emphasized: true
+                    )
+                }
             }
 
             if let marketValueUpdatedAt = account.marketValueUpdatedAt {
@@ -477,45 +506,10 @@ private struct InvestmentSummaryCard: View {
                 .padding(.top, 2)
                 .padding(.horizontal, 2)
             }
+
         }
         .investmentGlassPanel()
         .accessibilityElement(children: .contain)
-    }
-}
-
-private struct InvestmentSummaryMetric: View {
-    let title: String
-    let value: String
-    let systemImage: String
-    let tint: Color
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            Image(systemName: systemImage)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(tint)
-                .frame(width: 30, height: 30)
-                .background(tint.opacity(0.14), in: Circle())
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(value)
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(.primary)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.82)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(12)
-        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
-        )
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -902,12 +896,7 @@ private struct InvestmentHistoryChartView: View {
     let currencyCode: String
     let hideBalances: Bool
 
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var selectedDate: Date?
     @State private var selectedRange: InvestmentChartRange = .sixMonths
-
-    private let investedColor = Color(red: 0.58, green: 0.86, blue: 0.89)
-    private let marketColor = Color(red: 0.96, green: 0.26, blue: 0.50)
 
     private var displayedSnapshots: [InvestmentSnapshot] {
         guard let latestDate = snapshots.last?.snapshotDate else { return snapshots }
@@ -926,58 +915,9 @@ private struct InvestmentHistoryChartView: View {
         InvestmentChartRange.allCases.contains { !isRangeAvailable($0) }
     }
 
-    private var hasTrend: Bool {
-        displayedSnapshots.count > 1
-    }
-
-    private var highlightedSnapshot: InvestmentSnapshot? {
-        guard let selectedDate else { return displayedSnapshots.last }
-        return displayedSnapshots.min { lhs, rhs in
-            abs(lhs.snapshotDate.timeIntervalSince(selectedDate)) < abs(rhs.snapshotDate.timeIntervalSince(selectedDate))
-        }
-    }
-
-    private var xDomain: ClosedRange<Date> {
-        guard let first = displayedSnapshots.first?.snapshotDate,
-              let last = displayedSnapshots.last?.snapshotDate else {
-            let now = Date()
-            return now...now
-        }
-
-        if first == last {
-            let calendar = Calendar.current
-            let start = calendar.date(byAdding: .day, value: -3, to: first) ?? first
-            let end = calendar.date(byAdding: .day, value: 3, to: first) ?? first
-            return start...end
-        }
-
-        return first...last
-    }
-
-    private var yDomain: ClosedRange<Double> {
-        let values = displayedSnapshots.flatMap { [$0.investedAmount.asDouble, $0.marketValue.asDouble] }
-        guard let minValue = values.min(), let maxValue = values.max() else {
-            return 0...1
-        }
-
-        let span = maxValue - minValue
-        let minPadding = max(abs(maxValue) * 0.05, 1)
-        let padding = max(span * 0.12, minPadding)
-        let lower = max(0, minValue - padding)
-        let upper = maxValue + padding
-
-        if lower == upper {
-            return max(0, lower - 1)...(upper + 1)
-        }
-
-        return lower...upper
-    }
-
-    private var areaBaseline: Double {
-        yDomain.lowerBound
-    }
-
     var body: some View {
+        let displayedSnapshotsForBody = self.displayedSnapshots
+
         VStack(alignment: .leading, spacing: 12) {
             Text("Evolución del fondo")
                 .font(.headline)
@@ -990,8 +930,98 @@ private struct InvestmentHistoryChartView: View {
                     .foregroundStyle(.secondary)
             }
 
+            InvestmentHistoryChartPlotView(
+                snapshots: displayedSnapshotsForBody,
+                currencyCode: currencyCode,
+                hideBalances: hideBalances,
+                selectionResetID: "\(selectedRange.rawValue)-\(hideBalances)"
+            )
+        }
+        .onAppear {
+            if !isRangeAvailable(selectedRange) {
+                selectedRange = bestAvailableRange
+            }
+        }
+        .onChange(of: snapshots.count) { _, _ in
+            if !isRangeAvailable(selectedRange) {
+                selectedRange = bestAvailableRange
+            }
+        }
+    }
+
+    private var rangeSelector: some View {
+        HStack(spacing: 8) {
+            ForEach(InvestmentChartRange.allCases) { range in
+                Button {
+                    guard isRangeAvailable(range) else { return }
+                    selectedRange = range
+                } label: {
+                    Text(range.title)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(selectedRange == range ? .white : (isRangeAvailable(range) ? .secondary : .secondary.opacity(0.6)))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            selectedRange == range
+                                ? Color.black
+                                : (isRangeAvailable(range) ? Color.gray.opacity(0.14) : Color.gray.opacity(0.22))
+                        )
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(!isRangeAvailable(range))
+                .opacity(isRangeAvailable(range) ? 1 : 0.55)
+            }
+        }
+    }
+
+    private func isRangeAvailable(_ range: InvestmentChartRange) -> Bool {
+        guard range != .all else { return true }
+        guard let latestDate = snapshots.last?.snapshotDate else { return false }
+        guard let firstDate = snapshots.first?.snapshotDate else { return false }
+        guard let startDate = range.startDate(relativeTo: latestDate) else { return false }
+        return firstDate <= startDate
+    }
+}
+
+private struct InvestmentHistoryChartPlotView: View {
+    let snapshots: [InvestmentSnapshot]
+    let currencyCode: String
+    let hideBalances: Bool
+    let selectionResetID: String
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var selectedDate: Date?
+
+    private let investedColor = Color(red: 0.58, green: 0.86, blue: 0.89)
+    private let marketColor = Color(red: 0.96, green: 0.26, blue: 0.50)
+    private let xDomain: ClosedRange<Date>
+    private let yDomain: ClosedRange<Double>
+    private let renderSnapshots: [InvestmentSnapshot]
+
+    init(
+        snapshots: [InvestmentSnapshot],
+        currencyCode: String,
+        hideBalances: Bool,
+        selectionResetID: String
+    ) {
+        self.snapshots = snapshots
+        self.currencyCode = currencyCode
+        self.hideBalances = hideBalances
+        self.selectionResetID = selectionResetID
+        self.xDomain = Self.chartXDomain(for: snapshots)
+        self.yDomain = Self.chartYDomain(for: snapshots)
+        self.renderSnapshots = Self.visualSnapshots(for: snapshots)
+    }
+
+    var body: some View {
+        let highlightedSnapshot = highlightedSnapshot(in: snapshots)
+        let areaBaseline = yDomain.lowerBound
+
+        VStack(alignment: .leading, spacing: 12) {
             Chart {
-                ForEach(displayedSnapshots) { snapshot in
+                ForEach(renderSnapshots) { snapshot in
                     AreaMark(
                         x: .value("Fecha", snapshot.snapshotDate),
                         yStart: .value("Base", areaBaseline),
@@ -1063,10 +1093,15 @@ private struct InvestmentHistoryChartView: View {
                         .gesture(
                             DragGesture(minimumDistance: 0)
                                 .onChanged { value in
-                                    updateSelection(at: value.location, proxy: proxy, geometry: geometry)
+                                    updateSelection(
+                                        at: value.location,
+                                        proxy: proxy,
+                                        geometry: geometry,
+                                        snapshots: snapshots
+                                    )
                                 }
                                 .onEnded { _ in
-                                    selectedDate = nil
+                                    setSelectedDate(nil)
                                 }
                         )
                 }
@@ -1076,7 +1111,7 @@ private struct InvestmentHistoryChartView: View {
                 selectionCard(for: highlightedSnapshot)
             }
 
-            if !hasTrend, let onlySnapshot = displayedSnapshots.first {
+            if snapshots.count <= 1, let onlySnapshot = snapshots.first {
                 Label(
                     "Solo hay un registro (\(onlySnapshot.snapshotDate.asSpanishShortDate())). Añade más días para ver la tendencia.",
                     systemImage: "info.circle"
@@ -1085,46 +1120,8 @@ private struct InvestmentHistoryChartView: View {
                 .foregroundStyle(.secondary)
             }
         }
-        .onAppear {
-            if !isRangeAvailable(selectedRange) {
-                selectedRange = bestAvailableRange
-            }
-        }
-        .onChange(of: snapshots.count) { _, _ in
-            if !isRangeAvailable(selectedRange) {
-                selectedRange = bestAvailableRange
-            }
-        }
-        .onChange(of: hideBalances) { _, _ in
-            selectedDate = nil
-        }
-    }
-
-    private var rangeSelector: some View {
-        HStack(spacing: 8) {
-            ForEach(InvestmentChartRange.allCases) { range in
-                Button {
-                    guard isRangeAvailable(range) else { return }
-                    selectedRange = range
-                    selectedDate = nil
-                } label: {
-                    Text(range.title)
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(selectedRange == range ? .white : (isRangeAvailable(range) ? .secondary : .secondary.opacity(0.6)))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(
-                            selectedRange == range
-                                ? Color.black
-                                : (isRangeAvailable(range) ? Color.gray.opacity(0.14) : Color.gray.opacity(0.22))
-                        )
-                        .clipShape(Capsule())
-                }
-                .buttonStyle(.plain)
-                .disabled(!isRangeAvailable(range))
-                .opacity(isRangeAvailable(range) ? 1 : 0.55)
-            }
+        .onChange(of: selectionResetID) { _, _ in
+            setSelectedDate(nil)
         }
     }
 
@@ -1173,17 +1170,122 @@ private struct InvestmentHistoryChartView: View {
         }
     }
 
-    private func isRangeAvailable(_ range: InvestmentChartRange) -> Bool {
-        guard range != .all else { return true }
-        guard let latestDate = snapshots.last?.snapshotDate else { return false }
-        guard let firstDate = snapshots.first?.snapshotDate else { return false }
-        guard let startDate = range.startDate(relativeTo: latestDate) else { return false }
-        return firstDate <= startDate
+    private static func chartXDomain(for snapshots: [InvestmentSnapshot]) -> ClosedRange<Date> {
+        guard let first = snapshots.first?.snapshotDate,
+              let last = snapshots.last?.snapshotDate else {
+            let now = Date()
+            return now...now
+        }
+
+        if first == last {
+            let calendar = Calendar.current
+            let start = calendar.date(byAdding: .day, value: -3, to: first) ?? first
+            let end = calendar.date(byAdding: .day, value: 3, to: first) ?? first
+            return start...end
+        }
+
+        return first...last
     }
 
-    private func updateSelection(at location: CGPoint, proxy: ChartProxy, geometry: GeometryProxy) {
+    private static func chartYDomain(for snapshots: [InvestmentSnapshot]) -> ClosedRange<Double> {
+        guard let firstSnapshot = snapshots.first else { return 0...1 }
+
+        var minValue = min(firstSnapshot.investedAmount.asDouble, firstSnapshot.marketValue.asDouble)
+        var maxValue = max(firstSnapshot.investedAmount.asDouble, firstSnapshot.marketValue.asDouble)
+
+        for snapshot in snapshots.dropFirst() {
+            minValue = min(minValue, snapshot.investedAmount.asDouble, snapshot.marketValue.asDouble)
+            maxValue = max(maxValue, snapshot.investedAmount.asDouble, snapshot.marketValue.asDouble)
+        }
+
+        let span = maxValue - minValue
+        let minPadding = max(abs(maxValue) * 0.05, 1)
+        let padding = max(span * 0.12, minPadding)
+        let lower = max(0, minValue - padding)
+        let upper = maxValue + padding
+
+        if lower == upper {
+            return max(0, lower - 1)...(upper + 1)
+        }
+
+        return lower...upper
+    }
+
+    private static func visualSnapshots(for snapshots: [InvestmentSnapshot]) -> [InvestmentSnapshot] {
+        let maximumPointCount = 512
+        guard snapshots.count > maximumPointCount else { return snapshots }
+
+        let bucketCount = max(maximumPointCount / 4, 1)
+        let bucketSize = Int(ceil(Double(snapshots.count) / Double(bucketCount)))
+        var selectedIndices = Set<Int>()
+
+        for bucket in 0..<bucketCount {
+            let start = bucket * bucketSize
+            guard start < snapshots.count else { break }
+            let end = min(start + bucketSize, snapshots.count)
+            let indices = start..<end
+            selectedIndices.insert(start)
+            selectedIndices.insert(end - 1)
+            selectedIndices.insert(indices.min { Self.investedValue($0, snapshots) < Self.investedValue($1, snapshots) } ?? start)
+            selectedIndices.insert(indices.max { Self.investedValue($0, snapshots) < Self.investedValue($1, snapshots) } ?? start)
+            selectedIndices.insert(indices.min { Self.marketValue($0, snapshots) < Self.marketValue($1, snapshots) } ?? start)
+            selectedIndices.insert(indices.max { Self.marketValue($0, snapshots) < Self.marketValue($1, snapshots) } ?? start)
+        }
+
+        return selectedIndices.sorted().map { snapshots[$0] }
+    }
+
+    private static func investedValue(_ index: Int, _ snapshots: [InvestmentSnapshot]) -> Double {
+        (snapshots[index].investedAmount as NSDecimalNumber).doubleValue
+    }
+
+    private static func marketValue(_ index: Int, _ snapshots: [InvestmentSnapshot]) -> Double {
+        (snapshots[index].marketValue as NSDecimalNumber).doubleValue
+    }
+
+    private func highlightedSnapshot(in snapshots: [InvestmentSnapshot]) -> InvestmentSnapshot? {
+        guard let selectedDate else { return snapshots.last }
+        return nearestSnapshot(to: selectedDate, in: snapshots) ?? snapshots.last
+    }
+
+    private func nearestSnapshot(to date: Date, in snapshots: [InvestmentSnapshot]) -> InvestmentSnapshot? {
+        guard !snapshots.isEmpty else { return nil }
+
+        var low = 0
+        var high = snapshots.count
+
+        while low < high {
+            let middle = (low + high) / 2
+            if snapshots[middle].snapshotDate < date {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+
+        if low == 0 {
+            return snapshots[0]
+        }
+
+        if low == snapshots.count {
+            return snapshots[snapshots.count - 1]
+        }
+
+        let previous = snapshots[low - 1]
+        let next = snapshots[low]
+        let previousDistance = date.timeIntervalSince(previous.snapshotDate)
+        let nextDistance = next.snapshotDate.timeIntervalSince(date)
+        return previousDistance <= nextDistance ? previous : next
+    }
+
+    private func updateSelection(
+        at location: CGPoint,
+        proxy: ChartProxy,
+        geometry: GeometryProxy,
+        snapshots: [InvestmentSnapshot]
+    ) {
         guard let plotFrame = proxy.plotFrame else {
-            selectedDate = nil
+            setSelectedDate(nil)
             return
         }
 
@@ -1191,15 +1293,21 @@ private struct InvestmentHistoryChartView: View {
         let relativeX = location.x - frame.origin.x
 
         guard relativeX >= 0, relativeX <= frame.size.width else {
-            selectedDate = nil
+            setSelectedDate(nil)
             return
         }
 
-        guard let date: Date = proxy.value(atX: relativeX) else {
-            selectedDate = nil
+        guard let date: Date = proxy.value(atX: relativeX),
+              let nearestSnapshot = nearestSnapshot(to: date, in: snapshots) else {
+            setSelectedDate(nil)
             return
         }
 
+        setSelectedDate(nearestSnapshot.snapshotDate)
+    }
+
+    private func setSelectedDate(_ date: Date?) {
+        guard selectedDate != date else { return }
         selectedDate = date
     }
 }

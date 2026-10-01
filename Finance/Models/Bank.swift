@@ -60,7 +60,7 @@ final class Bank {
 
 // MARK: - Codable DTO para Export/Import JSON
 
-struct BankDTO: Codable {
+nonisolated struct BankDTO: Codable, Sendable {
     let id: UUID
     let name: String
     let icon: String

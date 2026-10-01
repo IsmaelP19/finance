@@ -12,21 +12,32 @@ struct BalanceByBankBarChart: View {
     let data: [BankBalanceDatum]
     let currencyCode: String
 
-    private var sortedData: [BankBalanceDatum] {
-        data.sorted { abs($0.amountDouble) > abs($1.amountDouble) }
+    private struct PreparedData {
+        let sorted: [BankBalanceDatum]
+        let maxMagnitude: Double
+        let hasNegatives: Bool
     }
 
-    private var maxMagnitude: Double {
-        data.map { abs($0.amountDouble) }.max() ?? 0
-    }
+    private func makePreparedData() -> PreparedData {
+        var maxMagnitude = 0.0
+        var hasNegatives = false
+        for datum in data {
+            maxMagnitude = max(maxMagnitude, abs(datum.amountDouble))
+            hasNegatives = hasNegatives || datum.amountDouble < 0
+        }
 
-    private var hasNegatives: Bool {
-        data.contains { $0.amountDouble < 0 }
+        return PreparedData(
+            sorted: data.sorted { abs($0.amountDouble) > abs($1.amountDouble) },
+            maxMagnitude: maxMagnitude,
+            hasNegatives: hasNegatives
+        )
     }
 
     var body: some View {
+        let prepared = makePreparedData()
+
         VStack(alignment: .leading, spacing: 16) {
-            chartHeader
+            chartHeader(hasNegatives: prepared.hasNegatives)
 
             if data.isEmpty {
                 FinanceEmptyStateContent(
@@ -37,12 +48,12 @@ struct BalanceByBankBarChart: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 18)
             } else {
-                VStack(spacing: 10) {
-                    ForEach(Array(sortedData.enumerated()), id: \.element.id) { index, item in
+                LazyVStack(spacing: 10) {
+                    ForEach(Array(prepared.sorted.enumerated()), id: \.element.id) { index, item in
                         BankBalanceRow(
                             item: item,
                             currencyCode: currencyCode,
-                            maxMagnitude: maxMagnitude,
+                            maxMagnitude: prepared.maxMagnitude,
                             rank: index + 1
                         )
                     }
@@ -57,7 +68,7 @@ struct BalanceByBankBarChart: View {
         )
     }
 
-    private var chartHeader: some View {
+    private func chartHeader(hasNegatives: Bool) -> some View {
         HStack(alignment: .top, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Label("Saldo por banco", systemImage: "building.columns.fill")

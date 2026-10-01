@@ -76,7 +76,7 @@ struct PendingReimbursementsListView: View {
 
     @State private var selectedMovement: PendingReimbursementSelection?
 
-    private var entries: [(movement: Movement, pendingAmount: Decimal)] {
+    private func makeEntries() -> [(movement: Movement, pendingAmount: Decimal)] {
         movements
             .map { movement in
                 (
@@ -96,11 +96,10 @@ struct PendingReimbursementsListView: View {
             }
     }
 
-    private var totalPendingAmount: Decimal {
-        entries.reduce(Decimal(0)) { $0 + $1.pendingAmount }
-    }
-
     var body: some View {
+        let entries = makeEntries()
+        let totalPendingAmount = entries.reduce(Decimal(0)) { $0 + $1.pendingAmount }
+
         NavigationStack {
             List {
                 if entries.isEmpty {

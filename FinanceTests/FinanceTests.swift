@@ -13,6 +13,175 @@ import SwiftData
 @MainActor
 struct FinanceTests {
 
+    @Test func dailySnapshotsPrefersMostRecentlyUpdatedMeasurement() async throws {
+        let day = date(year: 2026, month: 8, day: 1)
+        let firstMeasurement = InvestmentSnapshot(
+            snapshotDate: day,
+            investedAmount: 500,
+            marketValue: 500
+        )
+        firstMeasurement.createdAt = day.addingTimeInterval(2 * 60 * 60)
+        firstMeasurement.updatedAt = day.addingTimeInterval(4 * 60 * 60)
+
+        let secondMeasurement = InvestmentSnapshot(
+            snapshotDate: day.addingTimeInterval(60 * 60),
+            investedAmount: 300,
+            marketValue: 300
+        )
+        secondMeasurement.createdAt = day.addingTimeInterval(3 * 60 * 60)
+        secondMeasurement.updatedAt = day.addingTimeInterval(3 * 60 * 60)
+
+        let latest = InvestmentSnapshot.latestSnapshot(
+            on: day,
+            from: [secondMeasurement, firstMeasurement],
+            calendar: testCalendar
+        )
+
+        #expect(latest?.id == firstMeasurement.id)
+    }
+
+    @Test func maximumReturnSnapshotUsesLastMeasurementAndIgnoresInvalidInvestment() async throws {
+        let account = BankAccount(name: "Inversión", accountType: .investment, balance: 0)
+        let firstDay = date(year: 2026, month: 8, day: 1)
+        let secondDay = date(year: 2026, month: 8, day: 2)
+
+        let initial = InvestmentSnapshot(
+            snapshotDate: firstDay,
+            investedAmount: 100,
+            marketValue: 110,
+            account: account
+        )
+        initial.createdAt = firstDay
+        initial.updatedAt = firstDay
+
+        let replacement = InvestmentSnapshot(
+            snapshotDate: firstDay.addingTimeInterval(60 * 60),
+            investedAmount: 200,
+            marketValue: 250,
+            account: account
+        )
+        replacement.createdAt = firstDay.addingTimeInterval(60 * 60)
+        replacement.updatedAt = firstDay.addingTimeInterval(60 * 60)
+
+        let invalid = InvestmentSnapshot(
+            snapshotDate: secondDay,
+            investedAmount: 0,
+            marketValue: 1_000,
+            account: account
+        )
+        invalid.createdAt = secondDay
+        invalid.updatedAt = secondDay
+
+        let maximum = InvestmentSnapshot.maximumReturnSnapshot(
+            from: [initial, replacement, invalid],
+            calendar: testCalendar
+        )
+
+        #expect(maximum?.snapshot.id == replacement.id)
+        #expect(maximum?.percentage == 25)
+    }
+
+    @Test func aggregatedDailyTotalsCarryEachAccountAndRespectPeriodPoints() async throws {
+        let firstAccount = BankAccount(name: "Primera", accountType: .investment, balance: 0)
+        let secondAccount = BankAccount(name: "Segunda", accountType: .investment, balance: 0)
+        let firstDay = date(year: 2026, month: 8, day: 1)
+        let secondDay = date(year: 2026, month: 8, day: 2)
+
+        let firstAccountInitial = InvestmentSnapshot(
+            snapshotDate: firstDay,
+            investedAmount: 100,
+            marketValue: 120,
+            account: firstAccount
+        )
+        firstAccountInitial.createdAt = firstDay
+        firstAccountInitial.updatedAt = firstDay
+
+        let firstAccountReplacement = InvestmentSnapshot(
+            snapshotDate: firstDay.addingTimeInterval(60 * 60),
+            investedAmount: 80,
+            marketValue: 160,
+            account: firstAccount
+        )
+        firstAccountReplacement.createdAt = firstDay.addingTimeInterval(60 * 60)
+        firstAccountReplacement.updatedAt = firstDay.addingTimeInterval(60 * 60)
+
+        let secondAccountInitial = InvestmentSnapshot(
+            snapshotDate: firstDay,
+            investedAmount: 100,
+            marketValue: 100,
+            account: secondAccount
+        )
+        secondAccountInitial.createdAt = firstDay
+        secondAccountInitial.updatedAt = firstDay
+
+        let secondAccountUpdate = InvestmentSnapshot(
+            snapshotDate: secondDay,
+            investedAmount: 120,
+            marketValue: 180,
+            account: secondAccount
+        )
+        secondAccountUpdate.createdAt = secondDay
+        secondAccountUpdate.updatedAt = secondDay
+
+        let totals = InvestmentSnapshot.aggregatedDailyTotals(
+            from: [
+                firstAccountInitial,
+                firstAccountReplacement,
+                secondAccountInitial,
+                secondAccountUpdate
+            ],
+            calendar: testCalendar
+        )
+
+        #expect(totals.map(\.date) == [firstDay, secondDay])
+        #expect(totals.map(\.invested) == [180, 200])
+        #expect(totals.map(\.market) == [260, 340])
+        #expect(InvestmentDailyTotal.maximumReturnPercent(in: totals)?.value == 70)
+        #expect(InvestmentDailyTotal.maximumReturnPercent(in: totals)?.date == secondDay)
+        #expect(InvestmentDailyTotal.maximumReturnPercent(in: totals)?.monetaryValue == 140)
+
+        let selectedPeriod = DateInterval(start: secondDay, end: secondDay.addingTimeInterval(24 * 60 * 60))
+        let selectedTotals = totals.filter { selectedPeriod.contains($0.date) }
+        #expect(selectedTotals.count == 1)
+        #expect(selectedTotals.last?.market == 340)
+    }
+
+    @Test func duplicatedMovementCreatesNewEntryWithoutHistoricalLinks() async throws {
+        let account = makeAccount(createdAt: date(year: 2026, month: 5, day: 1))
+        let category = MovementCategory(name: "Comida", icon: .forkKnife)
+        let source = Movement(
+            concept: "Compra compartida",
+            amount: 80,
+            type: .expense,
+            occurredAt: date(year: 2026, month: 5, day: 4),
+            account: account,
+            category: category,
+            notes: "Nota original",
+            resultingBalance: 920,
+            recurringRuleId: UUID(),
+            recurringScheduledAt: date(year: 2026, month: 5, day: 4),
+            personalAmount: 40,
+            reimbursementForId: UUID()
+        )
+        let duplicateDate = date(year: 2026, month: 7, day: 28)
+
+        let duplicate = source.duplicatedForNewEntry(on: duplicateDate)
+
+        #expect(duplicate.id != source.id)
+        #expect(duplicate.concept == source.concept)
+        #expect(duplicate.amount == source.amount)
+        #expect(duplicate.type == source.type)
+        #expect(duplicate.occurredAt == duplicateDate)
+        #expect(duplicate.account?.id == account.id)
+        #expect(duplicate.category?.id == category.id)
+        #expect(duplicate.notes == source.notes)
+        #expect(duplicate.personalAmount == source.personalAmount)
+        #expect(duplicate.resultingBalance == nil)
+        #expect(duplicate.recurringRuleId == nil)
+        #expect(duplicate.recurringScheduledAt == nil)
+        #expect(duplicate.reimbursementForId == nil)
+    }
+
     @Test func activeAccountIsVisibleAfterCreation() async throws {
         let account = makeAccount(createdAt: date(year: 2026, month: 5, day: 1))
 
@@ -169,6 +338,216 @@ struct FinanceTests {
 
         #expect(!pending.contains { testCalendar.isDate($0.dueDate, inSameDayAs: skippedDate) })
         #expect(pending.contains { testCalendar.isDate($0.dueDate, inSameDayAs: date(year: 2026, month: 6, day: 5)) })
+    }
+
+    @Test func skippedRecurringOccurrencesAreSortedDescendingWithStableIdentity() async throws {
+        let firstRule = RecurringMovement(
+            concept: "Primera factura",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: date(year: 2026, month: 5, day: 5),
+            skippedOccurrenceDates: [
+                date(year: 2026, month: 5, day: 5),
+                date(year: 2026, month: 7, day: 5)
+            ]
+        )
+        let secondRule = RecurringMovement(
+            concept: "Segunda factura",
+            amount: 25,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: date(year: 2026, month: 5, day: 5),
+            skippedOccurrenceDates: [date(year: 2026, month: 6, day: 5)]
+        )
+
+        let occurrences = RecurringMovementService.skippedOccurrences(
+            for: [firstRule, secondRule],
+            calendar: testCalendar
+        )
+
+        #expect(occurrences.map(\.dueDate) == [
+            date(year: 2026, month: 7, day: 5),
+            date(year: 2026, month: 6, day: 5),
+            date(year: 2026, month: 5, day: 5)
+        ])
+        #expect(occurrences.map(\.id) == [
+            "\(firstRule.id.uuidString)-\(Int(date(year: 2026, month: 7, day: 5).timeIntervalSince1970))",
+            "\(secondRule.id.uuidString)-\(Int(date(year: 2026, month: 6, day: 5).timeIntervalSince1970))",
+            "\(firstRule.id.uuidString)-\(Int(date(year: 2026, month: 5, day: 5).timeIntervalSince1970))"
+        ])
+    }
+
+    @Test func restoringSkippedRecurringOccurrenceRemovesOnlyThatDate() async throws {
+        let schema = Schema([
+            Bank.self,
+            BankAccount.self,
+            MovementCategory.self,
+            Movement.self,
+            InvestmentSnapshot.self,
+            RecurringMovement.self,
+            Budget.self,
+            BudgetItem.self
+        ])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let skippedDate = date(year: 2026, month: 5, day: 5)
+        let otherSkippedDate = date(year: 2026, month: 6, day: 5)
+        let nextDate = date(year: 2026, month: 7, day: 5)
+        let rule = RecurringMovement(
+            concept: "Variable bill",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: skippedDate,
+            skippedOccurrenceDates: [skippedDate, otherSkippedDate]
+        )
+        rule.updatedAt = date(year: 2026, month: 1, day: 1)
+        context.insert(rule)
+        try context.save()
+        let initialUpdatedAt = rule.updatedAt
+
+        try RecurringMovementService.restoreSkippedOccurrence(
+            rule: rule,
+            dueDate: skippedDate,
+            in: context,
+            calendar: testCalendar
+        )
+
+        #expect(rule.skippedOccurrenceDates.count == 1)
+        #expect(rule.skippedOccurrenceDates.contains { testCalendar.isDate($0, inSameDayAs: otherSkippedDate) })
+        #expect(rule.updatedAt > initialUpdatedAt)
+        let restoredRule = try #require(
+            context.fetch(FetchDescriptor<RecurringMovement>()).first { $0.id == rule.id }
+        )
+        #expect(restoredRule.skippedOccurrenceDates.count == 1)
+        #expect(restoredRule.skippedOccurrenceDates.contains { testCalendar.isDate($0, inSameDayAs: otherSkippedDate) })
+
+        let dueDates = RecurringMovementService.dueDates(
+            of: restoredRule,
+            in: DateInterval(
+                start: skippedDate,
+                end: date(year: 2026, month: 8, day: 1)
+            ),
+            calendar: testCalendar
+        )
+        #expect(dueDates.contains(skippedDate))
+        #expect(dueDates.contains(nextDate))
+    }
+
+    @Test func restoringNonSkippedRecurringOccurrenceThrowsLocalizedError() async throws {
+        let schema = Schema([RecurringMovement.self])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let dueDate = date(year: 2026, month: 5, day: 5)
+        let rule = RecurringMovement(
+            concept: "Variable bill",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: dueDate
+        )
+        context.insert(rule)
+        try context.save()
+
+        do {
+            try RecurringMovementService.restoreSkippedOccurrence(
+                rule: rule,
+                dueDate: dueDate,
+                in: context,
+                calendar: testCalendar
+            )
+            #expect(Bool(false), "Una ocurrencia no omitida debe rechazarse.")
+        } catch let error as RecurringMovementServiceError {
+            #expect(error.localizedDescription == "Esta ocurrencia no está omitida.")
+        }
+    }
+
+    @Test func pausingAndResumingRecurringRuleUpdatesAndPersistsState() async throws {
+        let schema = Schema([
+            Bank.self,
+            BankAccount.self,
+            MovementCategory.self,
+            Movement.self,
+            InvestmentSnapshot.self,
+            RecurringMovement.self,
+            Budget.self,
+            BudgetItem.self
+        ])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        let rule = RecurringMovement(
+            concept: "Variable bill",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: date(year: 2026, month: 5, day: 5)
+        )
+        rule.updatedAt = date(year: 2026, month: 1, day: 1)
+        context.insert(rule)
+        try context.save()
+        let initialUpdatedAt = rule.updatedAt
+
+        try RecurringMovementService.pauseRecurrence(rule, in: context)
+
+        #expect(!rule.isActive)
+        #expect(rule.endDate == nil)
+        #expect(rule.updatedAt > initialUpdatedAt)
+        let pausedUpdatedAt = rule.updatedAt
+
+        try RecurringMovementService.resumeRecurrence(
+            rule,
+            in: context,
+            now: date(year: 2026, month: 7, day: 20),
+            calendar: testCalendar
+        )
+
+        #expect(rule.isActive)
+        #expect(rule.endDate == nil)
+        #expect(rule.startDate == date(year: 2026, month: 8, day: 5))
+        #expect(rule.updatedAt > pausedUpdatedAt)
+
+        let resumedDates = RecurringMovementService.dueDates(
+            of: rule,
+            in: DateInterval(
+                start: date(year: 2026, month: 7, day: 20),
+                end: date(year: 2026, month: 10, day: 1)
+            ),
+            calendar: testCalendar
+        )
+        #expect(resumedDates.first == date(year: 2026, month: 8, day: 5))
+    }
+
+    @Test func pausedRecurringRuleDoesNotProducePendingMovements() async throws {
+        let account = makeAccount(createdAt: date(year: 2026, month: 5, day: 1))
+        let rule = RecurringMovement(
+            concept: "Variable bill",
+            amount: 40,
+            type: .expense,
+            dayOfMonth: 5,
+            startDate: date(year: 2026, month: 5, day: 5),
+            account: account,
+            isActive: false
+        )
+
+        let pending = RecurringMovementService.pendingMovements(
+            for: [rule],
+            confirmedMovements: [],
+            now: date(year: 2026, month: 5, day: 1),
+            horizonDays: 70,
+            calendar: testCalendar
+        )
+
+        #expect(pending.isEmpty)
     }
 
     @Test func recurringDTOBackupRoundTripPreservesSkippedOccurrences() async throws {

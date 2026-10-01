@@ -11,6 +11,189 @@ import SwiftData
 /// Servicio para exportar e importar datos de la aplicación en formato JSON.
 /// Los datos nunca se envían a ningún servidor. El usuario controla manualmente
 /// cuándo y dónde se exportan/importan.
+private extension BankDTO {
+    nonisolated init(id: UUID, name: String, icon: String, color: String, createdAt: Date) {
+        self.id = id
+        self.name = name
+        self.icon = icon
+        self.color = color
+        self.createdAt = createdAt
+    }
+}
+
+private extension BankAccountDTO {
+    nonisolated init(
+        id: UUID,
+        name: String,
+        bankId: UUID?,
+        accountType: String,
+        balance: Decimal,
+        currency: String,
+        notes: String,
+        investedAmount: Decimal?,
+        marketValue: Decimal?,
+        marketValueUpdatedAt: Date?,
+        isArchived: Bool,
+        archivedAt: Date?,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.name = name
+        self.bankId = bankId
+        self.accountType = accountType
+        self.balance = balance
+        self.currency = currency
+        self.notes = notes
+        self.investedAmount = investedAmount
+        self.marketValue = marketValue
+        self.marketValueUpdatedAt = marketValueUpdatedAt
+        self.isArchived = isArchived
+        self.archivedAt = archivedAt
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+private extension MovementCategoryDTO {
+    nonisolated init(id: UUID, name: String, icon: String, color: String, createdAt: Date) {
+        self.id = id
+        self.name = name
+        self.icon = icon
+        self.color = color
+        self.createdAt = createdAt
+    }
+}
+
+private extension MovementDTO {
+    nonisolated init(
+        id: UUID,
+        concept: String,
+        amount: Decimal,
+        type: String,
+        occurredAt: Date,
+        notes: String,
+        resultingBalance: Decimal?,
+        recurringRuleId: UUID?,
+        recurringScheduledAt: Date?,
+        personalAmount: Decimal?,
+        reimbursementForId: UUID?,
+        createdAt: Date,
+        updatedAt: Date,
+        accountId: UUID?,
+        destinationAccountId: UUID?,
+        categoryId: UUID?
+    ) {
+        self.id = id
+        self.concept = concept
+        self.amount = amount
+        self.type = type
+        self.occurredAt = occurredAt
+        self.notes = notes
+        self.resultingBalance = resultingBalance
+        self.recurringRuleId = recurringRuleId
+        self.recurringScheduledAt = recurringScheduledAt
+        self.personalAmount = personalAmount
+        self.reimbursementForId = reimbursementForId
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.accountId = accountId
+        self.destinationAccountId = destinationAccountId
+        self.categoryId = categoryId
+    }
+}
+
+private extension InvestmentSnapshotDTO {
+    nonisolated init(
+        id: UUID,
+        snapshotDate: Date,
+        investedAmount: Decimal,
+        marketValue: Decimal,
+        createdAt: Date,
+        updatedAt: Date,
+        accountId: UUID?
+    ) {
+        self.id = id
+        self.snapshotDate = snapshotDate
+        self.investedAmount = investedAmount
+        self.marketValue = marketValue
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.accountId = accountId
+    }
+}
+
+private extension RecurringMovementDTO {
+    nonisolated init(
+        id: UUID,
+        concept: String,
+        amount: Decimal,
+        type: String,
+        frequency: String,
+        dayOfMonth: Int,
+        startDate: Date,
+        endDate: Date?,
+        notes: String,
+        isActive: Bool,
+        skippedOccurrenceDates: [Date],
+        createdAt: Date,
+        updatedAt: Date,
+        accountId: UUID?,
+        categoryId: UUID?
+    ) {
+        self.id = id
+        self.concept = concept
+        self.amount = amount
+        self.type = type
+        self.frequency = frequency
+        self.dayOfMonth = dayOfMonth
+        self.startDate = startDate
+        self.endDate = endDate
+        self.notes = notes
+        self.isActive = isActive
+        self.skippedOccurrenceDates = skippedOccurrenceDates
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.accountId = accountId
+        self.categoryId = categoryId
+    }
+}
+
+private extension BudgetItemDTO {
+    nonisolated init(id: UUID, allocatedAmount: Decimal, createdAt: Date, categoryId: UUID?) {
+        self.id = id
+        self.allocatedAmount = allocatedAmount
+        self.createdAt = createdAt
+        self.categoryId = categoryId
+    }
+}
+
+private extension BudgetDTO {
+    nonisolated init(
+        id: UUID,
+        totalAmount: Decimal,
+        isActive: Bool,
+        notifyAt80Percent: Bool,
+        notifyAt100Percent: Bool,
+        createdAt: Date,
+        updatedAt: Date,
+        items: [BudgetItemDTO]
+    ) {
+        self.id = id
+        self.totalAmount = totalAmount
+        self.isActive = isActive
+        self.notifyAt80Percent = notifyAt80Percent
+        self.notifyAt100Percent = notifyAt100Percent
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.items = items
+    }
+}
+
+private nonisolated enum ExportFileSerializationLock {
+    static let value = NSLock()
+}
+
 enum DataExportService {
     enum ImportError: LocalizedError {
         case duplicateIdentifiers(String)
@@ -31,7 +214,7 @@ enum DataExportService {
 
     /// Estructura raíz del archivo JSON exportado.
     /// Incluye tanto bancos como cuentas para una exportación completa.
-    private struct ExportData: Codable {
+    private nonisolated struct ExportData: Codable, Sendable {
         let version: Int
         let exportDate: Date
         let banks: [BankDTO]
@@ -103,12 +286,142 @@ enum DataExportService {
         }
     }
 
-    private struct ExportMetadata: Decodable {
+    private nonisolated struct ExportMetadata: Decodable, Sendable {
         let exportDate: Date
     }
 
+    /// Captura puntual de los modelos necesarios para una operación de datos.
+    /// No se mantiene como estado observable de ninguna vista.
+    struct DataSnapshot {
+        let banks: [Bank]
+        let accounts: [BankAccount]
+        let categories: [MovementCategory]
+        let movements: [Movement]
+        let investmentSnapshots: [InvestmentSnapshot]
+        let recurringMovements: [RecurringMovement]
+        let budgets: [Budget]
+    }
+
+    /// Huella efímera del estado que se leyó antes de una operación asíncrona.
+    /// No se persiste: solo evita aplicar una restauración sobre cambios locales
+    /// que ocurrieron mientras se decodificaba o escribía el backup previo.
+    struct DataRevision: Equatable, Sendable {
+        fileprivate let digest: Int
+    }
+
+    // Estas estructuras solo contienen valores Sendable. La lectura de los
+    // modelos se hace en MainActor y todo el trabajo de conversión/hashing se
+    // puede ejecutar después sin transportar objetos SwiftData entre actores.
+    private struct RawBank: Sendable {
+        let id: UUID
+        let name: String
+        let icon: String
+        let color: String
+        let createdAt: Date
+    }
+
+    private struct RawAccount: Sendable {
+        let id: UUID
+        let name: String
+        let bankId: UUID?
+        let accountType: String
+        let balance: Decimal
+        let currency: String
+        let notes: String
+        let investedAmount: Decimal?
+        let marketValue: Decimal?
+        let marketValueUpdatedAt: Date?
+        let isArchived: Bool
+        let archivedAt: Date?
+        let createdAt: Date
+        let updatedAt: Date
+    }
+
+    private struct RawCategory: Sendable {
+        let id: UUID
+        let name: String
+        let icon: String
+        let color: String
+        let createdAt: Date
+    }
+
+    private struct RawMovement: Sendable {
+        let id: UUID
+        let concept: String
+        let amount: Decimal
+        let type: String
+        let occurredAt: Date
+        let notes: String
+        let resultingBalance: Decimal?
+        let recurringRuleId: UUID?
+        let recurringScheduledAt: Date?
+        let personalAmount: Decimal?
+        let reimbursementForId: UUID?
+        let createdAt: Date
+        let updatedAt: Date
+        let accountId: UUID?
+        let destinationAccountId: UUID?
+        let categoryId: UUID?
+    }
+
+    private struct RawInvestmentSnapshot: Sendable {
+        let id: UUID
+        let snapshotDate: Date
+        let investedAmount: Decimal
+        let marketValue: Decimal
+        let createdAt: Date
+        let updatedAt: Date
+        let accountId: UUID?
+    }
+
+    private struct RawRecurringMovement: Sendable {
+        let id: UUID
+        let concept: String
+        let amount: Decimal
+        let type: String
+        let frequency: String
+        let dayOfMonth: Int
+        let startDate: Date
+        let endDate: Date?
+        let notes: String
+        let isActive: Bool
+        let skippedOccurrenceDatesData: Data
+        let createdAt: Date
+        let updatedAt: Date
+        let accountId: UUID?
+        let categoryId: UUID?
+    }
+
+    private struct RawBudgetItem: Sendable {
+        let id: UUID
+        let allocatedAmount: Decimal
+        let createdAt: Date
+        let categoryId: UUID?
+    }
+
+    private struct RawBudget: Sendable {
+        let id: UUID
+        let totalAmount: Decimal
+        let isActive: Bool
+        let notifyAt80Percent: Bool
+        let notifyAt100Percent: Bool
+        let createdAt: Date
+        let updatedAt: Date
+        let items: [RawBudgetItem]
+    }
+
+    private struct RawExportSnapshot: Sendable {
+        let banks: [RawBank]
+        let accounts: [RawAccount]
+        let categories: [RawCategory]
+        let movements: [RawMovement]
+        let investmentSnapshots: [RawInvestmentSnapshot]
+        let recurringMovements: [RawRecurringMovement]
+        let budgets: [RawBudget]
+    }
+
     /// Nombre del archivo exportado con timestamp.
-    private static var exportFileName: String {
+    private nonisolated static var exportFileName: String {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy-MM-dd_HHmmssSSS"
         let dateString = dateFormatter.string(from: Date())
@@ -131,6 +444,318 @@ enum DataExportService {
 
     // MARK: - Exportar
 
+    @MainActor
+    static func fetchSnapshot(in modelContext: ModelContext) throws -> DataSnapshot {
+        DataSnapshot(
+            banks: try modelContext.fetch(
+                FetchDescriptor<Bank>(sortBy: [SortDescriptor(\Bank.name)])
+            ),
+            accounts: try modelContext.fetch(
+                FetchDescriptor<BankAccount>(sortBy: [SortDescriptor(\BankAccount.name)])
+            ),
+            categories: try modelContext.fetch(
+                FetchDescriptor<MovementCategory>(sortBy: [SortDescriptor(\MovementCategory.name)])
+            ),
+            movements: try modelContext.fetch(
+                FetchDescriptor<Movement>(sortBy: [SortDescriptor(\Movement.occurredAt, order: .reverse)])
+            ),
+            investmentSnapshots: try modelContext.fetch(
+                FetchDescriptor<InvestmentSnapshot>(sortBy: [SortDescriptor(\InvestmentSnapshot.snapshotDate, order: .reverse)])
+            ),
+            recurringMovements: try modelContext.fetch(
+                FetchDescriptor<RecurringMovement>(sortBy: [SortDescriptor(\RecurringMovement.updatedAt, order: .reverse)])
+            ),
+            budgets: try modelContext.fetch(
+                FetchDescriptor<Budget>(sortBy: [SortDescriptor(\Budget.createdAt)])
+            )
+        )
+    }
+
+    @MainActor
+    static func fetchBankAccounts(in modelContext: ModelContext) throws -> [BankAccount] {
+        try modelContext.fetch(
+            FetchDescriptor<BankAccount>(sortBy: [SortDescriptor(\BankAccount.name)])
+        )
+    }
+
+    @MainActor
+    static func fetchMovementCount(in modelContext: ModelContext) throws -> Int {
+        try modelContext.fetchCount(FetchDescriptor<Movement>())
+    }
+
+    @MainActor
+    static func revision(in modelContext: ModelContext) throws -> DataRevision {
+        revision(of: try fetchSnapshot(in: modelContext))
+    }
+
+    /// Variante asíncrona: la lectura de modelos permanece en MainActor, pero
+    /// DTOs, hashing y el resto del cálculo se ejecutan fuera de él.
+    @MainActor
+    static func revisionAsync(in modelContext: ModelContext) async throws -> DataRevision {
+        try await revisionAsync(of: fetchSnapshot(in: modelContext))
+    }
+
+    /// Calcula la huella de forma síncrona para los wrappers existentes.
+    @MainActor
+    static func revision(of snapshot: DataSnapshot) -> DataRevision {
+        makeDataRevision(from: makeRawExportSnapshot(from: snapshot))
+    }
+
+    /// Calcula la huella sin pasar modelos SwiftData a la tarea en segundo plano.
+    @MainActor
+    static func revisionAsync(of snapshot: DataSnapshot) async -> DataRevision {
+        let rawSnapshot = makeRawExportSnapshot(from: snapshot)
+        let task = Task.detached(priority: .utility) {
+            makeDataRevision(from: rawSnapshot)
+        }
+        return await withTaskCancellationHandler(operation: {
+            await task.value
+        }, onCancel: {
+            task.cancel()
+        })
+    }
+
+    @MainActor
+    private static func makeRawExportSnapshot(from snapshot: DataSnapshot) -> RawExportSnapshot {
+        RawExportSnapshot(
+            banks: snapshot.banks.map {
+                RawBank(
+                    id: $0.id,
+                    name: $0.name,
+                    icon: $0.iconRaw,
+                    color: $0.colorRaw,
+                    createdAt: $0.createdAt
+                )
+            },
+            accounts: snapshot.accounts.map {
+                RawAccount(
+                    id: $0.id,
+                    name: $0.name,
+                    bankId: $0.bank?.id,
+                    accountType: $0.accountTypeRaw,
+                    balance: $0.balance,
+                    currency: $0.currency,
+                    notes: $0.notes,
+                    investedAmount: $0.investedAmount,
+                    marketValue: $0.marketValue,
+                    marketValueUpdatedAt: $0.marketValueUpdatedAt,
+                    isArchived: $0.isArchived,
+                    archivedAt: $0.archivedAt,
+                    createdAt: $0.createdAt,
+                    updatedAt: $0.updatedAt
+                )
+            },
+            categories: snapshot.categories.map {
+                RawCategory(
+                    id: $0.id,
+                    name: $0.name,
+                    icon: $0.iconRaw ?? CategoryIcon.tag.rawValue,
+                    color: $0.colorRaw ?? CategoryColor.blue.rawValue,
+                    createdAt: $0.createdAt
+                )
+            },
+            movements: snapshot.movements.map {
+                RawMovement(
+                    id: $0.id,
+                    concept: $0.concept,
+                    amount: $0.amount,
+                    type: $0.typeRaw,
+                    occurredAt: $0.occurredAt,
+                    notes: $0.notes,
+                    resultingBalance: $0.resultingBalance,
+                    recurringRuleId: $0.recurringRuleId,
+                    recurringScheduledAt: $0.recurringScheduledAt,
+                    personalAmount: $0.personalAmount,
+                    reimbursementForId: $0.reimbursementForId,
+                    createdAt: $0.createdAt,
+                    updatedAt: $0.updatedAt,
+                    accountId: $0.account?.id,
+                    destinationAccountId: $0.destinationAccount?.id,
+                    categoryId: $0.category?.id
+                )
+            },
+            investmentSnapshots: snapshot.investmentSnapshots.map {
+                RawInvestmentSnapshot(
+                    id: $0.id,
+                    snapshotDate: $0.snapshotDate,
+                    investedAmount: $0.investedAmount,
+                    marketValue: $0.marketValue,
+                    createdAt: $0.createdAt,
+                    updatedAt: $0.updatedAt,
+                    accountId: $0.account?.id
+                )
+            },
+            recurringMovements: snapshot.recurringMovements.map {
+                RawRecurringMovement(
+                    id: $0.id,
+                    concept: $0.concept,
+                    amount: $0.amount,
+                    type: $0.typeRaw,
+                    frequency: $0.frequencyRaw,
+                    dayOfMonth: $0.dayOfMonth,
+                    startDate: $0.startDate,
+                    endDate: $0.endDate,
+                    notes: $0.notes,
+                    isActive: $0.isActive,
+                    skippedOccurrenceDatesData: $0.skippedOccurrenceDatesData,
+                    createdAt: $0.createdAt,
+                    updatedAt: $0.updatedAt,
+                    accountId: $0.account?.id,
+                    categoryId: $0.category?.id
+                )
+            },
+            budgets: snapshot.budgets.map {
+                RawBudget(
+                    id: $0.id,
+                    totalAmount: $0.totalAmount,
+                    isActive: $0.isActive,
+                    notifyAt80Percent: $0.notifyAt80Percent,
+                    notifyAt100Percent: $0.notifyAt100Percent,
+                    createdAt: $0.createdAt,
+                    updatedAt: $0.updatedAt,
+                    items: $0.items.map {
+                        RawBudgetItem(
+                            id: $0.id,
+                            allocatedAmount: $0.allocatedAmount,
+                            createdAt: $0.createdAt,
+                            categoryId: $0.category?.id
+                        )
+                    }
+                )
+            }
+        )
+    }
+
+    private nonisolated static func makeDataRevision(from raw: RawExportSnapshot) -> DataRevision {
+        var hasher = Hasher()
+
+        func combineCollection<T>(_ name: String, _ values: [T], _ combine: (inout Hasher, T) -> Void) {
+            hasher.combine(name)
+            hasher.combine(values.count)
+            for value in values {
+                hasher.combine(name)
+                combine(&hasher, value)
+            }
+            hasher.combine("end_\(name)")
+        }
+
+        let banks = raw.banks.sorted { $0.id.uuidString < $1.id.uuidString }
+        combineCollection("banks", banks) { hasher, bank in
+            hasher.combine(bank.id)
+            hasher.combine(bank.name)
+            hasher.combine(bank.icon)
+            hasher.combine(bank.color)
+            hasher.combine(bank.createdAt)
+        }
+
+        let accounts = raw.accounts.sorted { $0.id.uuidString < $1.id.uuidString }
+        combineCollection("accounts", accounts) { hasher, account in
+            hasher.combine(account.id)
+            hasher.combine(account.name)
+            hasher.combine(account.bankId)
+            hasher.combine(account.accountType)
+            hasher.combine(account.balance)
+            hasher.combine(account.currency)
+            hasher.combine(account.notes)
+            hasher.combine(account.investedAmount)
+            hasher.combine(account.marketValue)
+            hasher.combine(account.marketValueUpdatedAt)
+            hasher.combine(account.isArchived)
+            hasher.combine(account.archivedAt)
+            hasher.combine(account.createdAt)
+            hasher.combine(account.updatedAt)
+        }
+
+        let categories = raw.categories.sorted { $0.id.uuidString < $1.id.uuidString }
+        combineCollection("categories", categories) { hasher, category in
+            hasher.combine(category.id)
+            hasher.combine(category.name)
+            hasher.combine(category.icon)
+            hasher.combine(category.color)
+            hasher.combine(category.createdAt)
+        }
+
+        let movements = raw.movements.sorted { $0.id.uuidString < $1.id.uuidString }
+        combineCollection("movements", movements) { hasher, movement in
+            hasher.combine(movement.id)
+            hasher.combine(movement.concept)
+            hasher.combine(movement.amount)
+            hasher.combine(movement.type)
+            hasher.combine(movement.occurredAt)
+            hasher.combine(movement.notes)
+            hasher.combine(movement.resultingBalance)
+            hasher.combine(movement.recurringRuleId)
+            hasher.combine(movement.recurringScheduledAt)
+            hasher.combine(movement.personalAmount)
+            hasher.combine(movement.reimbursementForId)
+            hasher.combine(movement.createdAt)
+            hasher.combine(movement.updatedAt)
+            hasher.combine(movement.accountId)
+            hasher.combine(movement.destinationAccountId)
+            hasher.combine(movement.categoryId)
+        }
+
+        let snapshots = raw.investmentSnapshots.sorted { $0.id.uuidString < $1.id.uuidString }
+        combineCollection("investmentSnapshots", snapshots) { hasher, snapshot in
+            hasher.combine(snapshot.id)
+            hasher.combine(snapshot.snapshotDate)
+            hasher.combine(snapshot.investedAmount)
+            hasher.combine(snapshot.marketValue)
+            hasher.combine(snapshot.createdAt)
+            hasher.combine(snapshot.updatedAt)
+            hasher.combine(snapshot.accountId)
+        }
+
+        let recurringMovements = raw.recurringMovements.sorted { $0.id.uuidString < $1.id.uuidString }
+        combineCollection("recurringMovements", recurringMovements) { hasher, recurring in
+            hasher.combine(recurring.id)
+            hasher.combine(recurring.concept)
+            hasher.combine(recurring.amount)
+            hasher.combine(recurring.type)
+            hasher.combine(recurring.frequency)
+            hasher.combine(recurring.dayOfMonth)
+            hasher.combine(recurring.startDate)
+            hasher.combine(recurring.endDate)
+            hasher.combine(recurring.notes)
+            hasher.combine(recurring.isActive)
+            hasher.combine(decodeSkippedOccurrenceDates(from: recurring.skippedOccurrenceDatesData).sorted())
+            hasher.combine(recurring.createdAt)
+            hasher.combine(recurring.updatedAt)
+            hasher.combine(recurring.accountId)
+            hasher.combine(recurring.categoryId)
+        }
+
+        let budgets = raw.budgets.sorted { $0.id.uuidString < $1.id.uuidString }
+        combineCollection("budgets", budgets) { hasher, budget in
+            hasher.combine(budget.id)
+            hasher.combine(budget.totalAmount)
+            hasher.combine(budget.isActive)
+            hasher.combine(budget.notifyAt80Percent)
+            hasher.combine(budget.notifyAt100Percent)
+            hasher.combine(budget.createdAt)
+            hasher.combine(budget.updatedAt)
+
+            let items = budget.items.sorted { $0.id.uuidString < $1.id.uuidString }
+            hasher.combine("budgetItems")
+            hasher.combine(items.count)
+            for item in items {
+                hasher.combine("budgetItem")
+                hasher.combine(item.id)
+                hasher.combine(item.allocatedAmount)
+                hasher.combine(item.createdAt)
+                hasher.combine(item.categoryId)
+            }
+            hasher.combine("end_budgetItems")
+        }
+
+        return DataRevision(digest: hasher.finalize())
+    }
+
+    private nonisolated static func decodeSkippedOccurrenceDates(from data: Data) -> [Date] {
+        guard !data.isEmpty else { return [] }
+        return (try? JSONDecoder().decode([Date].self, from: data)) ?? []
+    }
+
     /// Exporta todos los bancos, cuentas, categorías y movimientos a un archivo JSON temporal.
     @discardableResult
     @MainActor static func exportData(
@@ -143,25 +768,142 @@ enum DataExportService {
         budgets: [Budget],
         compact: Bool = false
     ) throws -> URL {
-        let bankDTOs = banks.map { BankDTO(from: $0) }
-        let accountDTOs = accounts.map { BankAccountDTO(from: $0) }
-        let categoryDTOs = categories.map { MovementCategoryDTO(from: $0) }
-        let movementDTOs = movements.map { MovementDTO(from: $0) }
-        let snapshotDTOs = investmentSnapshots.map { InvestmentSnapshotDTO(from: $0) }
-        let recurringDTOs = recurringMovements.map { RecurringMovementDTO(from: $0) }
-        let budgetDTOs = budgets.map { BudgetDTO(from: $0) }
+        let snapshot = DataSnapshot(
+            banks: banks,
+            accounts: accounts,
+            categories: categories,
+            movements: movements,
+            investmentSnapshots: investmentSnapshots,
+            recurringMovements: recurringMovements,
+            budgets: budgets
+        )
+        let rawSnapshot = makeRawExportSnapshot(from: snapshot)
+        return try writeExportData(makeExportData(from: rawSnapshot), compact: compact)
+    }
 
-        let exportData = ExportData(
+    /// Variante asíncrona compatible con las acciones de UI. La captura de modelos
+    /// ocurre en el actor correcto; el JSON y la escritura temporal se delegan.
+    @MainActor
+    @discardableResult
+    static func exportDataAsync(
+        snapshot: DataSnapshot,
+        compact: Bool = false
+    ) async throws -> URL {
+        let rawSnapshot = makeRawExportSnapshot(from: snapshot)
+        let task = Task.detached(priority: .utility) { () throws -> URL in
+            try Task.checkCancellation()
+            return try writeExportData(makeExportData(from: rawSnapshot), compact: compact)
+        }
+        return try await withTaskCancellationHandler(operation: {
+            try await task.value
+        }, onCancel: {
+            task.cancel()
+        })
+    }
+
+    private nonisolated static func makeExportData(from raw: RawExportSnapshot) -> ExportData {
+        ExportData(
             version: 8,
             exportDate: Date(),
-            banks: bankDTOs,
-            accounts: accountDTOs,
-            categories: categoryDTOs,
-            movements: movementDTOs,
-            investmentSnapshots: snapshotDTOs,
-            recurringMovements: recurringDTOs,
-            budgets: budgetDTOs
+            banks: raw.banks.sorted { $0.id.uuidString < $1.id.uuidString }.map {
+                BankDTO(id: $0.id, name: $0.name, icon: $0.icon, color: $0.color, createdAt: $0.createdAt)
+            },
+            accounts: raw.accounts.sorted { $0.id.uuidString < $1.id.uuidString }.map {
+                BankAccountDTO(
+                    id: $0.id,
+                    name: $0.name,
+                    bankId: $0.bankId,
+                    accountType: $0.accountType,
+                    balance: $0.balance,
+                    currency: $0.currency,
+                    notes: $0.notes,
+                    investedAmount: $0.investedAmount,
+                    marketValue: $0.marketValue,
+                    marketValueUpdatedAt: $0.marketValueUpdatedAt,
+                    isArchived: $0.isArchived,
+                    archivedAt: $0.archivedAt,
+                    createdAt: $0.createdAt,
+                    updatedAt: $0.updatedAt
+                )
+            },
+            categories: raw.categories.sorted { $0.id.uuidString < $1.id.uuidString }.map {
+                MovementCategoryDTO(id: $0.id, name: $0.name, icon: $0.icon, color: $0.color, createdAt: $0.createdAt)
+            },
+            movements: raw.movements.sorted { $0.id.uuidString < $1.id.uuidString }.map {
+                MovementDTO(
+                    id: $0.id,
+                    concept: $0.concept,
+                    amount: $0.amount,
+                    type: $0.type,
+                    occurredAt: $0.occurredAt,
+                    notes: $0.notes,
+                    resultingBalance: $0.resultingBalance,
+                    recurringRuleId: $0.recurringRuleId,
+                    recurringScheduledAt: $0.recurringScheduledAt,
+                    personalAmount: $0.personalAmount,
+                    reimbursementForId: $0.reimbursementForId,
+                    createdAt: $0.createdAt,
+                    updatedAt: $0.updatedAt,
+                    accountId: $0.accountId,
+                    destinationAccountId: $0.destinationAccountId,
+                    categoryId: $0.categoryId
+                )
+            },
+            investmentSnapshots: raw.investmentSnapshots.sorted { $0.id.uuidString < $1.id.uuidString }.map {
+                InvestmentSnapshotDTO(
+                    id: $0.id,
+                    snapshotDate: $0.snapshotDate,
+                    investedAmount: $0.investedAmount,
+                    marketValue: $0.marketValue,
+                    createdAt: $0.createdAt,
+                    updatedAt: $0.updatedAt,
+                    accountId: $0.accountId
+                )
+            },
+            recurringMovements: raw.recurringMovements.sorted { $0.id.uuidString < $1.id.uuidString }.map {
+                RecurringMovementDTO(
+                    id: $0.id,
+                    concept: $0.concept,
+                    amount: $0.amount,
+                    type: $0.type,
+                    frequency: $0.frequency,
+                    dayOfMonth: $0.dayOfMonth,
+                    startDate: $0.startDate,
+                    endDate: $0.endDate,
+                    notes: $0.notes,
+                    isActive: $0.isActive,
+                    skippedOccurrenceDates: decodeSkippedOccurrenceDates(from: $0.skippedOccurrenceDatesData).sorted(),
+                    createdAt: $0.createdAt,
+                    updatedAt: $0.updatedAt,
+                    accountId: $0.accountId,
+                    categoryId: $0.categoryId
+                )
+            },
+            budgets: raw.budgets.sorted { $0.id.uuidString < $1.id.uuidString }.map {
+                BudgetDTO(
+                    id: $0.id,
+                    totalAmount: $0.totalAmount,
+                    isActive: $0.isActive,
+                    notifyAt80Percent: $0.notifyAt80Percent,
+                    notifyAt100Percent: $0.notifyAt100Percent,
+                    createdAt: $0.createdAt,
+                    updatedAt: $0.updatedAt,
+                    items: $0.items.sorted { $0.id.uuidString < $1.id.uuidString }.map {
+                        BudgetItemDTO(
+                            id: $0.id,
+                            allocatedAmount: $0.allocatedAmount,
+                            createdAt: $0.createdAt,
+                            categoryId: $0.categoryId
+                        )
+                    }
+                )
+            }
         )
+    }
+
+    private nonisolated static func writeExportData(_ exportData: ExportData, compact: Bool) throws -> URL {
+        ExportFileSerializationLock.value.lock()
+        defer { ExportFileSerializationLock.value.unlock() }
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = compact ? [.sortedKeys] : [.prettyPrinted, .sortedKeys]
@@ -178,7 +920,7 @@ enum DataExportService {
     }
 
     /// Lee la fecha de exportación incluida dentro del JSON.
-    @MainActor static func readExportDate(from url: URL) -> Date? {
+    nonisolated static func readExportDate(from url: URL) -> Date? {
         guard let data = try? Data(contentsOf: url) else { return nil }
 
         let decoder = JSONDecoder()
@@ -189,10 +931,25 @@ enum DataExportService {
     }
 
     /// Valida la estructura y las referencias del JSON sin crear ni normalizar modelos.
-    @MainActor static func validateExportFile(from url: URL) throws {
+    nonisolated static func validateExportFile(from url: URL) throws {
         let exportData = try decodeExportData(from: url)
         try validateUniqueIdentifiers(in: exportData)
         try validateReferences(in: exportData)
+    }
+
+    /// Variante asíncrona para validar un archivo sin bloquear el actor principal.
+    nonisolated static func validateExportFileAsync(from url: URL) async throws {
+        let task = Task.detached(priority: .utility) {
+            try Task.checkCancellation()
+            let exportData = try decodeExportData(from: url)
+            try validateUniqueIdentifiers(in: exportData)
+            try validateReferences(in: exportData)
+        }
+        try await withTaskCancellationHandler(operation: {
+            try await task.value
+        }, onCancel: {
+            task.cancel()
+        })
     }
 
     // MARK: - Importar
@@ -322,22 +1079,44 @@ enum DataExportService {
         }
     }
 
-    private struct LocalData {
-        let banks: [Bank]
-        let accounts: [BankAccount]
-        let categories: [MovementCategory]
-        let movements: [Movement]
-        let investmentSnapshots: [InvestmentSnapshot]
-        let recurringMovements: [RecurringMovement]
-        let budgets: [Budget]
-    }
+    private typealias LocalData = DataSnapshot
 
     /// Importa bancos, cuentas, categorías y movimientos desde un archivo JSON.
     /// Vincula automáticamente las relaciones por UUID.
     @MainActor static func importData(from url: URL) throws -> ImportResult {
         let exportData = try decodeExportData(from: url)
-        try validateUniqueIdentifiers(in: exportData)
-        try validateReferences(in: exportData)
+        return try makeImportResult(from: exportData)
+    }
+
+    /// Decodifica y valida fuera del actor principal; la creación de modelos y sus
+    /// relaciones se mantiene en `MainActor` para conservar la seguridad de SwiftData.
+    @MainActor
+    static func importDataAsync(from url: URL) async throws -> ImportResult {
+        let task = Task.detached(priority: .utility) { () throws -> ExportData in
+            try Task.checkCancellation()
+            let exportData = try decodeExportData(from: url)
+            try validateUniqueIdentifiers(in: exportData)
+            try validateReferences(in: exportData)
+            return exportData
+        }
+        let exportData = try await withTaskCancellationHandler(operation: {
+            try await task.value
+        }, onCancel: {
+            task.cancel()
+        })
+        try Task.checkCancellation()
+        return try makeImportResult(from: exportData, skipValidation: true)
+    }
+
+    @MainActor
+    private static func makeImportResult(
+        from exportData: ExportData,
+        skipValidation: Bool = false
+    ) throws -> ImportResult {
+        if !skipValidation {
+            try validateUniqueIdentifiers(in: exportData)
+            try validateReferences(in: exportData)
+        }
 
         // Crear bancos y categorías
         let banks = exportData.banks.map { $0.toModel() }
@@ -452,7 +1231,7 @@ enum DataExportService {
         )
     }
 
-    private static func decodeExportData(from url: URL) throws -> ExportData {
+    private nonisolated static func decodeExportData(from url: URL) throws -> ExportData {
         let data = try Data(contentsOf: url)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -608,19 +1387,12 @@ enum DataExportService {
         }
     }
 
+    @MainActor
     private static func fetchLocalData(in modelContext: ModelContext) throws -> LocalData {
-        LocalData(
-            banks: try modelContext.fetch(FetchDescriptor<Bank>()),
-            accounts: try modelContext.fetch(FetchDescriptor<BankAccount>()),
-            categories: try modelContext.fetch(FetchDescriptor<MovementCategory>()),
-            movements: try modelContext.fetch(FetchDescriptor<Movement>()),
-            investmentSnapshots: try modelContext.fetch(FetchDescriptor<InvestmentSnapshot>()),
-            recurringMovements: try modelContext.fetch(FetchDescriptor<RecurringMovement>()),
-            budgets: try modelContext.fetch(FetchDescriptor<Budget>())
-        )
+        try fetchSnapshot(in: modelContext)
     }
 
-    private static func validateUniqueIdentifiers(in exportData: ExportData) throws {
+    private nonisolated static func validateUniqueIdentifiers(in exportData: ExportData) throws {
         try validateUniqueIdentifiers(exportData.banks.map(\.id), entity: "bancos")
         try validateUniqueIdentifiers(exportData.accounts.map(\.id), entity: "cuentas")
         try validateUniqueIdentifiers(exportData.categories.map(\.id), entity: "categorías")
@@ -634,13 +1406,13 @@ enum DataExportService {
         )
     }
 
-    private static func validateUniqueIdentifiers(_ identifiers: [UUID], entity: String) throws {
+    private nonisolated static func validateUniqueIdentifiers(_ identifiers: [UUID], entity: String) throws {
         guard Set(identifiers).count == identifiers.count else {
             throw ImportError.duplicateIdentifiers(entity)
         }
     }
 
-    private static func validateReferences(in exportData: ExportData) throws {
+    private nonisolated static func validateReferences(in exportData: ExportData) throws {
         let bankIDs = Set(exportData.banks.map(\.id))
         let accountIDs = Set(exportData.accounts.map(\.id))
         let categoryIDs = Set(exportData.categories.map(\.id))

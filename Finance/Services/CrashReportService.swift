@@ -14,6 +14,7 @@ struct CrashReport: Identifiable, Equatable {
     let details: String
 }
 
+@MainActor
 final class CrashReportService {
     static let shared = CrashReportService()
 

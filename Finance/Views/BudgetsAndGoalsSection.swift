@@ -161,6 +161,28 @@ struct BudgetsSection: View {
     }
 }
 
+private func currentCategorySpending(
+    movements: [Movement],
+    categoryIDs: Set<UUID>,
+    asOf date: Date = Date(),
+    calendar: Calendar = .current
+) -> [UUID: Decimal] {
+    guard !categoryIDs.isEmpty else { return [:] }
+
+    var totals: [UUID: Decimal] = [:]
+    for movement in movements {
+        guard movement.type == .expense,
+              let categoryID = movement.category?.id,
+              categoryIDs.contains(categoryID),
+              movement.occurredAt <= date,
+              calendar.isDate(movement.occurredAt, equalTo: date, toGranularity: .month) else {
+            continue
+        }
+        totals[categoryID, default: 0] += movement.statsExpenseAmount
+    }
+    return totals
+}
+
 // MARK: - Budget Summary Card (en ChartsView)
 
 private struct BudgetSummaryCard: View {
@@ -171,33 +193,16 @@ private struct BudgetSummaryCard: View {
     let movements: [Movement]
     let currencyCode: String
 
-    private var spent: Decimal {
-        BudgetService.totalSpent(for: budget, movements: movements)
-    }
-
-    private var progress: Double {
-        guard budget.totalAmount > 0 else { return 0 }
-        let p = (spent as NSDecimalNumber).doubleValue /
-                (budget.totalAmount as NSDecimalNumber).doubleValue
-        return min(p, 1)
-    }
-
-    private var progressColor: Color {
-        BudgetColorPalette.progress(for: progress, colorScheme: colorScheme)
-    }
-
-    private var remaining: Decimal { budget.totalAmount - spent }
-
-    private var isAlerting: Bool {
-        BudgetService.isAlerting(budget: budget, movements: movements)
-    }
-
-    private var isOverBudget: Bool {
-        progress >= 1
-    }
-
     var body: some View {
         let forecast = MonthlyBudgetForecast(budget: budget, movements: movements)
+        let spent = forecast.spent
+        let progress: Double = budget.totalAmount > 0
+            ? min((spent as NSDecimalNumber).doubleValue / (budget.totalAmount as NSDecimalNumber).doubleValue, 1)
+            : 0
+        let progressColor = BudgetColorPalette.progress(for: progress, colorScheme: colorScheme)
+        let remaining = budget.totalAmount - spent
+        let isAlerting = budget.isActive && progress >= 0.8
+        let isOverBudget = progress >= 1
         let statusTint = BudgetColorPalette.status(for: forecast.status, colorScheme: colorScheme)
 
         VStack(alignment: .leading, spacing: 16) {
@@ -260,9 +265,9 @@ private struct BudgetSummaryCard: View {
             BudgetProgressBar(progress: progress, tint: progressColor, height: 10)
 
             HStack(spacing: 10) {
-                consumedLabel
+                consumedLabel(progress: progress)
                 Spacer(minLength: 8)
-                remainingLabel
+                remainingLabel(remaining: remaining)
                     .layoutPriority(1)
                 Image(systemName: "chevron.right")
                     .font(.caption2)
@@ -303,7 +308,7 @@ private struct BudgetSummaryCard: View {
         )
     }
 
-    private var consumedLabel: some View {
+    private func consumedLabel(progress: Double) -> some View {
         Text("\(Int(progress * 100)) % consumido")
             .font(.caption.weight(.medium))
             .foregroundStyle(.secondary)
@@ -312,7 +317,7 @@ private struct BudgetSummaryCard: View {
     }
 
     @ViewBuilder
-    private var remainingLabel: some View {
+    private func remainingLabel(remaining: Decimal) -> some View {
         if remaining > 0 {
             Text("Quedan \(remaining.masked(hideBalances, code: currencyCode))")
                 .font(.caption.weight(.medium))
@@ -379,19 +384,6 @@ struct BudgetDetailView: View {
     let movements: [Movement]
     let currencyCode: String
 
-    private var totalSpent: Decimal {
-        BudgetService.totalSpent(for: budget, movements: movements)
-    }
-
-    private var globalProgress: Double {
-        guard budget.totalAmount > 0 else { return 0 }
-        let p = (totalSpent as NSDecimalNumber).doubleValue /
-                (budget.totalAmount as NSDecimalNumber).doubleValue
-        return min(p, 1)
-    }
-
-    private var remaining: Decimal { budget.totalAmount - totalSpent }
-
     private var sortedItems: [BudgetItem] {
         budget.items
             .filter { $0.category != nil }
@@ -399,16 +391,28 @@ struct BudgetDetailView: View {
     }
 
     var body: some View {
+        let forecast = MonthlyBudgetForecast(budget: budget, movements: movements)
+        let totalSpent = forecast.spent
+        let globalProgress: Double = budget.totalAmount > 0
+            ? min((totalSpent as NSDecimalNumber).doubleValue / (budget.totalAmount as NSDecimalNumber).doubleValue, 1)
+            : 0
+        let remaining = budget.totalAmount - totalSpent
+        let items = sortedItems
+        let spentByCategory = currentCategorySpending(
+            movements: movements,
+            categoryIDs: Set(items.compactMap { $0.category?.id })
+        )
+
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    globalCard
+                    globalCard(totalSpent: totalSpent, globalProgress: globalProgress, remaining: remaining)
                     MonthlyBudgetForecastDetailSection(
-                        forecast: MonthlyBudgetForecast(budget: budget, movements: movements),
+                        forecast: forecast,
                         currencyCode: currencyCode,
                         hideBalances: hideBalances
                     )
-                    categoryBreakdown
+                    categoryBreakdown(items: items, spentByCategory: spentByCategory)
                 }
                 .padding()
                 .padding(.bottom, 24)
@@ -431,7 +435,7 @@ struct BudgetDetailView: View {
 
     // MARK: Global card
 
-    private var globalCard: some View {
+    private func globalCard(totalSpent: Decimal, globalProgress: Double, remaining: Decimal) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
@@ -511,20 +515,24 @@ struct BudgetDetailView: View {
     // MARK: Category breakdown
 
     @ViewBuilder
-    private var categoryBreakdown: some View {
+    private func categoryBreakdown(items: [BudgetItem], spentByCategory: [UUID: Decimal]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("Por categoría", systemImage: "list.bullet.rectangle")
                 .font(.headline)
                 .foregroundStyle(.primary)
 
-            if sortedItems.isEmpty {
+            if items.isEmpty {
                 Text("No hay categorías definidas en este presupuesto.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else {
                 VStack(spacing: 10) {
-                    ForEach(sortedItems) { item in
-                        BudgetItemRow(item: item, movements: movements, currencyCode: currencyCode)
+                    ForEach(items) { item in
+                        BudgetItemRow(
+                            item: item,
+                            spent: item.category.map { spentByCategory[$0.id, default: 0] } ?? 0,
+                            currencyCode: currencyCode
+                        )
                     }
                 }
             }
@@ -953,6 +961,14 @@ private struct MonthlyBudgetLargeChart: View {
     let forecast: MonthlyBudgetForecast
     let currencyCode: String
     let hideBalances: Bool
+    private let chartMaxValueDouble: Double
+
+    init(forecast: MonthlyBudgetForecast, currencyCode: String, hideBalances: Bool) {
+        self.forecast = forecast
+        self.currencyCode = currencyCode
+        self.hideBalances = hideBalances
+        self.chartMaxValueDouble = Self.makeChartMaxValueDouble(for: forecast)
+    }
 
     private var statusTint: Color {
         BudgetColorPalette.status(for: forecast.status, colorScheme: colorScheme)
@@ -988,7 +1004,7 @@ private struct MonthlyBudgetLargeChart: View {
         Decimal(chartMaxValueDouble)
     }
 
-    private var chartMaxValueDouble: Double {
+    private static func makeChartMaxValueDouble(for forecast: MonthlyBudgetForecast) -> Double {
         let projectedMax = forecast.projectedPoints
             .filter { !$0.isNaN && $0.isFinite }
             .max() ?? 0
@@ -1089,13 +1105,8 @@ private struct BudgetItemRow: View {
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
 
     let item: BudgetItem
-    let movements: [Movement]
+    let spent: Decimal
     let currencyCode: String
-
-    private var spent: Decimal {
-        guard let cat = item.category else { return 0 }
-        return BudgetService.spentAmount(for: cat, movements: movements)
-    }
 
     private var progress: Double {
         guard item.allocatedAmount > 0 else { return 0 }

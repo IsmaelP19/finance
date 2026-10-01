@@ -115,6 +115,42 @@ struct AddExpenseIntent: AppIntent {
     }
 }
 
+/// Receives the values exposed by a Wallet transaction automation and opens a review draft.
+struct PrepareWalletExpenseIntent: AppIntent {
+    static let title: LocalizedStringResource = "Preparar gasto desde Wallet"
+    static let description = IntentDescription(
+        "Abre Finance con un borrador para revisar el pago, elegir cuenta y categoría y guardarlo manualmente."
+    )
+    static let supportedModes: IntentModes = .foreground(.immediate)
+
+    @Parameter(title: "Importe")
+    var amount: IntentCurrencyAmount?
+
+    @Parameter(title: "Comercio")
+    var merchant: String?
+
+    @Parameter(title: "Tarjeta")
+    var cardName: String?
+
+    @Parameter(title: "Fecha")
+    var transactionDate: Date?
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let draft = WalletExpenseDraft(
+            amount: amount?.amount,
+            currencyCode: amount?.currencyCode,
+            merchant: merchant,
+            cardName: cardName,
+            transactionDate: transactionDate
+        )
+        try WalletExpenseDraftStore.enqueue(draft)
+        DeepLinkRouter.shared.notifyWalletExpenseDraftAvailable()
+
+        return .result(dialog: "Abriendo Finance para revisar el gasto. No se guardará hasta que lo confirmes.")
+    }
+}
+
 /// Shortcuts provider that surfaces the AddExpenseIntent in the Shortcuts app.
 struct FinanceShortcutsProvider: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
@@ -127,6 +163,16 @@ struct FinanceShortcutsProvider: AppShortcutsProvider {
             ],
             shortTitle: "Apuntar gasto",
             systemImageName: "arrow.down.circle.fill"
+        )
+
+        AppShortcut(
+            intent: PrepareWalletExpenseIntent(),
+            phrases: [
+                "Prepara un gasto de Wallet en \(.applicationName)",
+                "Revisa un pago de Wallet en \(.applicationName)"
+            ],
+            shortTitle: "Gasto de Wallet",
+            systemImageName: "wallet.pass.fill"
         )
     }
 }

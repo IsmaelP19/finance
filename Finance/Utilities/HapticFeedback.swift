@@ -5,6 +5,7 @@ import UIKit
 #endif
 
 enum HapticFeedback {
+    @MainActor
     static func success() {
 #if canImport(UIKit)
         let generator = UINotificationFeedbackGenerator()

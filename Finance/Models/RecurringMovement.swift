@@ -107,7 +107,7 @@ final class RecurringMovement {
 
 // MARK: - Codable DTO para Export/Import JSON
 
-struct RecurringMovementDTO: Codable {
+nonisolated struct RecurringMovementDTO: Codable, Sendable {
     let id: UUID
     let concept: String
     let amount: Decimal

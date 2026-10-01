@@ -42,18 +42,21 @@ struct BankAccountEntity: AppEntity {
 
 struct BankAccountEntityQuery: EntityQuery {
     func entities(for identifiers: [UUID]) async throws -> [BankAccountEntity] {
+        guard !identifiers.isEmpty else { return [] }
+
         let container = FinanceModelContainerProvider.shared
         let context = ModelContext(container)
+        let identifierValues = identifiers
 
         let descriptor = FetchDescriptor<BankAccount>(
-            sortBy: [SortDescriptor(\.name)]
+            predicate: #Predicate<BankAccount> { account in
+                identifierValues.contains(account.id) && !account.isArchived
+            },
+            sortBy: [SortDescriptor(\.name), SortDescriptor(\.id)]
         )
         let accounts = try context.fetch(descriptor)
 
-        let identifierSet = Set(identifiers)
-        return accounts
-            .filter { identifierSet.contains($0.id) && $0.isActive }
-            .map { BankAccountEntity(from: $0) }
+        return accounts.map { BankAccountEntity(from: $0) }
     }
 
     func suggestedEntities() async throws -> [BankAccountEntity] {
@@ -61,12 +64,11 @@ struct BankAccountEntityQuery: EntityQuery {
         let context = ModelContext(container)
 
         let descriptor = FetchDescriptor<BankAccount>(
-            sortBy: [SortDescriptor(\.name)]
+            predicate: #Predicate<BankAccount> { !$0.isArchived },
+            sortBy: [SortDescriptor(\.name), SortDescriptor(\.id)]
         )
         let accounts = try context.fetch(descriptor)
 
-        return accounts
-            .filter(\.isActive)
-            .map { BankAccountEntity(from: $0) }
+        return accounts.map { BankAccountEntity(from: $0) }
     }
 }
