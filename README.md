@@ -170,16 +170,17 @@ Proyecto personal en evolucion, enfocado en simplicidad, privacidad y control lo
 
 ## Distribución con SideStore
 
-La fuente de Finance estará en:
+La fuente de Finance está en:
 
 `https://ismaelp19.github.io/finance/source.json`
 
 El repositorio ya es público. GitHub Pages está configurado con **GitHub Actions** y el entorno `github-pages` admite despliegues desde `release/*`.
 
-Para publicar la primera versión:
+La primera versión de `release/1` se creó desde `develop`. Para publicar las siguientes:
 
-1. Incluir en el commit el scheme compartido `Finance.xcodeproj/xcshareddata/xcschemes/Finance.xcscheme`, el workflow `.github/workflows/sidestore.yml` y los scripts de `scripts/`.
-2. Crear una rama `release/X` desde la versión que se quiera distribuir y hacer push. Cada push a cualquier rama `release/*` ejecuta el workflow **Publicar en SideStore**. Esperar a que terminen los jobs `build` y `deploy` antes de compartir la URL de la fuente.
+1. Confirmar y publicar los cambios en `develop`.
+2. Aplicar en `release/1` los commits deseados de `develop` mediante `git cherry-pick` y hacer push de `release/1`.
+3. Esperar a que terminen los jobs `build` y `deploy` del workflow **Publicar en SideStore**. Cada push a una rama `release/*` genera una nueva versión en la fuente.
 
 El workflow archiva Finance para dispositivo sin firma de distribución, incluye `FinanceWidgetExtension.appex` en `Payload/Finance.app`, genera `Finance.ipa`, lo publica como asset de una GitHub Release y actualiza el JSON en GitHub Pages. Guarda también el JSON junto al IPA en la Release para conservar el historial de versiones. Usa `AppVersion.current` como base y asigna al IPA una versión mayor que la última publicada; también actualiza la versión visible de Ajustes dentro de esa compilación. El build cambia con cada nuevo push. Se conserva el bundle ID `com.getincouch.Finance`.
 
