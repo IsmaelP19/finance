@@ -396,7 +396,8 @@ struct RecurringCalendarView: View {
                     DecoratedRecurringCalendarView(
                         selectedDate: $selectedDate,
                         visibleMonthDate: $visibleMonthDate,
-                        decorations: decoratedDates
+                        decorations: decoratedDates,
+                        onUserMonthSettled: setCalendarHeightMonthDate
                     )
                     .frame(height: calendarBlockHeight)
                     .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
@@ -475,7 +476,6 @@ struct RecurringCalendarView: View {
                 invalidateOccurrenceCache()
             }
             .onChange(of: visibleMonthDate) { _, newValue in
-                scheduleCalendarHeightUpdate(for: newValue)
                 if !recurringCalendar.isDate(selectedDate, equalTo: newValue, toGranularity: .month) {
                     selectedDate = newValue
                 }
@@ -1057,6 +1057,7 @@ private struct DecoratedRecurringCalendarView: UIViewRepresentable {
     @Binding var selectedDate: Date
     @Binding var visibleMonthDate: Date
     let decorations: [Date: RecurringCalendarStatus]
+    let onUserMonthSettled: (Date) -> Void
 
     func makeUIView(context: Context) -> UIView {
         let containerView = UIView()
@@ -1109,6 +1110,7 @@ private struct DecoratedRecurringCalendarView: UIViewRepresentable {
         weak var calendarView: UICalendarView?
         var calendar: Calendar = Calendar(identifier: .gregorian)
         var decorationMap: [DateComponents: RecurringCalendarStatus] = [:]
+        private var heightUpdateTask: DispatchWorkItem?
 
         init(parent: DecoratedRecurringCalendarView) {
             self.parent = parent
@@ -1190,6 +1192,35 @@ private struct DecoratedRecurringCalendarView: UIViewRepresentable {
             if parent.visibleMonthDate != normalizedMonthStart {
                 parent.visibleMonthDate = normalizedMonthStart
             }
+            scheduleHeightUpdateWhenIdle()
+        }
+
+        private func scheduleHeightUpdateWhenIdle() {
+            heightUpdateTask?.cancel()
+
+            let task = DispatchWorkItem { [weak self] in
+                guard let self, let calendarView = self.calendarView else { return }
+                guard !self.isCalendarScrolling(in: calendarView) else {
+                    self.scheduleHeightUpdateWhenIdle()
+                    return
+                }
+
+                let visible = calendarView.visibleDateComponents
+                guard let date = self.calendar.date(from: DateComponents(year: visible.year, month: visible.month, day: 1)) else { return }
+                self.heightUpdateTask = nil
+                self.parent.onUserMonthSettled(date)
+            }
+
+            heightUpdateTask = task
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: task)
+        }
+
+        private func isCalendarScrolling(in view: UIView) -> Bool {
+            if let scrollView = view as? UIScrollView,
+               (scrollView.isTracking || scrollView.isDragging || scrollView.isDecelerating) {
+                return true
+            }
+            return view.subviews.contains { isCalendarScrolling(in: $0) }
         }
 
         func calendarView(_ calendarView: UICalendarView, decorationFor dateComponents: DateComponents) -> UICalendarView.Decoration? {
