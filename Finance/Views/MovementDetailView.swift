@@ -292,7 +292,6 @@ struct MovementDetailView: View {
                 .font(.title3)
                 .fontWeight(.semibold)
                 .multilineTextAlignment(.center)
-                .lineLimit(3)
 
             Text(displayAmount.asCurrency(code: currencyCode))
                 .font(.system(size: 44, weight: .bold, design: .rounded))

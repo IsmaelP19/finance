@@ -1765,7 +1765,8 @@ private struct MovementDraftHero: View {
                     TextField("Concepto del movimiento", text: $title, axis: .vertical)
                         .textInputAutocapitalization(.sentences)
                         .font(.title3.weight(.bold))
-                        .lineLimit(1...2)
+                        .lineLimit(1...)
+                        .fixedSize(horizontal: false, vertical: true)
                         .tint(tint)
                         .focused(focusedField, equals: .concept)
                 }
@@ -1885,6 +1886,9 @@ private struct MovementDraftHero: View {
         } else {
             Button {
                 onDismissAmountKeyboard()
+                if focusedField.wrappedValue == .concept {
+                    focusedField.wrappedValue = nil
+                }
                 isShowingTypePicker = true
             } label: {
                 movementTypeChip(type: type, showsChevron: true)

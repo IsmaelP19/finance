@@ -281,7 +281,13 @@ private struct AccountDetailHero: View {
     private var accent: Color { account.bank?.color ?? account.accountType.color }
     private var typeTint: Color { account.accountType.color }
     private var iconName: String { account.bank?.iconName ?? account.accountType.icon }
-    private var balanceText: String { account.balance.masked(hideBalances, code: currencyCode) }
+    private var displayedBalance: Decimal {
+        account.isInvestmentAccount ? account.effectiveMarketValue : account.balance
+    }
+    private var balanceLabel: String {
+        account.isInvestmentAccount ? "Valor de mercado" : "Saldo disponible"
+    }
+    private var balanceText: String { displayedBalance.masked(hideBalances, code: currencyCode) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -321,14 +327,14 @@ private struct AccountDetailHero: View {
             }
 
             VStack(alignment: .leading, spacing: 5) {
-                Text("Saldo disponible")
+                Text(balanceLabel)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
                 Text(balanceText)
                     .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 30 : 38, weight: .bold, design: .rounded))
                     .minimumScaleFactor(0.72)
                     .lineLimit(2)
-                    .foregroundStyle(account.balance.isNegative ? .red : .primary)
+                    .foregroundStyle(displayedBalance.isNegative ? .red : .primary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
@@ -345,7 +351,7 @@ private struct AccountDetailHero: View {
             cornerRadius: FinanceGlassTokens.Radius.hero
         )
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(account.name), \(account.bankDisplayName), \(account.accountType.displayName), saldo \(hideBalances ? "oculto" : balanceText), actualizada \(account.updatedAt.asSpanishDateTime())")
+        .accessibilityLabel("\(account.name), \(account.bankDisplayName), \(account.accountType.displayName), \(balanceLabel.lowercased()) \(hideBalances ? "oculto" : balanceText), actualizada \(account.updatedAt.asSpanishDateTime())")
     }
 }
 
