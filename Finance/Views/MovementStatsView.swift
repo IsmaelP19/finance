@@ -561,6 +561,7 @@ struct MovementStatsView: View {
                 }
                 .padding()
                 .padding(.bottom, 24)
+                .containerRelativeFrame(.horizontal)
             }
             .financeGlassPageBackground()
             .navigationTitle("Estadísticas")

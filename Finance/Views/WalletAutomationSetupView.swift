@@ -18,10 +18,6 @@ struct WalletAutomationSetupView: View {
                 introduction
                 templateImport
                 automationSteps
-                amountExplanation
-                fieldMapping
-                testInstructions
-                shortcutsLink
             }
             .padding(.horizontal, 20)
             .padding(.top, FinanceGlassTokens.Spacing.large)
@@ -46,42 +42,30 @@ struct WalletAutomationSetupView: View {
             }
             .accessibilityAddTraits(.isHeader)
 
-            Text("La plantilla prepara el disparador de Wallet y el importe. Para registrar movimientos, añade después la acción local de Finance y completa sus campos: cada instalación de la app tiene una firma distinta.")
+            Text("Importa la plantilla y completa estos pasos en Atajos.")
                 .font(.body)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(FinanceGlassTokens.Spacing.medium)
-        .financeInsetCard(cornerRadius: FinanceGlassTokens.Radius.card)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var templateImport: some View {
         VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.medium) {
-            VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.xSmall) {
-                Text("1. Añade la plantilla universal")
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Comparte o importa el atajo firmado para cualquiera. Incluye el disparador de Wallet y Texto con el importe; no incluye la acción de Finance.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            sectionHeading("Importa la plantilla")
 
             if let templateURL {
                 ShareLink(
                     item: WalletShortcutTemplate(url: templateURL),
                     preview: SharePreview("Plantilla de pagos con Wallet")
                 ) {
-                    Label("Compartir o importar plantilla", systemImage: "square.and.arrow.up")
+                    Label("Importar plantilla", systemImage: "square.and.arrow.up")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityHint("Abre la hoja de compartir para añadir el atajo de Wallet a Atajos.")
-                Text("Si Atajos no aparece en la hoja, guarda el archivo .shortcut en Archivos y ábrelo desde allí para importarlo en Atajos.")
+                Text("Si no aparece Atajos, guarda el archivo en Archivos y ábrelo desde allí.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             } else {
                 Label {
                     Text("No se encuentra la plantilla de Wallet en esta versión de Finance. Actualiza la app o vuelve a intentarlo más tarde.")
@@ -94,6 +78,7 @@ struct WalletAutomationSetupView: View {
                 .accessibilityElement(children: .combine)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(FinanceGlassTokens.Spacing.medium)
         .financeInsetCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
@@ -104,84 +89,40 @@ struct WalletAutomationSetupView: View {
 
     private var automationSteps: some View {
         VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.medium) {
-            sectionHeading("2. Completa la automatización en Atajos (iOS 27)")
-            WalletSetupStep(number: 1, title: "Abre y edita la plantilla", detail: "En Atajos, abre la plantilla que acabas de añadir y entra en Editar. En Automatización de Wallet, selecciona Al usar una tarjeta y marca las tarjetas que quieras. Puedes reutilizar una automatización para varias tarjetas si todas van a la misma cuenta.")
-            WalletSetupStep(number: 2, title: "Añade la acción de Finance", detail: "Debajo de Texto, busca y añade «Registrar gasto desde Wallet». Esta acción se añade en tu dispositivo porque la plantilla no puede incluir una acción firmada para otra instalación de Finance.")
-            WalletSetupStep(number: 3, title: "Elige cuenta y asigna los campos", detail: "Selecciona la cuenta bancaria. Asigna Importe a la salida de Texto, Comercio y Tarjeta a los datos del disparador de Wallet, Fecha a Fecha actual y Moneda al código configurado en Finance.")
-            WalletSetupStep(number: 4, title: "Activa la automatización", detail: "Guarda el atajo y activa el interruptor «Automatización». En Editar → Información → Privacidad, activa «Permitir ejecutar con el iPhone bloqueado» si quieres que funcione con el móvil bloqueado.")
-        }
-    }
+            sectionHeading("En Atajos")
+            WalletSetupStep(number: 1, title: "Selecciona las tarjetas", detail: "Abre la plantilla en Atajos. En «Al usar», marca las tarjetas Wallet de la misma cuenta.")
+            WalletSetupStep(number: 2, title: "Añade Finance", detail: "Debajo de «Texto», añade «Registrar gasto desde Wallet».")
 
-    private var amountExplanation: some View {
-        HStack(alignment: .top, spacing: FinanceGlassTokens.Spacing.medium) {
-            Image(systemName: "arrow.left.arrow.right")
-                .font(.headline)
-                .foregroundStyle(Color.financeAccent)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.xSmall) {
-                Text("Por qué va Importe dentro de Texto")
+            VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.small) {
+                Text("3. Completa los campos")
                     .font(.headline)
-                    .foregroundStyle(.primary)
-                Text("La plantilla pone el importe de Wallet dentro de Texto para que puedas conectarlo con el campo Importe de Finance al añadir la acción local.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(FinanceGlassTokens.Spacing.medium)
-        .financeInsetCard(cornerRadius: FinanceGlassTokens.Radius.card)
-        .accessibilityElement(children: .combine)
-    }
-
-    private var fieldMapping: some View {
-        VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.medium) {
-            sectionHeading("Asignación de campos")
-            MappingRow(title: "Importe", detail: "Salida de Texto, que contiene la variable Importe de Wallet.")
-            MappingRow(title: "Comercio y Tarjeta", detail: "Selecciona Comercio y Tarjeta en las variables del disparador de Wallet.")
-            MappingRow(title: "Cuenta", detail: "Elige la cuenta donde se registrarán los pagos. Una automatización con varias tarjetas usa la misma cuenta para todas.")
-            MappingRow(title: "Fecha", detail: "Selecciona Fecha actual.")
-            MappingRow(title: "Moneda", detail: "Indica el código de moneda configurado en Finance, por ejemplo EUR.")
-            Label("Si una tarjeta puede pagar en una moneda distinta a la configurada en Finance, el importe podría registrarse mal. No actives esa tarjeta hasta garantizar que la moneda real del pago coincide.", systemImage: "exclamationmark.triangle.fill")
-                .font(.subheadline)
-                .foregroundStyle(.orange)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityElement(children: .combine)
-            MappingRow(title: "Categoría", detail: "Opcional. Déjala vacía para clasificar después o usa «Preguntar cada vez» si quieres elegirla al ejecutar; esa opción requiere interacción y no será totalmente automática.")
-        }
-    }
-
-    private var testInstructions: some View {
-        VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.small) {
-            Label("Prueba sin comprar", systemImage: "checkmark.shield")
-                .font(.headline)
-                .foregroundStyle(.primary)
-            Text("Crea un atajo normal temporal con Texto «12,50» seguido de «Registrar gasto desde Wallet». Elige una cuenta de prueba, ejecútalo y comprueba el movimiento ficticio en Finance. Después, bórralo. Esta prueba comprueba la acción de Finance, pero no simula el disparador de Wallet.")
-                .font(.body)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(FinanceGlassTokens.Spacing.medium)
-        .financeInsetCard(cornerRadius: FinanceGlassTokens.Radius.card)
-    }
-
-    private var shortcutsLink: some View {
-        VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.medium) {
-            VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.xSmall) {
-                Text("Abrir Atajos de Finance")
-                    .font(.headline)
-                    .foregroundStyle(.primary)
                     .accessibilityAddTraits(.isHeader)
-                Text("Usa este enlace si necesitas volver a localizar la acción de Finance. Abrir Atajos por sí solo no añade la acción a la automatización.")
+                Text("Elige la cuenta bancaria y asigna:")
                     .font(.body)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                WalletFieldRow(label: "Importe", value: "Texto")
+                WalletFieldRow(label: "Comercio", value: "Comercio")
+                WalletFieldRow(label: "Tarjeta", value: "Tarjeta o pase")
+                WalletFieldRow(label: "Fecha", value: "Fecha actual")
+                WalletFieldRow(label: "Moneda", value: "Código de Finance (p. ej. EUR)")
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Text("Activa solo tarjetas que siempre paguen en esa moneda.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            WalletSetupStep(number: 4, title: "Activa la automatización", detail: "En «Al usar», activa «Automatización». En Información → Privacidad, permite ejecutar con el iPhone bloqueado.")
+
+            Text("Categoría: déjala vacía o usa «Preguntar cada vez» (pedirá intervención al pagar).")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
             ShortcutsLink()
                 .shortcutsLinkStyle(.automaticOutline)
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel("Abrir Atajos de Finance")
-                .accessibilityHint("Abre Atajos para localizar las acciones publicadas por Finance.")
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(FinanceGlassTokens.Spacing.medium)
         .financeInsetCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
@@ -206,23 +147,21 @@ private struct WalletShortcutTemplate: Transferable {
     }
 }
 
-private struct MappingRow: View {
-    let title: String
-    let detail: String
+private struct WalletFieldRow: View {
+    let label: String
+    let value: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.xSmall) {
-            Text(title)
-                .font(.headline)
+        HStack(alignment: .firstTextBaseline, spacing: FinanceGlassTokens.Spacing.small) {
+            Text(label)
                 .foregroundStyle(.primary)
-            Text(detail)
-                .font(.body)
+            Spacer(minLength: FinanceGlassTokens.Spacing.small)
+            Text(value)
                 .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .multilineTextAlignment(.trailing)
         }
+        .font(.subheadline)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(FinanceGlassTokens.Spacing.small)
-        .financeInsetCard(cornerRadius: FinanceGlassTokens.Radius.row)
         .accessibilityElement(children: .combine)
     }
 }
@@ -253,8 +192,6 @@ private struct WalletSetupStep: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(FinanceGlassTokens.Spacing.small)
-        .financeInsetCard(cornerRadius: FinanceGlassTokens.Radius.row)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Paso \(number): \(title). \(detail)")
     }
