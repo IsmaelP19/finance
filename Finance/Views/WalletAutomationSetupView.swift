@@ -14,8 +14,12 @@ struct WalletAutomationSetupView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.xLarge) {
                 introduction
-                draftNotice
+                registrationNotice
                 setupSteps
+                Text("Si prefieres revisar cada pago antes de guardarlo, puedes usar «Preparar gasto desde Wallet». Los pagos en una moneda distinta a la configurada en Finance no se registran automáticamente.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 shortcutsLink
             }
             .padding(.horizontal, 20)
@@ -50,7 +54,7 @@ struct WalletAutomationSetupView: View {
         .financeInsetCard(cornerRadius: FinanceGlassTokens.Radius.card)
     }
 
-    private var draftNotice: some View {
+    private var registrationNotice: some View {
         HStack(alignment: .top, spacing: FinanceGlassTokens.Spacing.medium) {
             Image(systemName: "checkmark.shield.fill")
                 .font(.title2)
@@ -58,11 +62,11 @@ struct WalletAutomationSetupView: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.xSmall) {
-                Text("Tú confirmas cada gasto")
+                Text("El gasto se registra automáticamente")
                     .font(.headline)
                     .foregroundStyle(.primary)
 
-                Text("Finance solo prepara un borrador. No guarda ningún gasto hasta que revisas o eliges la cuenta y la categoría y pulsas Guardar.")
+                Text("El pago se guarda sin abrir Finance en la cuenta que elijas para esa tarjeta. Puedes dejar la categoría vacía y asignarla después.")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -89,19 +93,19 @@ struct WalletAutomationSetupView: View {
             WalletSetupStep(
                 number: 2,
                 title: "Añade la acción de Finance",
-                detail: "Busca «Preparar gasto desde Wallet» y asigna las variables Importe, Comercio, Tarjeta y Fecha de la transacción."
+                detail: "Busca «Registrar gasto desde Wallet» y asigna las variables Importe, Comercio, Tarjeta y Fecha de la transacción. Importe debe recibirse como texto, por ejemplo «12,50» o «12.50», sin separadores de miles. Para una variable del pago, conviértela a texto conservando los decimales."
             )
 
             WalletSetupStep(
                 number: 3,
-                title: "Configura la ejecución",
-                detail: "Selecciona ejecución inmediata y desactiva la confirmación previa si aparece."
+                title: "Asocia la cuenta bancaria",
+                detail: "Elige una cuenta fija de Finance para esta tarjeta y asigna la moneda real de cada pago (EUR, USD, GBP o JPY). No fijes EUR si esa tarjeta puede pagar en otra moneda. La categoría es opcional."
             )
 
             WalletSetupStep(
                 number: 4,
-                title: "Repite por cada tarjeta",
-                detail: "iOS crea estas automatizaciones por tarjeta. Repite los pasos para cada tarjeta que quieras usar con Finance."
+                title: "Configura la ejecución inmediata",
+                detail: "Selecciona ejecución inmediata y desactiva la confirmación previa si aparece. Repite los pasos por cada tarjeta con su cuenta correspondiente."
             )
         }
     }
