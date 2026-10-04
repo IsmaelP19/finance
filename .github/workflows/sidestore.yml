@@ -134,6 +134,10 @@ jobs:
             --icon-url 'https://ismaelp19.github.io/finance/icon.png' \
             --output site/source.json
           cp Finance/Assets.xcassets/AppIcon.appiconset/appicon-light.png site/icon.png
+          mkdir -p site/screenshots
+          for screenshot in home.png movements.png investments.png wrapped-september.png; do
+            cp "docs/screenshots/$screenshot" "site/screenshots/$screenshot"
+          done
           touch site/.nojekyll
 
       - name: Publicar IPA como GitHub Release
@@ -145,7 +149,7 @@ jobs:
           if ! gh release view "$tag" >/dev/null 2>&1; then
             gh release create "$tag" "$RUNNER_TEMP/Finance.ipa" site/source.json \
               --target "$GITHUB_SHA" \
-              --title "Finance ${{ steps.version.outputs.value }} ($GITHUB_RUN_NUMBER)" \
+              --title "Finance ${{ steps.version.outputs.value }}" \
               --notes "Compilación de $GITHUB_REF_NAME en $GITHUB_SHA para SideStore." \
               --latest
           fi
