@@ -97,7 +97,7 @@ struct AddExpenseIntent: AppIntent {
         return .result(dialog: "Gasto registrado: \(concept) — \(formattedAmount) en \(bankAccount.name).")
     }
 
-    enum IntentError: Swift.Error, CustomLocalizedStringResourceConvertible {
+    enum IntentError: Swift.Error, Equatable, CustomLocalizedStringResourceConvertible {
         case invalidAmount
         case accountNotFound
         case balanceRebuildFailed
@@ -110,6 +110,179 @@ struct AddExpenseIntent: AppIntent {
                 return "No se encontró la cuenta bancaria seleccionada."
             case .balanceRebuildFailed:
                 return "No se pudo reconstruir el historial de saldos. No se registró el gasto."
+            }
+        }
+    }
+}
+
+/// Registers a Wallet payment using the account selected in its automation.
+struct RegisterWalletExpenseIntent: AppIntent {
+    static let title: LocalizedStringResource = "Registrar gasto desde Wallet"
+    static let description = IntentDescription(
+        "Guarda el pago automáticamente en la cuenta seleccionada, sin abrir Finance. La categoría es opcional."
+    )
+    static let openAppWhenRun = false
+
+    @Parameter(title: "Importe")
+    var amount: String
+
+    @Parameter(title: "Moneda")
+    var currencyCode: String
+
+    @Parameter(title: "Cuenta bancaria")
+    var account: BankAccountEntity
+
+    @Parameter(title: "Comercio")
+    var merchant: String?
+
+    @Parameter(title: "Tarjeta")
+    var cardName: String?
+
+    @Parameter(title: "Fecha")
+    var transactionDate: Date?
+
+    @Parameter(title: "Categoría")
+    var category: MovementCategoryEntity?
+
+    @MainActor
+    func perform() async throws -> some IntentResult & ProvidesDialog {
+        let decimalAmount = try Self.decimalAmount(from: amount, currencyCode: currencyCode)
+        let context = ModelContext(FinanceModelContainerProvider.shared)
+        // Only the explicit save below may persist the payment.
+        context.autosaveEnabled = false
+        let movement = try Self.register(
+            amount: decimalAmount,
+            currencyCode: currencyCode,
+            accountID: account.id,
+            merchant: merchant,
+            cardName: cardName,
+            transactionDate: transactionDate,
+            categoryID: category?.id,
+            in: context,
+            appCurrencyCode: AppCurrency.currentCode()
+        )
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = AppCurrency.currentCode()
+        formatter.locale = Locale.current
+        let formatted = formatter.string(from: movement.amount as NSDecimalNumber) ?? "\(movement.amount)"
+        return .result(dialog: "Gasto registrado: \(movement.concept) — \(formatted) en \(account.name).")
+    }
+
+    /// Parses the original text, avoiding Shortcuts' numeric/currency conversions.
+    /// Grouping separators are rejected because their interpretation is ambiguous.
+    nonisolated static func decimalAmount(from text: String, currencyCode: String) throws -> Decimal {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        let pattern = #"^(?:([A-Z]{3}|€|£|¥|\$)\s*)?([0-9]{1,30}(?:[,.][0-9]{1,2})?)(?:\s*([A-Z]{3}|€|£|¥|\$))?$"#
+        let expression = try NSRegularExpression(pattern: pattern)
+        guard let match = expression.firstMatch(
+            in: trimmed, range: NSRange(trimmed.startIndex..., in: trimmed)
+        ), match.range.length == (trimmed as NSString).length else {
+            throw WalletIntentError.invalidAmountFormat
+        }
+        let value = trimmed as NSString
+        let expectedCurrency = currencyCode.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        for index in [1, 3] where match.range(at: index).location != NSNotFound {
+            let token = value.substring(with: match.range(at: index))
+            let embeddedCurrency: String
+            switch token {
+            case "€": embeddedCurrency = "EUR"
+            case "£": embeddedCurrency = "GBP"
+            case "$", "¥":
+                // These symbols identify several currencies; require an ISO code.
+                throw WalletIntentError.invalidAmountFormat
+            default: embeddedCurrency = token
+            }
+            guard embeddedCurrency == expectedCurrency else {
+                throw WalletIntentError.currencyMismatch
+            }
+        }
+        let number = value.substring(with: match.range(at: 2)).replacingOccurrences(of: ",", with: ".")
+        guard let amount = Decimal(string: number, locale: Locale(identifier: "en_US_POSIX")),
+              !amount.isNaN, amount > 0 else {
+            throw AddExpenseIntent.IntentError.invalidAmount
+        }
+        return amount
+    }
+
+    @MainActor
+    @discardableResult
+    static func register(
+        amount: Decimal,
+        currencyCode: String,
+        accountID: UUID,
+        merchant: String? = nil,
+        cardName: String? = nil,
+        transactionDate: Date? = nil,
+        categoryID: UUID? = nil,
+        in context: ModelContext,
+        appCurrencyCode: String
+    ) throws -> Movement {
+        guard !amount.isNaN, amount > 0 else {
+            throw AddExpenseIntent.IntentError.invalidAmount
+        }
+        let draft = WalletExpenseDraft(
+            amount: amount, currencyCode: currencyCode, merchant: merchant,
+            cardName: cardName, transactionDate: transactionDate
+        )
+        guard draft.currencyCode == appCurrencyCode else {
+            throw WalletIntentError.currencyMismatch
+        }
+        let descriptor = FetchDescriptor<BankAccount>(predicate: #Predicate { $0.id == accountID })
+        guard let bankAccount = try context.fetch(descriptor).first, bankAccount.isActive else {
+            throw AddExpenseIntent.IntentError.accountNotFound
+        }
+        var movementCategory: MovementCategory?
+        if let categoryID {
+            let descriptor = FetchDescriptor<MovementCategory>(predicate: #Predicate { $0.id == categoryID })
+            guard let selectedCategory = try context.fetch(descriptor).first else {
+                throw WalletIntentError.categoryNotFound
+            }
+            movementCategory = selectedCategory
+        }
+
+        bankAccount.balance -= amount
+        bankAccount.updatedAt = Date()
+        bankAccount.currency = appCurrencyCode
+        let movement = Movement(
+            concept: draft.suggestedConcept,
+            amount: amount,
+            type: .expense,
+            occurredAt: draft.transactionDate,
+            account: bankAccount,
+            category: movementCategory,
+            notes: draft.cardName.map { "Tarjeta Wallet: \($0)" } ?? "",
+            resultingBalance: bankAccount.balance
+        )
+        context.insert(movement)
+        do {
+            _ = try MovementBalanceService.rebuild(in: context)
+        } catch {
+            context.rollback()
+            throw AddExpenseIntent.IntentError.balanceRebuildFailed
+        }
+        do {
+            try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
+        return movement
+    }
+
+    enum WalletIntentError: Swift.Error, Equatable, CustomLocalizedStringResourceConvertible {
+        case currencyMismatch
+        case categoryNotFound
+        case invalidAmountFormat
+
+        var localizedStringResource: LocalizedStringResource {
+            switch self {
+            case .currencyMismatch:
+                return "La moneda del pago no coincide con la moneda configurada en Finance. No se registró el gasto."
+            case .categoryNotFound:
+                return "No se encontró la categoría seleccionada. No se registró el gasto."
+            case .invalidAmountFormat:
+                return "El importe debe ser texto como 12,50 o 12.50, sin separadores de miles. Usa un código de moneda si el símbolo es ambiguo."
             }
         }
     }
@@ -163,6 +336,15 @@ struct FinanceShortcutsProvider: AppShortcutsProvider {
             ],
             shortTitle: "Apuntar gasto",
             systemImageName: "arrow.down.circle.fill"
+        )
+
+        AppShortcut(
+            intent: RegisterWalletExpenseIntent(),
+            phrases: [
+                "Registra un pago de Wallet en \(.applicationName)"
+            ],
+            shortTitle: "Registrar Wallet",
+            systemImageName: "wallet.pass.fill"
         )
 
         AppShortcut(

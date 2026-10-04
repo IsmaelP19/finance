@@ -5,6 +5,7 @@
 
 import Foundation
 import Testing
+import SwiftData
 @testable import Finance
 
 struct WalletExpenseDraftTests {
@@ -101,6 +102,114 @@ struct WalletExpenseDraftTests {
         }
 
         #expect(WalletExpenseDraftStore.pendingDrafts(in: defaults).map(\.id) == drafts.map(\.id))
+    }
+
+    @Test func walletTextAmountParserKeepsCentsAndChecksEmbeddedCurrency() throws {
+        for text in ["12,50", "12.50", "12,50 €", "€12.50", "EUR 12,50", "12.50 EUR", " 12,50 € "] {
+            #expect(try RegisterWalletExpenseIntent.decimalAmount(from: text, currencyCode: "EUR") == Decimal(string: "12.50"))
+        }
+        #expect(try RegisterWalletExpenseIntent.decimalAmount(from: "9,83", currencyCode: "EUR") == Decimal(string: "9.83"))
+        for text in ["", "NaN", "infinity", "-1", "1.234", "1,234", "1.234,50", "1,234.50", "12,50 basura", "$12.50", "12 50", "1+2"] {
+            #expect(throws: RegisterWalletExpenseIntent.WalletIntentError.invalidAmountFormat) {
+                try RegisterWalletExpenseIntent.decimalAmount(from: text, currencyCode: "EUR")
+            }
+        }
+        #expect(throws: AddExpenseIntent.IntentError.invalidAmount) {
+            try RegisterWalletExpenseIntent.decimalAmount(from: "0,00", currencyCode: "EUR")
+        }
+        for text in ["USD 12.50", "12,50 GBP", "£12.50"] {
+            #expect(throws: RegisterWalletExpenseIntent.WalletIntentError.currencyMismatch) {
+                try RegisterWalletExpenseIntent.decimalAmount(from: text, currencyCode: "EUR")
+            }
+        }
+    }
+
+    @Test @MainActor func automaticWalletExpenseKeepsCentsAndRebuildsBackdatedHistory() throws {
+        let context = try makeWalletContext()
+        let account = BankAccount(name: "Cuenta Wallet", accountType: .checking, balance: 90)
+        context.insert(account)
+        let later = Movement(
+            concept: "Posterior", amount: 10, type: .expense,
+            occurredAt: Date(timeIntervalSince1970: 200), account: account,
+            resultingBalance: 90
+        )
+        context.insert(later)
+        try context.save()
+
+        let movement = try RegisterWalletExpenseIntent.register(
+            amount: Decimal(string: "12.50")!, currencyCode: "EUR", accountID: account.id,
+            merchant: " Cafetería ", cardName: " Visa de prueba ",
+            transactionDate: Date(timeIntervalSince1970: 100),
+            in: context, appCurrencyCode: "EUR"
+        )
+
+        #expect(movement.amount == Decimal(string: "12.50"))
+        #expect(movement.concept == "Cafetería")
+        #expect(movement.category == nil)
+        #expect(movement.notes == "Tarjeta Wallet: Visa de prueba")
+        #expect(movement.occurredAt == Date(timeIntervalSince1970: 100))
+        #expect(account.balance == Decimal(string: "77.50"))
+        #expect(movement.resultingBalance == Decimal(string: "87.50"))
+        #expect(later.resultingBalance == Decimal(string: "77.50"))
+        #expect(try context.fetchCount(FetchDescriptor<Movement>()) == 2)
+    }
+
+    @Test @MainActor func automaticWalletExpenseRejectsInvalidInputsWithoutSaving() throws {
+        let context = try makeWalletContext()
+        let account = BankAccount(name: "Cuenta Wallet", accountType: .checking, balance: 100)
+        context.insert(account)
+        try context.save()
+
+        for amount: Decimal in [0, -1, .nan] {
+            #expect(throws: AddExpenseIntent.IntentError.invalidAmount) {
+                try RegisterWalletExpenseIntent.register(
+                    amount: amount, currencyCode: "EUR", accountID: account.id,
+                    in: context, appCurrencyCode: "EUR"
+                )
+            }
+        }
+        #expect(throws: RegisterWalletExpenseIntent.WalletIntentError.currencyMismatch) {
+            try RegisterWalletExpenseIntent.register(
+                amount: 12.50, currencyCode: "USD", accountID: account.id,
+                in: context, appCurrencyCode: "EUR"
+            )
+        }
+        #expect(throws: RegisterWalletExpenseIntent.WalletIntentError.currencyMismatch) {
+            try RegisterWalletExpenseIntent.register(
+                amount: 12.50, currencyCode: "", accountID: account.id,
+                in: context, appCurrencyCode: "EUR"
+            )
+        }
+        #expect(throws: AddExpenseIntent.IntentError.accountNotFound) {
+            try RegisterWalletExpenseIntent.register(
+                amount: 12.50, currencyCode: "EUR", accountID: UUID(),
+                in: context, appCurrencyCode: "EUR"
+            )
+        }
+        account.archive()
+        try context.save()
+        #expect(throws: AddExpenseIntent.IntentError.accountNotFound) {
+            try RegisterWalletExpenseIntent.register(
+                amount: 12.50, currencyCode: "EUR", accountID: account.id,
+                in: context, appCurrencyCode: "EUR"
+            )
+        }
+        #expect(account.balance == 100)
+        #expect(try context.fetchCount(FetchDescriptor<Movement>()) == 0)
+    }
+
+    @MainActor private func makeWalletContext() throws -> ModelContext {
+        let schema = Schema([
+            Bank.self, BankAccount.self, MovementCategory.self, Movement.self,
+            InvestmentSnapshot.self, RecurringMovement.self, Budget.self, BudgetItem.self
+        ])
+        let container = try ModelContainer(
+            for: schema,
+            configurations: [ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)]
+        )
+        let context = ModelContext(container)
+        context.autosaveEnabled = false
+        return context
     }
 
     private func makeIsolatedDefaults() -> (UserDefaults, String) {
