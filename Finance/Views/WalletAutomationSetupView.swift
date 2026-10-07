@@ -113,9 +113,10 @@ struct WalletAutomationSetupView: View {
 
             WalletSetupStep(number: 4, title: "Activa la automatización", detail: "En «Al usar», activa «Automatización». En Información → Privacidad, permite ejecutar con el iPhone bloqueado.")
 
-            Text("Categoría: déjala vacía o usa «Preguntar cada vez» (pedirá intervención al pagar).")
+            Text("Finance asigna la categoría al guardar: repite la del último pago en ese comercio y, si el comercio es nuevo, consulta el modelo del iPhone. El gasto se guarda aunque no haya una categoría clara. Si el atajo todavía muestra Categoría, quita ese campo.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             ShortcutsLink()
                 .shortcutsLinkStyle(.automaticOutline)

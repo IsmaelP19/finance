@@ -119,7 +119,7 @@ struct AddExpenseIntent: AppIntent {
 struct RegisterWalletExpenseIntent: AppIntent {
     static let title: LocalizedStringResource = "Registrar gasto desde Wallet"
     static let description = IntentDescription(
-        "Guarda el pago automáticamente en la cuenta seleccionada, sin abrir Finance. La categoría es opcional."
+        "Guarda el pago automáticamente en la cuenta seleccionada, sin abrir Finance. La categoría se asigna con los pagos anteriores de ese comercio."
     )
     static let openAppWhenRun = false
 
@@ -141,15 +141,13 @@ struct RegisterWalletExpenseIntent: AppIntent {
     @Parameter(title: "Fecha")
     var transactionDate: Date?
 
-    @Parameter(title: "Categoría")
-    var category: MovementCategoryEntity?
-
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
         let decimalAmount = try Self.decimalAmount(from: amount, currencyCode: currencyCode)
         let context = ModelContext(FinanceModelContainerProvider.shared)
         // Only the explicit save below may persist the payment.
         context.autosaveEnabled = false
+        let suggestedCategory = await WalletCategorySuggester.suggest(merchant: merchant, in: context)
         let movement = try Self.register(
             amount: decimalAmount,
             currencyCode: currencyCode,
@@ -157,7 +155,7 @@ struct RegisterWalletExpenseIntent: AppIntent {
             merchant: merchant,
             cardName: cardName,
             transactionDate: transactionDate,
-            categoryID: category?.id,
+            categoryID: suggestedCategory?.id,
             in: context,
             appCurrencyCode: AppCurrency.currentCode()
         )
@@ -166,7 +164,8 @@ struct RegisterWalletExpenseIntent: AppIntent {
         formatter.currencyCode = AppCurrency.currentCode()
         formatter.locale = Locale.current
         let formatted = formatter.string(from: movement.amount as NSDecimalNumber) ?? "\(movement.amount)"
-        return .result(dialog: "Gasto registrado: \(movement.concept) — \(formatted) en \(account.name).")
+        let categorySuffix = movement.category.map { " (\($0.name))" } ?? ""
+        return .result(dialog: "Gasto registrado: \(movement.concept) — \(formatted) en \(account.name)\(categorySuffix).")
     }
 
     /// Parses the original text, avoiding Shortcuts' numeric/currency conversions.
