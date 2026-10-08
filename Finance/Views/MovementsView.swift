@@ -207,6 +207,8 @@ struct MovementsView: View {
     @Query(sort: \RecurringMovement.updatedAt, order: .reverse) private var recurringMovements: [RecurringMovement]
     @Query(filter: #Predicate<Movement> { $0.typeRaw == "income" && $0.reimbursementForId != nil })
     private var reimbursementIncomes: [Movement]
+    @Query(filter: UncategorizedExpenseAttention.predicate, sort: \Movement.occurredAt, order: .reverse)
+    private var uncategorizedExpenses: [Movement]
 
     @State private var showingAddMovement = false
     @State private var showingReceiptScanner = false
@@ -447,6 +449,15 @@ struct MovementsView: View {
                                     )
                             }
                         )
+                }
+
+                if !uncategorizedExpenses.isEmpty {
+                    UncategorizedExpensesAttentionBanner(count: uncategorizedExpenses.count) {
+                        reloadMovements()
+                    }
+                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 }
 
                 if !activeAccounts.isEmpty {

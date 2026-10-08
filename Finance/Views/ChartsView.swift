@@ -55,6 +55,8 @@ struct ChartsView: View {
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
     @Query(sort: \BankAccount.name) private var accounts: [BankAccount]
     @Query(sort: \Movement.occurredAt, order: .reverse) private var movements: [Movement]
+    @Query(filter: UncategorizedExpenseAttention.predicate, sort: \Movement.occurredAt, order: .reverse)
+    private var uncategorizedExpenses: [Movement]
     @Query(filter: #Predicate<Movement> { $0.typeRaw == "income" && $0.reimbursementForId != nil })
     private var reimbursementIncomes: [Movement]
     @Query(sort: \Budget.createdAt) private var budgets: [Budget]
@@ -172,6 +174,9 @@ struct ChartsView: View {
                         patrimonyHeroCard(data: data)
 
                         VStack(spacing: 12) {
+                            if !uncategorizedExpenses.isEmpty {
+                                UncategorizedExpensesAttentionBanner(count: uncategorizedExpenses.count)
+                            }
                             pendingReimbursementsCard(data: data)
                             wrappedAccessCard(data: data)
                         }
@@ -188,6 +193,9 @@ struct ChartsView: View {
 
                         summarySection(data: data)
                     } else {
+                        if !uncategorizedExpenses.isEmpty {
+                            UncategorizedExpensesAttentionBanner(count: uncategorizedExpenses.count)
+                        }
                         emptyState
                     }
                 }
@@ -450,73 +458,6 @@ private struct FinanceHomeHeroCard: View {
     }
 }
 
-private struct FinanceHomeActionBanner: View {
-    let title: String
-    let value: String?
-    let subtitle: String
-    let systemImage: String
-    let pillText: String
-    let tint: Color
-    let showsChevron: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(tint)
-                    .frame(width: 44, height: 44)
-                    .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(title)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
-
-                    if let value {
-                        Text(value)
-                            .font(.title3.weight(.medium))
-                            .tracking(-0.25)
-                            .foregroundStyle(.primary)
-                    }
-
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
-
-                Spacer(minLength: 10)
-
-                VStack(alignment: .trailing, spacing: 10) {
-                    Text(pillText)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(tint, in: Capsule())
-
-                    if showsChevron {
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.financeHomeSurface, in: RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: FinanceGlassTokens.Radius.card, style: .continuous)
-                    .strokeBorder(Color.financeHomeStroke, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-    }
-}
-
 private struct SummaryMetricCard: View {
     @Environment(\.colorScheme) private var colorScheme
     let title: String
@@ -556,7 +497,7 @@ private struct SummaryMetricCard: View {
     }
 }
 
-private extension Color {
+extension Color {
     static let financeHomeDark = Color(red: 0.098, green: 0.110, blue: 0.122)
     static let financeHomeSurface = Color.primary.opacity(0.055)
     static let financeHomeStroke = Color.primary.opacity(0.08)
