@@ -64,75 +64,7 @@ struct CategoryManagementView: View {
                             .financeGlassClearListRow(insets: EdgeInsets(top: 0, leading: 20, bottom: 10, trailing: 20))
 
                         ForEach(categories, id: \.id) { category in
-                            Button {
-                                onSelectCategoryMovements(category.id)
-                            } label: {
-                                HStack(spacing: 14) {
-                                    CategoryIconView(iconRaw: category.iconRaw, color: category.color, size: 42)
-
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(category.name)
-                                            .font(.body)
-                                            .fontWeight(.medium)
-                                            .foregroundStyle(.primary)
-
-                                        Text(movementCountText(for: category))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Spacer(minLength: 8)
-
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Ver movimientos de \(category.name), \(movementCountText(for: category))")
-                            .accessibilityHint("Activa para ver movimientos. Acciones disponibles: Editar y Eliminar.")
-                            .padding(.leading, 16)
-                            .padding(.trailing, 16)
-                            .padding(.vertical, 10)
-                            .background {
-                                UnevenRoundedRectangle(
-                                    topLeadingRadius: category.id == categories.first?.id ? FinanceGlassTokens.Radius.card : 0,
-                                    bottomLeadingRadius: category.id == categories.last?.id ? FinanceGlassTokens.Radius.card : 0,
-                                    bottomTrailingRadius: category.id == categories.last?.id ? FinanceGlassTokens.Radius.card : 0,
-                                    topTrailingRadius: category.id == categories.first?.id ? FinanceGlassTokens.Radius.card : 0,
-                                    style: .continuous
-                                )
-                                .fill(.thinMaterial)
-                            }
-                            .overlay(alignment: .bottom) {
-                                if category.id != categories.last?.id {
-                                    Rectangle()
-                                        .fill(.primary.opacity(0.08))
-                                        .frame(height: 1)
-                                        .padding(.leading, 72)
-                                        .padding(.trailing, 16)
-                                        .accessibilityHidden(true)
-                                }
-                            }
-                            .offset(x: category.id == hintedCategoryID ? swipeHintOffset : 0)
-                            .financeGlassClearListRow(insets: EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
-                            .swipeActions(edge: .leading, allowsFullSwipe: false) {
-                                Button {
-                                    editingCategory = category
-                                } label: {
-                                    Label("Editar", systemImage: "pencil")
-                                }
-                                .tint(.financeAccent)
-                            }
-                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                Button(role: .destructive) {
-                                    deleteCategory(category)
-                                } label: {
-                                    Label("Eliminar", systemImage: "trash")
-                                }
-                                .tint(.red)
-                            }
+                            categoryRow(category)
                         }
                     }
                     .financeGlassListContainer()
@@ -167,6 +99,84 @@ struct CategoryManagementView: View {
                 CategoryEditorSheet()
             }
         }
+    }
+
+    private func categoryRow(_ category: MovementCategory) -> some View {
+        Button {
+            onSelectCategoryMovements(category.id)
+        } label: {
+            categoryRowContent(category)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Ver movimientos de \(category.name), \(movementCountText(for: category))")
+        .accessibilityHint("Activa para ver movimientos. Acciones disponibles: Editar y Eliminar.")
+        .padding(.leading, 16)
+        .padding(.trailing, 16)
+        .padding(.vertical, 10)
+        .background { categoryRowBackground(category) }
+        .overlay(alignment: .bottom) {
+            if category.id != categories.last?.id {
+                Rectangle()
+                    .fill(.primary.opacity(0.08))
+                    .frame(height: 1)
+                    .padding(.leading, 72)
+                    .padding(.trailing, 16)
+                    .accessibilityHidden(true)
+            }
+        }
+        .offset(x: category.id == hintedCategoryID ? swipeHintOffset : 0)
+        .financeGlassClearListRow(insets: EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+            Button {
+                editingCategory = category
+            } label: {
+                Label("Editar", systemImage: "pencil")
+            }
+            .tint(.financeAccent)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            Button(role: .destructive) {
+                deleteCategory(category)
+            } label: {
+                Label("Eliminar", systemImage: "trash")
+            }
+            .tint(.red)
+        }
+    }
+
+    private func categoryRowContent(_ category: MovementCategory) -> some View {
+        HStack(spacing: 14) {
+            CategoryIconView(iconRaw: category.iconRaw, color: category.color, size: 42)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(category.name)
+                    .font(.body)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.primary)
+
+                Text(movementCountText(for: category))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer(minLength: 8)
+
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+    }
+
+    private func categoryRowBackground(_ category: MovementCategory) -> some View {
+        UnevenRoundedRectangle(
+            topLeadingRadius: category.id == categories.first?.id ? FinanceGlassTokens.Radius.card : 0,
+            bottomLeadingRadius: category.id == categories.last?.id ? FinanceGlassTokens.Radius.card : 0,
+            bottomTrailingRadius: category.id == categories.last?.id ? FinanceGlassTokens.Radius.card : 0,
+            topTrailingRadius: category.id == categories.first?.id ? FinanceGlassTokens.Radius.card : 0,
+            style: .continuous
+        )
+        .fill(.thinMaterial)
     }
 
     @MainActor
