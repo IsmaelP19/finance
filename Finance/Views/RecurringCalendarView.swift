@@ -1652,7 +1652,8 @@ private struct RecurringCalendarRow: View {
                     id: "category",
                     name: categoryName,
                     iconName: categoryIconName,
-                    color: categoryColor
+                    color: categoryColor,
+                    iconRaw: occurrence.rule.category?.iconRaw
                 )
             ]
         }()

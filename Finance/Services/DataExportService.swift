@@ -1011,7 +1011,7 @@ enum DataExportService {
                 formattedCount(accounts, singular: "cuenta", plural: "cuentas"),
                 formattedCount(categories, singular: "categoría", plural: "categorías"),
                 formattedCount(movements, singular: "movimiento", plural: "movimientos"),
-                formattedCount(investmentSnapshots, singular: "snapshot de inversión", plural: "snapshots de inversión"),
+                formattedCount(investmentSnapshots, singular: "registro de inversión", plural: "registros de inversión"),
                 formattedCount(recurringMovements, singular: "recurrencia", plural: "recurrencias"),
                 formattedCount(budgets, singular: "presupuesto", plural: "presupuestos"),
                 formattedCount(budgetItems, singular: "partida de presupuesto", plural: "partidas de presupuesto")
@@ -1397,7 +1397,7 @@ enum DataExportService {
         try validateUniqueIdentifiers(exportData.accounts.map(\.id), entity: "cuentas")
         try validateUniqueIdentifiers(exportData.categories.map(\.id), entity: "categorías")
         try validateUniqueIdentifiers(exportData.movements.map(\.id), entity: "movimientos")
-        try validateUniqueIdentifiers(exportData.investmentSnapshots.map(\.id), entity: "snapshots de inversión")
+        try validateUniqueIdentifiers(exportData.investmentSnapshots.map(\.id), entity: "registros de inversión")
         try validateUniqueIdentifiers(exportData.recurringMovements.map(\.id), entity: "recurrencias")
         try validateUniqueIdentifiers(exportData.budgets.map(\.id), entity: "presupuestos")
         try validateUniqueIdentifiers(
@@ -1439,7 +1439,7 @@ enum DataExportService {
 
         for snapshot in exportData.investmentSnapshots {
             if let accountID = snapshot.accountId, !accountIDs.contains(accountID) {
-                throw ImportError.missingReference(entity: "snapshot \(snapshot.id.uuidString)", identifier: accountID, target: "cuenta")
+                throw ImportError.missingReference(entity: "registro de inversión \(snapshot.id.uuidString)", identifier: accountID, target: "cuenta")
             }
         }
 

@@ -134,9 +134,15 @@ struct AccountListView: View {
                                 }
                                 .tint(.financeAccent)
                             }
-                        }
-                        .onDelete { offsets in
-                            requestDeleteAccounts(from: typeAccounts, at: offsets)
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    if let index = typeAccounts.firstIndex(where: { $0.id == account.id }) {
+                                        requestDeleteAccounts(from: typeAccounts, at: IndexSet(integer: index))
+                                    }
+                                } label: {
+                                    Label("Eliminar", systemImage: "trash")
+                                }
+                            }
                         }
                     }
                 }

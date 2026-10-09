@@ -18,9 +18,9 @@ struct LocalBackupRestoreView: View {
             Group {
                 if backups.isEmpty {
                     ContentUnavailableView(
-                        "No hay backups previos",
+                        "No hay copias de seguridad previas",
                         systemImage: "externaldrive.badge.questionmark",
-                        description: Text("La app creará un backup local antes de la próxima reparación o restauración.")
+                        description: Text("La app creará una copia de seguridad local antes de la próxima reparación o restauración.")
                     )
                 } else {
                     List {
@@ -40,7 +40,7 @@ struct LocalBackupRestoreView: View {
                     .listStyle(.insetGrouped)
                 }
             }
-            .navigationTitle("Backups locales")
+            .navigationTitle("Copias de seguridad locales")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -50,7 +50,7 @@ struct LocalBackupRestoreView: View {
                 }
             }
             .confirmationDialog(
-                "Restaurar backup local",
+                "Restaurar copia de seguridad local",
                 isPresented: Binding(
                     get: { selectedBackup != nil },
                     set: { isPresented in
@@ -62,7 +62,7 @@ struct LocalBackupRestoreView: View {
                 titleVisibility: .visible
             ) {
                 Button("Cancelar", role: .cancel) {}
-                Button("Restaurar y crear backup", role: .destructive) {
+                Button("Restaurar y crear copia de seguridad", role: .destructive) {
                     guard let backup = selectedBackup else { return }
                     selectedBackup = nil
                     dismiss()
@@ -70,7 +70,7 @@ struct LocalBackupRestoreView: View {
                 }
             } message: {
                 if let selectedBackup {
-                    Text("Se reemplazarán todos los datos actuales por la copia del \(selectedBackup.exportDate.formatted(date: .abbreviated, time: .shortened)). Antes se creará otro backup local del estado actual.")
+                    Text("Se reemplazarán todos los datos actuales por la copia del \(selectedBackup.exportDate.formatted(date: .abbreviated, time: .shortened)). Antes se creará otra copia de seguridad local del estado actual.")
                 }
             }
         }
@@ -94,7 +94,7 @@ private struct LocalBackupRow: View {
                     .font(.body.weight(.medium))
                     .foregroundStyle(.primary)
 
-                Text("Backup previo · \(ByteCountFormatter.string(fromByteCount: backup.fileSize, countStyle: .file))")
+                Text("Copia de seguridad previa · \(ByteCountFormatter.string(fromByteCount: backup.fileSize, countStyle: .file))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

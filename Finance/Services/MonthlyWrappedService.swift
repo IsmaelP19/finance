@@ -950,7 +950,7 @@ enum MonthlyWrappedService {
 
         let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: true)
         let content = UNMutableNotificationContent()
-        content.title = "Tu Wrapped mensual ya está listo"
+        content.title = "Tu resumen mensual ya está listo"
         content.body = "Revisa tu balance, tus mayores gastos y la comparativa con el mes anterior."
         content.sound = .default
 
@@ -1393,6 +1393,9 @@ enum MonthlyWrappedService {
 
     private nonisolated static func categoryIconName(for movement: WrappedMovementValue, missing: String = "tag") -> String {
         guard movement.categoryID != nil else { return missing }
+        if let iconRaw = movement.categoryIconRaw, CategoryIcon.emoji(from: iconRaw) != nil {
+            return iconRaw
+        }
         return CategoryIcon(rawValue: movement.categoryIconRaw ?? "")?.systemName ?? CategoryIcon.tag.systemName
     }
 

@@ -60,7 +60,7 @@ struct MonthlyWrappedHistoryView: View {
             List {
                 if let latestMonth, let latestSummary = summariesByMonth[latestMonth] {
                     FinanceGlassSectionHeader(
-                        title: "Último wrapped",
+                        title: "Último resumen",
                         systemImage: "sparkles.rectangle.stack",
                         subtitle: "Resumen más reciente disponible",
                         tint: .purple
@@ -91,7 +91,7 @@ struct MonthlyWrappedHistoryView: View {
                 if availableMonths.isEmpty {
                     if cacheIsCurrent {
                         FinanceEmptyStateContent(
-                            "Sin wrappeds disponibles",
+                            "Sin resúmenes disponibles",
                             systemImage: "sparkles.rectangle.stack",
                             description: Text("Registra movimientos en varios meses para generar tu historial mensual.")
                         )
@@ -119,7 +119,7 @@ struct MonthlyWrappedHistoryView: View {
                     }
                 }
             }
-            .navigationTitle("Wrapped mensual")
+            .navigationTitle("Resumen mensual")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -765,13 +765,13 @@ struct MonthlyWrappedStoriesView: View {
                 .foregroundStyle(.white)
                 .wrappedReveal(step: 2, current: revealStep)
 
-            Text("Puedes volver a ver este resumen cuando quieras desde el boton superior derecho.")
+            Text("Puedes volver a ver este resumen cuando quieras desde el botón superior derecho.")
                 .font(.title3)
                 .lineSpacing(3)
                 .foregroundStyle(.white.opacity(0.9))
                 .wrappedReveal(step: 3, current: revealStep)
 
-            Text("Busca el icono de wrapped en la pantalla de inicio.")
+            Text("Busca el icono de resumen en la pantalla de inicio.")
                 .font(.subheadline)
                 .foregroundStyle(.white.opacity(0.72))
                 .wrappedReveal(step: 3, current: revealStep)
@@ -858,11 +858,20 @@ struct MonthlyWrappedStoriesView: View {
 
     private func categoriesStory(compactLayout: Bool) -> some View {
         ZStack(alignment: .topTrailing) {
-            Image(systemName: summary.topExpenseCategories.first?.iconName ?? "chart.bar")
-                .font(.system(size: 180, weight: .black))
-                .foregroundStyle(.white.opacity(0.12))
-                .offset(x: 44, y: 10)
-                .allowsHitTesting(false)
+            Group {
+                let icon = summary.topExpenseCategories.first?.iconName ?? "chart.bar"
+                if let emoji = CategoryIcon.emoji(from: icon) {
+                    Text(emoji)
+                } else {
+                    Image(systemName: icon)
+                }
+            }
+            .font(.system(size: 180, weight: .black))
+            .foregroundStyle(.white)
+            .opacity(0.12)
+            .offset(x: 44, y: 10)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: compactLayout ? 10 : 14) {
                 wrappedBadge(title: "Dónde fue tu dinero", icon: "chart.bar.doc.horizontal")
@@ -1091,19 +1100,28 @@ struct MonthlyWrappedStoriesView: View {
 
     private var savingsCategoryStory: some View {
         ZStack(alignment: .topLeading) {
-            Image(systemName: summary.bestSavingsCategory?.iconName ?? "tag")
-                .font(.system(size: 180, weight: .black))
-                .foregroundStyle(.white.opacity(0.12))
-                .offset(x: 180, y: 10)
-                .rotationEffect(.degrees(7))
-                .allowsHitTesting(false)
+            Group {
+                let icon = summary.bestSavingsCategory?.iconName ?? "tag"
+                if let emoji = CategoryIcon.emoji(from: icon) {
+                    Text(emoji)
+                } else {
+                    Image(systemName: icon)
+                }
+            }
+            .font(.system(size: 180, weight: .black))
+            .foregroundStyle(.white)
+            .opacity(0.12)
+            .offset(x: 180, y: 10)
+            .rotationEffect(.degrees(7))
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 14) {
                 wrappedBadge(title: "Categoría con más ahorro", icon: "leaf")
                     .wrappedReveal(step: 1, current: revealStep)
 
                 if let category = summary.bestSavingsCategory {
-                    Label(category.name, systemImage: category.iconName)
+                    wrappedCategoryLabel(category.name, icon: category.iconName)
                         .font(.title2)
                         .fontWeight(.semibold)
                         .foregroundStyle(.white)
@@ -1336,7 +1354,7 @@ struct MonthlyWrappedStoriesView: View {
                         .foregroundStyle(.white.opacity(0.90))
                         .wrappedReveal(step: 3, current: revealStep)
 
-                    Text("Top: \(shared.topSharedExpense.concept) - \(shared.topSharedExpense.expectedReimbursement.asCurrency(code: appCurrencyCode))")
+                    Text("Mayor gasto compartido: \(shared.topSharedExpense.concept) - \(shared.topSharedExpense.expectedReimbursement.asCurrency(code: appCurrencyCode))")
                         .font(.subheadline)
                         .fontWeight(.semibold)
                         .foregroundStyle(.white.opacity(0.94))
@@ -1465,7 +1483,7 @@ struct MonthlyWrappedStoriesView: View {
                     .foregroundStyle(.white.opacity(0.92))
                     .frame(width: 28, alignment: .leading)
 
-                Label(category.name, systemImage: category.iconName)
+                wrappedCategoryLabel(category.name, icon: category.iconName)
                     .font(compactLayout ? .callout : .subheadline)
                     .fontWeight(.semibold)
                     .foregroundStyle(.white)
@@ -1482,10 +1500,10 @@ struct MonthlyWrappedStoriesView: View {
 
             GeometryReader { geometry in
                 Capsule()
-                    .fill(category.color.opacity(0.26))
+                    .fill(category.color.categoryForegroundColor(in: .dark).opacity(0.26))
                     .overlay(alignment: .leading) {
                         Capsule()
-                            .fill(category.color)
+                            .fill(category.color.categoryForegroundColor(in: .dark))
                             .frame(width: max(8, geometry.size.width * categoryRatio(for: category)))
                     }
             }
@@ -1505,6 +1523,18 @@ struct MonthlyWrappedStoriesView: View {
         }
     }
 
+    private func wrappedCategoryLabel(_ title: String, icon: String) -> some View {
+        Label {
+            Text(title)
+        } icon: {
+            if let emoji = CategoryIcon.emoji(from: icon) {
+                Text(emoji).accessibilityHidden(true)
+            } else {
+                Image(systemName: icon)
+            }
+        }
+    }
+
     private func highlightPanel(
         title: String,
         icon: String,
@@ -1514,7 +1544,7 @@ struct MonthlyWrappedStoriesView: View {
         tertiary: String
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Label(title, systemImage: icon)
+            wrappedCategoryLabel(title, icon: icon)
                 .font(.subheadline)
                 .fontWeight(.semibold)
                 .foregroundStyle(.white.opacity(0.92))

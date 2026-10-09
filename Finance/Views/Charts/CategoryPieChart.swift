@@ -40,7 +40,7 @@ struct CategoryPieChart: View {
                         innerRadius: .ratio(0.56),
                         angularInset: 1.6
                     )
-                    .foregroundStyle(item.color.gradient)
+                    .foregroundStyle(item.color.categoryForegroundColor(in: colorScheme).gradient)
                     .cornerRadius(4)
                 }
                 .frame(height: 230)
@@ -67,9 +67,15 @@ struct CategoryPieChart: View {
                 VStack(spacing: 8) {
                     ForEach(data) { item in
                         HStack(spacing: 10) {
-                            Image(systemName: item.iconName)
-                                .foregroundStyle(item.color)
-                                .frame(width: 14)
+                            if let emoji = CategoryIcon.emoji(from: item.iconRaw) {
+                                Text(emoji)
+                                    .frame(width: 14)
+                                    .accessibilityHidden(true)
+                            } else {
+                                Image(systemName: item.iconName)
+                                    .foregroundStyle(item.color.categoryForegroundColor(in: colorScheme))
+                                    .frame(width: 14)
+                            }
 
                             Text(item.name)
                                 .font(.subheadline)

@@ -12,6 +12,8 @@ import UniformTypeIdentifiers
 /// Ajustes de la aplicacion: bancos, importacion/exportacion y borrado total.
 @MainActor
 struct SettingsView: View {
+    let onSelectCategoryMovements: (UUID) -> Void
+
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.modelContext) private var modelContext
     @ObservedObject private var persistenceCoordinator = PersistenceOperationCoordinator.shared
@@ -26,6 +28,7 @@ struct SettingsView: View {
 
     @State private var showingBankManagement = false
     @State private var showingCategoryManagement = false
+    @State private var pendingCategoryNavigationID: UUID?
     @State private var showingExportSheet = false
     @State private var showingImportPicker = false
     @State private var showingSyncFolderPicker = false
@@ -123,7 +126,7 @@ struct SettingsView: View {
                         Button {
                             showLocalBackups()
                         } label: {
-                            SettingsActionLabel(title: "Restaurar backup local", systemImage: "arrow.uturn.backward.circle")
+                            SettingsActionLabel(title: "Restaurar copia de seguridad local", systemImage: "arrow.uturn.backward.circle")
                         }
                         .buttonStyle(.plain)
 
@@ -137,7 +140,7 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                     }
 
-                    SettingsPanel(title: "Sincronización manual", subtitle: "Backups en iCloud Drive", systemImage: "icloud.fill") {
+                    SettingsPanel(title: "Sincronización manual", subtitle: "Copias de seguridad en iCloud Drive", systemImage: "icloud.fill") {
                         Button {
                             showingSyncFolderPicker = true
                         } label: {
@@ -177,9 +180,9 @@ struct SettingsView: View {
                         .disabled(!ManualSyncService.isConfigured)
                     }
 
-                    SettingsPanel(title: "Backup automático", subtitle: "Copia diaria programada", systemImage: "clock.arrow.circlepath") {
+                    SettingsPanel(title: "Copia de seguridad automática", subtitle: "Copia diaria programada", systemImage: "clock.arrow.circlepath") {
                         Toggle(isOn: $autoBackupEnabled) {
-                            SettingsControlLabel(title: "Backup diario", subtitle: "Programa una copia de seguridad", systemImage: "arrow.triangle.2.circlepath")
+                            SettingsControlLabel(title: "Copia de seguridad diaria", subtitle: "Programa una copia de seguridad", systemImage: "arrow.triangle.2.circlepath")
                         }
 
                         SettingsDivider()
@@ -201,11 +204,11 @@ struct SettingsView: View {
                             ),
                             displayedComponents: .hourAndMinute
                         ) {
-                            SettingsControlLabel(title: "Hora", subtitle: "Best effort de iOS", systemImage: "clock")
+                            SettingsControlLabel(title: "Hora", subtitle: "Horario aproximado", systemImage: "clock")
                         }
                         .disabled(!autoBackupEnabled)
 
-                        SettingsFootnote("Se ejecuta en modo best effort. iOS puede retrasar la ejecución exacta con la app cerrada.")
+                        SettingsFootnote("iOS puede retrasar la copia de seguridad respecto a la hora elegida, especialmente si la app está cerrada.")
                     }
 
                     SettingsPanel(title: "Recordatorio inversión", subtitle: "Aviso de mercado", systemImage: "chart.line.uptrend.xyaxis") {
@@ -258,8 +261,15 @@ struct SettingsView: View {
             .sheet(isPresented: $showingBankManagement) {
                 BankManagementView()
             }
-            .sheet(isPresented: $showingCategoryManagement) {
-                CategoryManagementView()
+            .sheet(isPresented: $showingCategoryManagement, onDismiss: {
+                guard let categoryID = pendingCategoryNavigationID else { return }
+                pendingCategoryNavigationID = nil
+                onSelectCategoryMovements(categoryID)
+            }) {
+                CategoryManagementView { categoryID in
+                    pendingCategoryNavigationID = categoryID
+                    showingCategoryManagement = false
+                }
             }
             .sheet(isPresented: $showingExportSheet) {
                 if let url = exportedFileURL {
@@ -308,11 +318,11 @@ struct SettingsView: View {
                 titleVisibility: .visible
             ) {
                 Button("Cancelar", role: .cancel) {}
-                Button("Reparar y crear backup", role: .destructive) {
+                Button("Reparar y crear copia de seguridad", role: .destructive) {
                     repairHistoricalBalances()
                 }
             } message: {
-                Text("Se creará un backup local antes de revisar y recalcular los saldos de \(historicalMovementCount) movimiento(s).")
+                Text("Se creará una copia de seguridad local antes de revisar y recalcular los saldos de \(historicalMovementCount) movimiento(s).")
             }
             .alert("Eliminar todos los datos", isPresented: $showingDeleteAllConfirmation) {
                 Button("Cancelar", role: .cancel) {}
@@ -510,7 +520,7 @@ struct SettingsView: View {
                 alertTitle = report.accountsChanged == 0 && report.movementsChanged == 0
                     ? "Saldos históricos verificados"
                     : "Saldos históricos reparados"
-                alertMessage = "Se revisaron \(report.accountsChecked) cuenta(s) y \(report.movementsChecked) movimiento(s). Se actualizaron \(report.accountsChanged) cuenta(s) y \(report.movementsChanged) movimiento(s). Backup local: \(backupURL.lastPathComponent)."
+                alertMessage = "Se revisaron \(report.accountsChecked) cuenta(s) y \(report.movementsChecked) movimiento(s). Se actualizaron \(report.accountsChanged) cuenta(s) y \(report.movementsChanged) movimiento(s). Copia de seguridad local: \(backupURL.lastPathComponent)."
                 showingAlert = true
             } catch {
                 if !Task.isCancelled {
@@ -528,7 +538,7 @@ struct SettingsView: View {
             localBackups = try LocalRepairBackupService.availableBackups()
             showingLocalBackups = true
         } catch {
-            showError("No se pudieron cargar los backups locales: \(error.localizedDescription)")
+            showError("No se pudieron cargar las copias de seguridad locales: \(error.localizedDescription)")
         }
     }
 
@@ -626,15 +636,15 @@ struct SettingsView: View {
                     currencyCode: appCurrencyCode
                 )
 
-                alertTitle = "Backup restaurado"
+                alertTitle = "Copia de seguridad restaurada"
                 let repairedReferencesMessage = importResult.repairedReferences > 0
                     ? " Se repararon \(importResult.repairedReferences) referencias opcionales inválidas."
                     : ""
-                alertMessage = "Se restauró la copia del \(backup.exportDate.formatted(date: .abbreviated, time: .shortened)).\(repairedReferencesMessage) Backup del estado anterior: \(currentBackupURL.lastPathComponent)."
+                alertMessage = "Se restauró la copia del \(backup.exportDate.formatted(date: .abbreviated, time: .shortened)).\(repairedReferencesMessage) Copia de seguridad del estado anterior: \(currentBackupURL.lastPathComponent)."
                 showingAlert = true
             } catch {
                 if !Task.isCancelled {
-                    showError("No se pudo restaurar el backup local: \(error.localizedDescription)")
+                    showError("No se pudo restaurar la copia de seguridad local: \(error.localizedDescription)")
                 }
             }
         }
@@ -725,7 +735,7 @@ struct SettingsView: View {
     }
 
     private var deleteConfirmationMessage: String {
-        "Se eliminaran \(deleteCounts?.banks ?? 0) banco(s), \(deleteCounts?.accounts ?? 0) cuenta(s), \(deleteCounts?.categories ?? 0) categoria(s), \(deleteCounts?.movements ?? 0) movimiento(s), \(deleteCounts?.investmentSnapshots ?? 0) snapshot(s) de inversión y \(deleteCounts?.recurringMovements ?? 0) recurrencia(s). Esta accion no se puede deshacer."
+        "Se eliminarán estos datos: bancos (\(deleteCounts?.banks ?? 0)), cuentas (\(deleteCounts?.accounts ?? 0)), categorías (\(deleteCounts?.categories ?? 0)), movimientos (\(deleteCounts?.movements ?? 0)), registros de inversión (\(deleteCounts?.investmentSnapshots ?? 0)) y recurrencias (\(deleteCounts?.recurringMovements ?? 0)). Esta acción no se puede deshacer."
     }
 
     private func showError(_ message: String) {
@@ -755,7 +765,7 @@ struct SettingsView: View {
                 syncFolderName = url.lastPathComponent
                 updateAutoBackupSchedule()
                 alertTitle = "Carpeta configurada"
-                alertMessage = "Se guardarán backups en \(url.lastPathComponent)."
+                alertMessage = "Se guardarán copias de seguridad en \(url.lastPathComponent)."
                 showingAlert = true
             } catch {
                 showError("No se pudo guardar la carpeta: \(error.localizedDescription)")
@@ -776,7 +786,7 @@ struct SettingsView: View {
                 formatter.dateStyle = .short
                 formatter.timeStyle = .short
 
-                alertTitle = "Backup exportado"
+                alertTitle = "Copia de seguridad exportada"
                 alertMessage = "Se guardó \(backup.url.lastPathComponent) en iCloud Drive (\(formatter.string(from: backup.exportDate)))."
                 showingAlert = true
             } catch {

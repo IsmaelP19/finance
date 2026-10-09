@@ -72,8 +72,16 @@ struct BankManagementView: View {
                                 }
                                 .tint(.financeAccent)
                             }
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    if let index = banks.firstIndex(where: { $0.id == bank.id }) {
+                                        deleteBanks(at: IndexSet(integer: index))
+                                    }
+                                } label: {
+                                    Label("Eliminar", systemImage: "trash")
+                                }
+                            }
                         }
-                        .onDelete(perform: deleteBanks)
                     }
                     .financeGlassListContainer()
                 }

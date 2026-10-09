@@ -21,7 +21,7 @@ enum LocalRepairBackupService {
         var errorDescription: String? {
             switch self {
             case .backupUnavailable:
-                return "No se pudo crear y verificar el backup local previo."
+                return "No se pudo crear y verificar la copia de seguridad local previa."
             }
         }
     }

@@ -28,7 +28,11 @@ private struct PendingReimbursementRow: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            FinanceGlassIconBadge(systemName: iconName, tint: iconColor, size: 46)
+            if movement.category?.emoji != nil {
+                CategoryIconView(iconRaw: movement.category?.iconRaw, color: iconColor, size: 46)
+            } else {
+                FinanceGlassIconBadge(systemName: iconName, tint: iconColor, size: 46)
+            }
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(movement.concept)

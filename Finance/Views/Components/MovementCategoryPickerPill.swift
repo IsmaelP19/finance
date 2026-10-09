@@ -11,15 +11,24 @@ import SwiftUI
 struct MovementCategoryPickerPill: View, Equatable {
     let title: String
     let iconName: String
+    let iconRaw: String?
     let tint: Color
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: iconName)
-                .font(.caption2.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 24, height: 24)
-                .background(tint, in: Circle())
+            if let emoji = CategoryIcon.emoji(from: iconRaw) {
+                Text(emoji)
+                    .font(.system(size: 16))
+                    .frame(width: 24, height: 24)
+                    .background(tint, in: Circle())
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: iconName)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 24, height: 24)
+                    .background(tint, in: Circle())
+            }
 
             Text(title)
                 .lineLimit(1)

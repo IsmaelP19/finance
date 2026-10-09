@@ -23,6 +23,19 @@ private enum QuickExpenseSheet: Identifiable {
     }
 }
 
+struct CategoryMovementNavigationRequest: Equatable {
+    let id = UUID()
+    let categoryID: UUID
+}
+
+private enum FinanceTab: Hashable {
+    case home
+    case movements
+    case calendar
+    case accounts
+    case settings
+}
+
 /// Vista raíz de la aplicación con navegación inferior por pestañas.
 @MainActor
 struct ContentView: View {
@@ -42,6 +55,8 @@ struct ContentView: View {
     @State private var walletDismissedForRestore = false
     @State private var pendingCrashReport: CrashReport?
     @State private var showingCrashReportAlert = false
+    @State private var selectedTab: FinanceTab = .home
+    @State private var categoryMovementNavigationRequest: CategoryMovementNavigationRequest?
 
     private var crashReportAlertMessage: String {
         guard let pendingCrashReport else { return "" }
@@ -55,32 +70,43 @@ struct ContentView: View {
     }
 
     private func tabContent(pendingRecurringCount: Int) -> some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             ChartsView()
                 .tabItem {
                     Label("Inicio", systemImage: "house.fill")
                 }
+                .tag(FinanceTab.home)
 
-            MovementsView()
+            MovementsView(
+                categoryNavigationRequest: $categoryMovementNavigationRequest,
+                isActiveTab: selectedTab == .movements
+            )
                 .tabItem {
                     Label("Movimientos", systemImage: "arrow.left.arrow.right.circle.fill")
                 }
+                .tag(FinanceTab.movements)
                 .badge(pendingRecurringCount > 0 ? Text("\(pendingRecurringCount)") : nil)
 
             RecurringCalendarView()
                 .tabItem {
                     Label("Calendario", systemImage: "calendar")
                 }
+                .tag(FinanceTab.calendar)
 
             AccountListView()
                 .tabItem {
                     Label("Cuentas", systemImage: "building.columns")
                 }
+                .tag(FinanceTab.accounts)
 
-            SettingsView()
+            SettingsView(onSelectCategoryMovements: { categoryID in
+                categoryMovementNavigationRequest = CategoryMovementNavigationRequest(categoryID: categoryID)
+                selectedTab = .movements
+            })
                 .tabItem {
                     Label("Ajustes", systemImage: "gearshape.fill")
                 }
+                .tag(FinanceTab.settings)
         }
         .tint(.financeAccent)
         .font(FinanceGlassTokens.Typography.appDefaultFont)
@@ -103,7 +129,7 @@ struct ContentView: View {
 
     private func alertContent(pendingRecurringCount: Int) -> some View {
         lifecycleContent(pendingRecurringCount: pendingRecurringCount)
-        .alert("Backup más reciente disponible", isPresented: $showingSyncImportPrompt) {
+        .alert("Copia de seguridad más reciente disponible", isPresented: $showingSyncImportPrompt) {
             Button("Ahora no", role: .cancel) {
                 if let pendingSyncExportDate {
                     ManualSyncService.markDismissed(exportDate: pendingSyncExportDate)

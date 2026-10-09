@@ -221,11 +221,11 @@ struct ChartsView: View {
                     Button {
                         showingWrappedHistory = true
                     } label: {
-                        Label("Wrapped", systemImage: "sparkles.rectangle.stack")
+                        Label("Resumen", systemImage: "sparkles.rectangle.stack")
                             .labelStyle(.iconOnly)
                             .financeToolbarIconStyle()
                     }
-                    .accessibilityLabel("Abrir wrapped mensual")
+                    .accessibilityLabel("Abrir resumen mensual")
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {

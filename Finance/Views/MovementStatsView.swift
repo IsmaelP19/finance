@@ -570,7 +570,7 @@ struct MovementStatsView: View {
                     Button {
                         showingWrappedHistory = true
                     } label: {
-                        Label("Wrapped", systemImage: "sparkles.rectangle.stack")
+                        Label("Resumen", systemImage: "sparkles.rectangle.stack")
                             .labelStyle(.iconOnly)
                             .financeToolbarIconStyle()
                     }
@@ -682,7 +682,7 @@ struct MovementStatsView: View {
                     FinanceEmptyStateContent(
                         "Sin datos para este periodo",
                         systemImage: "calendar.badge.exclamationmark",
-                        description: Text("Prueba otro periodo o registra snapshots de inversión para las fechas seleccionadas")
+                        description: Text("Prueba otro periodo o registra valores de inversión para las fechas seleccionadas")
                     )
 
                     if selectedDateFilter != .all {
@@ -1267,6 +1267,7 @@ struct MovementStatsView: View {
                 id: key,
                 name: first.category?.name ?? "Sin categoría",
                 iconName: first.category?.iconName ?? "tag",
+                iconRaw: first.category?.iconRaw,
                 color: first.category?.color ?? .gray,
                 amount: total,
                 movementCount: groupedMovements.count

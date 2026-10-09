@@ -12,6 +12,7 @@ struct CategoryAmountDatum: Identifiable {
     let id: String
     let name: String
     let iconName: String
+    let iconRaw: String?
     let color: Color
     let amount: Decimal
     let movementCount: Int
@@ -48,7 +49,7 @@ struct CategoryAmountBarChart: View {
                         x: .value("Importe", item.amountDouble),
                         y: .value("Categoría", item.name)
                     )
-                    .foregroundStyle(item.color.gradient)
+                    .foregroundStyle(item.color.categoryForegroundColor(in: colorScheme).gradient)
                     .cornerRadius(5)
                     .annotation(position: .trailing) {
                         Text(item.amount.asCurrency(code: currencyCode))
@@ -80,9 +81,15 @@ struct CategoryAmountBarChart: View {
                 VStack(spacing: 8) {
                     ForEach(data) { item in
                         HStack(spacing: 8) {
-                            Image(systemName: item.iconName)
-                                .foregroundStyle(item.color)
-                                .frame(width: 16)
+                            if let emoji = CategoryIcon.emoji(from: item.iconRaw) {
+                                Text(emoji)
+                                    .frame(width: 16)
+                                    .accessibilityHidden(true)
+                            } else {
+                                Image(systemName: item.iconName)
+                                    .foregroundStyle(item.color.categoryForegroundColor(in: colorScheme))
+                                    .frame(width: 16)
+                            }
 
                             Text(item.name)
                                 .font(.subheadline)

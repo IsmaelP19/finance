@@ -85,6 +85,13 @@ private enum MovementListDateFilter: String, CaseIterable, Identifiable {
     }
 }
 
+private struct MovementFilterSelection: Equatable {
+    let accountID: UUID?
+    let type: MovementListTypeFilter
+    let categories: Set<MovementCategoryFilter>
+    let date: MovementListDateFilter
+}
+
 private struct MovementListSummary {
     var totalIncome: Decimal = 0
     var totalExpense: Decimal = 0
@@ -199,6 +206,9 @@ struct MovementsView: View {
     private static let movementFetchBatchSize = 120
     private static let movementSummaryBatchSize = 60
 
+    @Binding var categoryNavigationRequest: CategoryMovementNavigationRequest?
+    let isActiveTab: Bool
+
     @Environment(\.modelContext) private var modelContext
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
     @AppStorage(HideBalances.storageKey) private var hideBalances = false
@@ -252,8 +262,22 @@ struct MovementsView: View {
     @State private var editMovementDismissContext: MovementDetailDismissContext?
     @State private var scrollTracker = MovementScrollTracker()
     @State private var isFloatingFiltersVisible = false
+    @State private var ignoredNavigationFilterSelection: MovementFilterSelection?
+    @State private var ignoreNextSearchChange = false
+    @State private var hasAppeared = false
+    @State private var skipNextAppearReload = false
+    @State private var lastAppliedCategoryNavigationRequestID: UUID?
 
     private var calendar: Calendar { .current }
+
+    private var filterSelection: MovementFilterSelection {
+        MovementFilterSelection(
+            accountID: selectedAccountFilterID,
+            type: selectedTypeFilter,
+            categories: selectedCategoryFilters,
+            date: selectedDateFilter
+        )
+    }
 
     private var trimmedSearchText: String {
         searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -315,9 +339,9 @@ struct MovementsView: View {
         }
     }
 
-    private var categoryFilterOptions: [(id: MovementCategoryFilter, title: String, iconName: String, color: Color)] {
+    private var categoryFilterOptions: [(id: MovementCategoryFilter, title: String, iconName: String, iconRaw: String?, color: Color)] {
         categories.map { category in
-            (MovementCategoryFilter.category(category.id), category.name, category.iconName, category.color)
+            (MovementCategoryFilter.category(category.id), category.name, category.iconName, category.iconRaw, category.color)
         }
     }
 
@@ -577,42 +601,70 @@ struct MovementsView: View {
             .navigationTitle("Movimientos")
             .searchable(text: $searchText, prompt: "Buscar movimientos")
             .onAppear {
+                hasAppeared = true
+                pruneCategorySelections()
                 clearArchivedAccountFilterIfNeeded()
                 refreshArchivedAccountMovementSnapshots()
-                reloadMovements(refreshAvailableYears: true)
+                if skipNextAppearReload {
+                    skipNextAppearReload = false
+                } else if let request = categoryNavigationRequest, isActiveTab {
+                    applyCategoryNavigationRequest(request)
+                } else {
+                    reloadMovements(refreshAvailableYears: true)
+                }
             }
             .onDisappear {
+                hasAppeared = false
+                skipNextAppearReload = false
                 searchReloadTask?.cancel()
                 searchReloadTask = nil
                 summaryReloadTask?.cancel()
                 summaryReloadTask = nil
             }
-            .onChange(of: selectedDateFilter) { _, _ in
-                reloadMovements()
-            }
-            .onChange(of: selectedTypeFilter) { _, newValue in
-                if newValue == .transfer {
+            .onChange(of: filterSelection) { oldValue, newValue in
+                if let ignoredNavigationFilterSelection {
+                    self.ignoredNavigationFilterSelection = nil
+                    guard ignoredNavigationFilterSelection != newValue else { return }
+                }
+
+                if oldValue.type != newValue.type, newValue.type == .transfer {
                     selectedCategoryFilters.removeAll()
-                } else {
+                } else if oldValue.type != newValue.type {
                     pruneCategorySelections()
                 }
 
-                reloadMovements()
-            }
-            .onChange(of: selectedAccountFilterID) { _, _ in
-                clearArchivedAccountFilterIfNeeded()
-                reloadMovements()
+                if oldValue.accountID != newValue.accountID {
+                    clearArchivedAccountFilterIfNeeded()
+                }
+
+                if filterSelection == newValue {
+                    reloadMovements()
+                }
             }
             .onChange(of: accounts.map(\.isArchived)) { _, _ in
                 clearArchivedAccountFilterIfNeeded()
                 refreshArchivedAccountMovementSnapshots()
                 reloadMovements()
             }
-            .onChange(of: selectedCategoryFilters) { _, _ in
-                reloadMovements()
+            .onChange(of: categories.map(\.id)) { _, _ in
+                pruneCategorySelections()
             }
             .onChange(of: searchText) { _, _ in
-                scheduleSearchReload()
+                if ignoreNextSearchChange {
+                    ignoreNextSearchChange = false
+                } else {
+                    scheduleSearchReload()
+                }
+            }
+            .onChange(of: categoryNavigationRequest) { _, request in
+                guard isActiveTab, hasAppeared, let request else { return }
+                applyCategoryNavigationRequest(request)
+                skipNextAppearReload = true
+            }
+            .onChange(of: isActiveTab) { _, isActive in
+                guard isActive, hasAppeared, let request = categoryNavigationRequest else { return }
+                applyCategoryNavigationRequest(request)
+                skipNextAppearReload = true
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -818,7 +870,6 @@ struct MovementsView: View {
             ForEach(visibleMovementRows) { row in
                 movementRow(for: row)
             }
-            .onDelete(perform: deleteMovements)
 
             if visibleFilteredMovements.count < movementCount {
                 movementPaginationRow
@@ -854,6 +905,15 @@ struct MovementsView: View {
                     Label("Editar", systemImage: "pencil")
                 }
                 .tint(.financeAccent)
+            }
+        }
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive) {
+                if let index = visibleFilteredMovements.firstIndex(where: { $0.id == row.movement.id }) {
+                    deleteMovements(at: IndexSet(integer: index))
+                }
+            } label: {
+                Label("Eliminar", systemImage: "trash")
             }
         }
     }
@@ -956,6 +1016,32 @@ struct MovementsView: View {
         resetMovementPagination()
         loadNextMovementPage()
         startSummaryReload(token: token, refreshAvailableYears: refreshAvailableYears)
+    }
+
+    private func applyCategoryNavigationRequest(_ request: CategoryMovementNavigationRequest) {
+        guard lastAppliedCategoryNavigationRequestID != request.id else { return }
+        lastAppliedCategoryNavigationRequestID = request.id
+
+        let targetSelection = MovementFilterSelection(
+            accountID: nil,
+            type: .all,
+            categories: [.category(request.categoryID)],
+            date: .all
+        )
+        if filterSelection != targetSelection {
+            ignoredNavigationFilterSelection = targetSelection
+        }
+        if !searchText.isEmpty {
+            ignoreNextSearchChange = true
+        }
+
+        selectedAccountFilterID = nil
+        selectedTypeFilter = .all
+        selectedCategoryFilters = targetSelection.categories
+        selectedDateFilter = .all
+        searchText = ""
+        categoryNavigationRequest = nil
+        reloadMovements(refreshAvailableYears: true)
     }
 
     private func refreshSummaryAndRecurringStateSilently(refreshAvailableYears: Bool = false) {
@@ -1970,10 +2056,11 @@ private struct MovementInlineSectionHeader: View {
 
 private struct MovementAdvancedFiltersSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
 
     @Binding var selectedTypeFilter: MovementListTypeFilter
     @Binding var selectedCategoryFilters: Set<MovementCategoryFilter>
-    let categoryOptions: [(id: MovementCategoryFilter, title: String, iconName: String, color: Color)]
+    let categoryOptions: [(id: MovementCategoryFilter, title: String, iconName: String, iconRaw: String?, color: Color)]
     var onClearCategories: () -> Void
 
     var body: some View {
@@ -2036,12 +2123,20 @@ private struct MovementAdvancedFiltersSheet: View {
                                 }
                             } label: {
                                 HStack(spacing: 10) {
-                                    Image(systemName: option.iconName)
-                                        .font(.subheadline.weight(.semibold))
-                                        .symbolRenderingMode(.hierarchical)
-                                        .foregroundStyle(option.color)
-                                        .frame(width: 30, height: 30)
-                                        .background(option.color.opacity(0.16), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    if let emoji = CategoryIcon.emoji(from: option.iconRaw) {
+                                        Text(emoji)
+                                            .font(.subheadline)
+                                            .frame(width: 30, height: 30)
+                                            .background(option.color.opacity(0.16), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                            .accessibilityHidden(true)
+                                    } else {
+                                        Image(systemName: option.iconName)
+                                            .font(.subheadline.weight(.semibold))
+                                            .symbolRenderingMode(.hierarchical)
+                                            .foregroundStyle(option.color.categoryForegroundColor(in: colorScheme))
+                                            .frame(width: 30, height: 30)
+                                            .background(option.color.opacity(0.16), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    }
 
                                     Text(option.title)
                                         .foregroundStyle(.primary)
@@ -2050,7 +2145,7 @@ private struct MovementAdvancedFiltersSheet: View {
 
                                     if selectedCategoryFilters.contains(option.id) {
                                         Image(systemName: "checkmark.circle.fill")
-                                            .foregroundStyle(option.color)
+                                            .foregroundStyle(option.color.categoryForegroundColor(in: colorScheme))
                                     }
                                 }
                             }
@@ -2372,7 +2467,8 @@ private struct PendingRecurringMovementRowView: View {
                     id: "category",
                     name: categoryName,
                     iconName: categoryIconName,
-                    color: categoryColor
+                    color: categoryColor,
+                    iconRaw: pending.rule.category?.iconRaw
                 )
             ]
         }()
@@ -2465,7 +2561,8 @@ private struct MovementRowView: View, @MainActor Equatable {
                 id: "category",
                 name: movement.category?.name ?? "Sin categoría",
                 iconName: movement.category?.iconName ?? "tag",
-                color: movement.category?.color ?? .secondary
+                color: movement.category?.color ?? .secondary,
+                iconRaw: movement.category?.iconRaw
             )
         ]
 

@@ -47,6 +47,7 @@ struct MovementDetailView: View {
     @State private var showingArchivedAccountAlert = false
     @State private var categoryLabel = "Sin categoría"
     @State private var categoryIconName = "tag"
+    @State private var categoryIconRaw: String?
     @State private var categoryTint: Color = .secondary
     @State private var isShowingCategoryPicker = false
 
@@ -283,9 +284,15 @@ struct MovementDetailView: View {
                 .fill(movementIconColor.opacity(0.2))
                 .frame(width: 82, height: 82)
                 .overlay {
-                    Image(systemName: movementIconName)
-                        .font(.system(size: 34, weight: .semibold))
-                        .foregroundStyle(movementIconColor)
+                    if let emoji = movement.category?.emoji {
+                        Text(emoji)
+                            .font(.system(size: 42))
+                            .accessibilityHidden(true)
+                    } else {
+                        Image(systemName: movementIconName)
+                            .font(.system(size: 34, weight: .semibold))
+                            .foregroundStyle(movementIconColor)
+                    }
                 }
 
             Text(movement.concept)
@@ -342,6 +349,7 @@ struct MovementDetailView: View {
                         MovementCategoryPickerPill(
                             title: categoryLabel,
                             iconName: categoryIconName,
+                            iconRaw: categoryIconRaw,
                             tint: categoryTint
                         )
                     }
@@ -598,6 +606,7 @@ struct MovementDetailView: View {
     private func syncCategoryLabelFromMovement() {
         categoryLabel = movement.category?.name ?? "Sin categoría"
         categoryIconName = movement.category?.iconName ?? "tag"
+        categoryIconRaw = movement.category?.iconRaw
         categoryTint = movement.category?.color ?? .secondary
     }
 

@@ -90,10 +90,17 @@ struct MovementCategoryMenuContent: View {
                     selection = category
                 }
             } label: {
-                Label(
-                    category.name,
-                    systemImage: category.id == selection?.id ? "checkmark" : category.iconName
-                )
+                Label {
+                    Text(category.name)
+                } icon: {
+                    if category.id == selection?.id {
+                        Image(systemName: "checkmark")
+                    } else if let emoji = category.emoji {
+                        Text(emoji).accessibilityHidden(true)
+                    } else {
+                        Image(systemName: category.iconName)
+                    }
+                }
             }
         }
 
@@ -171,10 +178,17 @@ struct MovementDetailCategoryMenuContent: View {
                     onSelect(category)
                 }
             } label: {
-                Label(
-                    category.name,
-                    systemImage: category.id == selectedCategoryID ? "checkmark" : category.iconName
-                )
+                Label {
+                    Text(category.name)
+                } icon: {
+                    if category.id == selectedCategoryID {
+                        Image(systemName: "checkmark")
+                    } else if let emoji = category.emoji {
+                        Text(emoji).accessibilityHidden(true)
+                    } else {
+                        Image(systemName: category.iconName)
+                    }
+                }
             }
         }
     }

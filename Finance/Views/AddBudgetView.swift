@@ -27,6 +27,7 @@ private struct DraftItem: Identifiable {
 struct AddBudgetView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
 
     @Query(sort: \MovementCategory.name) private var allCategories: [MovementCategory]
@@ -149,9 +150,15 @@ struct AddBudgetView: View {
             // Draft items
             ForEach($draftItems) { $item in
                 HStack(spacing: 10) {
-                    Image(systemName: item.category.iconName)
-                        .foregroundStyle(item.category.color)
-                        .frame(width: 22)
+                    if let emoji = item.category.emoji {
+                        Text(emoji)
+                            .accessibilityHidden(true)
+                            .frame(width: 22)
+                    } else {
+                        Image(systemName: item.category.iconName)
+                            .foregroundStyle(item.category.color.categoryForegroundColor(in: colorScheme))
+                            .frame(width: 22)
+                    }
 
                     Text(item.category.name)
                         .lineLimit(1)
@@ -165,9 +172,15 @@ struct AddBudgetView: View {
 
                     CurrencySymbolLabel(code: appCurrencyCode, companion: .caption)
                 }
-            }
-            .onDelete { indexSet in
-                draftItems.remove(atOffsets: indexSet)
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        if let index = draftItems.firstIndex(where: { $0.id == item.id }) {
+                            draftItems.remove(atOffsets: IndexSet(integer: index))
+                        }
+                    } label: {
+                        Label("Eliminar", systemImage: "trash")
+                    }
+                }
             }
 
             // Add category button
@@ -280,8 +293,16 @@ struct AddBudgetView: View {
                     draftItems.append(DraftItem(category: cat, amountText: ""))
                     showingAddItemPicker = false
                 } label: {
-                    Label(cat.name, systemImage: cat.iconName)
-                        .foregroundStyle(.primary)
+                    Label {
+                        Text(cat.name)
+                    } icon: {
+                        if let emoji = cat.emoji {
+                            Text(emoji).accessibilityHidden(true)
+                        } else {
+                            Image(systemName: cat.iconName)
+                        }
+                    }
+                    .foregroundStyle(.primary)
                 }
                 .financeGlassFormSection()
             }

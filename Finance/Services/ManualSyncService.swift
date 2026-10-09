@@ -53,7 +53,7 @@ enum PersistenceOperationError: LocalizedError {
         case .localChangesDetected:
             return "La restauración se canceló porque los datos locales cambiaron mientras se preparaba."
         case .localBackupUnavailable:
-            return "No se pudo crear y verificar el backup local previo."
+            return "No se pudo crear y verificar la copia de seguridad local previa."
         }
     }
 }
@@ -81,9 +81,9 @@ enum ManualSyncService {
             case .cannotAccessFolder:
                 return "No se pudo acceder a la carpeta de sincronización."
             case .noBackupsFound:
-                return "No se encontraron backups en la carpeta configurada."
+                return "No se encontraron copias de seguridad en la carpeta configurada."
             case .preRestoreBackupUnavailable:
-                return "No se pudo crear y verificar el backup previo en la carpeta iCloud Drive configurada."
+                return "No se pudo crear y verificar la copia de seguridad previa en la carpeta de iCloud Drive configurada."
             }
         }
     }

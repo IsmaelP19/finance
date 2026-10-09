@@ -211,6 +211,7 @@ struct MovementCategoryPickerSheet: View {
             MovementCategoryPickerGridCell(
                 title: "Crear",
                 systemImage: "plus",
+                iconRaw: nil,
                 tint: .financeAccent,
                 isSelected: false,
                 showsCreateStyle: true
@@ -227,6 +228,7 @@ struct MovementCategoryPickerSheet: View {
             MovementCategoryPickerGridCell(
                 title: category.name,
                 systemImage: category.iconName,
+                iconRaw: category.iconRaw,
                 tint: category.color,
                 isSelected: draftSelectionID == category.id,
                 showsCreateStyle: false
@@ -241,6 +243,7 @@ struct MovementCategoryPickerSheet: View {
 private struct MovementCategoryPickerGridCell: View {
     let title: String
     let systemImage: String
+    let iconRaw: String?
     let tint: Color
     let isSelected: Bool
     let showsCreateStyle: Bool
@@ -248,23 +251,31 @@ private struct MovementCategoryPickerGridCell: View {
     var body: some View {
         VStack(spacing: 8) {
             ZStack(alignment: .bottomTrailing) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(showsCreateStyle ? Color.primary : Color.white)
-                    .frame(width: 52, height: 52)
-                    .background(
-                        showsCreateStyle
-                            ? Color.primary.opacity(0.08)
-                            : tint,
-                        in: Circle()
-                    )
-                    .overlay(
-                        Circle()
-                            .strokeBorder(
-                                showsCreateStyle ? Color.primary.opacity(0.12) : Color.white.opacity(0.2),
-                                lineWidth: 1
-                            )
-                    )
+                Group {
+                    if let emoji = CategoryIcon.emoji(from: iconRaw) {
+                        Text(emoji)
+                            .font(.system(size: 29))
+                            .accessibilityHidden(true)
+                    } else {
+                        Image(systemName: systemImage)
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(showsCreateStyle ? Color.primary : Color.white)
+                    }
+                }
+                .frame(width: 52, height: 52)
+                .background(
+                    showsCreateStyle
+                        ? Color.primary.opacity(0.08)
+                        : tint,
+                    in: Circle()
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(
+                            showsCreateStyle ? Color.primary.opacity(0.12) : Color.white.opacity(0.2),
+                            lineWidth: 1
+                        )
+                )
 
                 if isSelected {
                     Image(systemName: "checkmark.circle.fill")

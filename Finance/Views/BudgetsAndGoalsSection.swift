@@ -36,7 +36,7 @@ struct BudgetsSection: View {
                         .tracking(0.7)
                         .foregroundStyle(.primary.opacity(0.78))
 
-                    Text("Controla tus gastos por categoria")
+                    Text("Controla tus gastos por categoría")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1125,10 +1125,17 @@ private struct BudgetItemRow: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 if let cat = item.category {
-                    Image(systemName: cat.iconName)
-                        .font(.subheadline)
-                        .foregroundStyle(cat.color)
-                        .frame(width: 22)
+                    if let emoji = cat.emoji {
+                        Text(emoji)
+                            .font(.subheadline)
+                            .frame(width: 22)
+                            .accessibilityHidden(true)
+                    } else {
+                        Image(systemName: cat.iconName)
+                            .font(.subheadline)
+                            .foregroundStyle(cat.color.categoryForegroundColor(in: colorScheme))
+                            .frame(width: 22)
+                    }
                 }
 
                 Text(item.category?.name ?? "Sin categoría")

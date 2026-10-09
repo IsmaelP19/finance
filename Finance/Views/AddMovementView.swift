@@ -46,7 +46,6 @@ struct AddMovementView: View {
     @State private var selectedCategory: MovementCategory?
     @State private var categorySearchText: String = ""
     @State private var isCreatingNewCategory = false
-    @State private var newCategoryName: String = ""
     @State private var occurredAt: Date = Date()
     @State private var notes: String = ""
     @State private var isRecurring = false
@@ -456,7 +455,6 @@ struct AddMovementView: View {
                         },
                         onDismissAmountKeyboard: dismissAmountKeyboardIfActive,
                         onCreateCategory: {
-                            newCategoryName = ""
                             categorySearchText = ""
                             isCreatingNewCategory = true
                         }
@@ -850,10 +848,10 @@ struct AddMovementView: View {
                 }
             }
             .sheet(isPresented: $isCreatingNewCategory) {
-                CreateMovementCategorySheet(categoryName: $newCategoryName) { category in
+                CategoryEditorSheet(onSaved: { category in
                     selectedCategory = category
                     categorySearchText = ""
-                }
+                })
             }
             .sheet(isPresented: $showingQuickReimbursementSheet) {
                 if let movementToEdit {
@@ -1744,6 +1742,7 @@ private struct MovementDraftHero: View {
     @State private var destinationAccountLabel = "Sin destino"
     @State private var categoryLabel = "Sin categoría"
     @State private var categoryIconName = "tag"
+    @State private var categoryIconRaw: String?
     @State private var categoryTint: Color = .secondary
     @State private var isShowingCategoryPicker = false
     @State private var accountBankLabel = ""
@@ -1870,6 +1869,7 @@ private struct MovementDraftHero: View {
 
         categoryLabel = selectedCategory?.name ?? "Sin categoría"
         categoryIconName = selectedCategory?.iconName ?? "tag"
+        categoryIconRaw = selectedCategory?.iconRaw
         categoryTint = selectedCategory?.color ?? .secondary
     }
 
@@ -1971,6 +1971,7 @@ private struct MovementDraftHero: View {
             MovementCategoryPickerPill(
                 title: categoryLabel,
                 iconName: categoryIconName,
+                iconRaw: categoryIconRaw,
                 tint: categoryTint
             )
         }
@@ -2116,132 +2117,5 @@ private struct MovementEditorDetailSectionModifier: ViewModifier {
 private extension View {
     func movementEditorDetailSection() -> some View {
         modifier(MovementEditorDetailSectionModifier())
-    }
-}
-
-/// Sheet para crear una categoría nueva en caliente desde el formulario.
-private struct CreateMovementCategorySheet: View {
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
-
-    @Query(sort: \MovementCategory.name) private var categories: [MovementCategory]
-
-    @Binding var categoryName: String
-    var onCreated: (MovementCategory) -> Void
-
-    @State private var showingValidationAlert = false
-    @State private var validationMessage = ""
-    @State private var selectedIcon: CategoryIcon = .tag
-    @State private var selectedColor: CategoryColor = .blue
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("Nombre", text: $categoryName)
-                }
-                header: {
-                    FinanceGlassSectionHeader(title: "Nombre de la categoría", systemImage: "textformat", subtitle: "Cómo aparecerá en tus movimientos")
-                }
-                .financeGlassFormSection()
-
-                Section {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
-                        ForEach(CategoryIcon.allCases) { icon in
-                            Button {
-                                selectedIcon = icon
-                            } label: {
-                                Image(systemName: icon.systemName)
-                                    .font(.system(size: 17, weight: .semibold))
-                                    .frame(width: 38, height: 38)
-                                    .foregroundStyle(selectedIcon == icon ? .white : .primary)
-                                    .background(selectedIcon == icon ? selectedColor.color : Color.clear)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(selectedIcon == icon ? Color.clear : Color.secondary.opacity(0.3), lineWidth: 1)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                header: {
-                    FinanceGlassSectionHeader(title: "Icono", systemImage: "square.grid.3x3", subtitle: "Identifica la categoría de un vistazo")
-                }
-                .financeGlassFormSection()
-
-                Section {
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 12) {
-                        ForEach(CategoryColor.allCases) { color in
-                            Button {
-                                selectedColor = color
-                            } label: {
-                                Circle()
-                                    .fill(color.color)
-                                    .frame(width: 34, height: 34)
-                                    .overlay(
-                                        Circle().stroke(Color.white, lineWidth: selectedColor == color ? 3 : 0)
-                                    )
-                                    .overlay(
-                                        Circle().stroke(color.color, lineWidth: selectedColor == color ? 1 : 0)
-                                            .padding(-2)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-                header: {
-                    FinanceGlassSectionHeader(title: "Color", systemImage: "paintpalette", subtitle: "Acento visual para gráficos y listados")
-                }
-                .financeGlassFormSection()
-            }
-            .financeGlassListContainer()
-            .navigationTitle("Nueva categoría")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancelar") { dismiss() }
-                }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Crear") {
-                        createCategory()
-                    }
-                    .fontWeight(.semibold)
-                }
-            }
-            .alert("Error", isPresented: $showingValidationAlert) {
-                Button("Aceptar", role: .cancel) {}
-            } message: {
-                Text(validationMessage)
-            }
-        }
-    }
-
-    private func createCategory() {
-        let trimmed = categoryName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            validationMessage = "El nombre de la categoría es obligatorio."
-            showingValidationAlert = true
-            return
-        }
-
-        let duplicateExists = categories.contains {
-            $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
-        }
-        guard !duplicateExists else {
-            validationMessage = "Ya existe una categoría con ese nombre."
-            showingValidationAlert = true
-            return
-        }
-
-        let category = MovementCategory(name: trimmed, icon: selectedIcon, color: selectedColor)
-        modelContext.insert(category)
-        onCreated(category)
-        dismiss()
     }
 }

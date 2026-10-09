@@ -15,7 +15,7 @@ enum WalletCategorySuggester {
     static func suggest(
         merchant: String?,
         in context: ModelContext,
-        model: any WalletMerchantCategoryModeling = SystemWalletCategoryModel(),
+        model: (any WalletMerchantCategoryModeling)? = nil,
         modelTimeout: Duration = .seconds(8)
     ) async -> MovementCategory? {
         guard let normalized = WalletCategoryMatcher.normalizedMerchant(merchant) else { return nil }
@@ -33,7 +33,7 @@ enum WalletCategorySuggester {
 
         let displayMerchant = merchant?.trimmingCharacters(in: .whitespacesAndNewlines) ?? normalized
         guard let suggestedName = await modelName(
-            model: model,
+            model: model ?? SystemWalletCategoryModel(),
             merchant: displayMerchant,
             allowedNames: allowed,
             timeout: modelTimeout

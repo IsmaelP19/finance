@@ -5,6 +5,7 @@ struct MovementRowBadge: Identifiable, Hashable {
     let name: String
     let iconName: String
     let color: Color
+    var iconRaw: String? = nil
 }
 
 struct MovementTrailingPill {
@@ -198,20 +199,20 @@ struct RecurringMovementRowContent: View {
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 6) {
                     ForEach(badges) { badge in
-                        CategoryChipView(name: badge.name, iconName: badge.iconName, color: badge.color)
+                        CategoryChipView(name: badge.name, iconName: badge.iconName, iconRaw: badge.iconRaw, color: badge.color)
                             .fixedSize()
                     }
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
                     if let firstBadge = badges.first {
-                        CategoryChipView(name: firstBadge.name, iconName: firstBadge.iconName, color: firstBadge.color)
+                        CategoryChipView(name: firstBadge.name, iconName: firstBadge.iconName, iconRaw: firstBadge.iconRaw, color: firstBadge.color)
                     }
 
                     if badges.count > 1 {
                         HStack(spacing: 6) {
                             ForEach(Array(badges.dropFirst())) { badge in
-                                CategoryChipView(name: badge.name, iconName: badge.iconName, color: badge.color)
+                                CategoryChipView(name: badge.name, iconName: badge.iconName, iconRaw: badge.iconRaw, color: badge.color)
                                     .fixedSize()
                             }
                         }
