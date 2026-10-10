@@ -12,22 +12,34 @@ import UniformTypeIdentifiers
 
 /// Guía para crear en Atajos una automatización personal de pagos de Wallet.
 struct WalletAutomationSetupView: View {
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.large) {
-                introduction
-                templateImport
-                automationSteps
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.large) {
+                    introduction
+                    templateImport
+                    automationSteps
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, FinanceGlassTokens.Spacing.large)
+                .padding(.bottom, 32)
+                .frame(maxWidth: 720, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, FinanceGlassTokens.Spacing.large)
-            .padding(.bottom, 32)
-            .frame(maxWidth: 720, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .background(FinanceGlassBackground().ignoresSafeArea())
+            .navigationTitle("Pagos con Wallet")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cerrar") {
+                        dismiss()
+                    }
+                }
+            }
         }
-        .background(FinanceGlassBackground().ignoresSafeArea())
-        .navigationTitle("Pagos con Wallet")
-        .navigationBarTitleDisplayMode(.inline)
+        .presentationDragIndicator(.visible)
     }
 
     private var introduction: some View {
@@ -231,7 +243,5 @@ extension WalletSetupStep where Content == EmptyView {
 }
 
 #Preview {
-    NavigationStack {
-        WalletAutomationSetupView()
-    }
+    WalletAutomationSetupView()
 }

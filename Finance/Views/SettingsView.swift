@@ -28,6 +28,7 @@ struct SettingsView: View {
 
     @State private var showingBankManagement = false
     @State private var showingCategoryManagement = false
+    @State private var showingWalletAutomationSetup = false
     @State private var pendingCategoryNavigationID: UUID?
     @State private var showingExportSheet = false
     @State private var showingImportPicker = false
@@ -88,8 +89,8 @@ struct SettingsView: View {
 
                     if !persistenceCoordinator.isRestoring {
                         SettingsPanel(title: "Pagos con Wallet", subtitle: "Automatizaciones por tarjeta", systemImage: "wallet.pass.fill") {
-                            NavigationLink {
-                                WalletAutomationSetupView()
+                            Button {
+                                showingWalletAutomationSetup = true
                             } label: {
                                 SettingsActionLabel(title: "Configurar en Atajos", systemImage: "bolt.horizontal.circle")
                             }
@@ -270,6 +271,9 @@ struct SettingsView: View {
                     pendingCategoryNavigationID = categoryID
                     showingCategoryManagement = false
                 }
+            }
+            .sheet(isPresented: $showingWalletAutomationSetup) {
+                WalletAutomationSetupView()
             }
             .sheet(isPresented: $showingExportSheet) {
                 if let url = exportedFileURL {

@@ -16,12 +16,16 @@ private enum BankManagementRoute: Hashable {
 struct BankManagementView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
 
     @Query(sort: \Bank.name) private var banks: [Bank]
 
     @State private var editingBank: Bank?
     @State private var showingCreateBank = false
     @State private var navigationPath: [BankManagementRoute] = []
+    @State private var hasShownSwipeHint = false
+    @State private var hintedBankID: UUID?
+    @State private var swipeHintOffset: CGFloat = 0
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -67,6 +71,9 @@ struct BankManagementView: View {
                         }
                     }
                     .financeGlassListContainer()
+                    .task {
+                        await showSwipeHintIfNeeded()
+                    }
                 }
             }
             .navigationTitle("Bancos")
@@ -160,6 +167,7 @@ struct BankManagementView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Ver cuentas de \(bank.name), \(accountCountText(for: bank))")
         .accessibilityHint("Acciones disponibles: Editar y Eliminar.")
+        .offset(x: bank.id == hintedBankID ? swipeHintOffset : 0)
         .financeGlassClearListRow(insets: EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
         .swipeActions(edge: .leading, allowsFullSwipe: false) {
             Button {
@@ -169,7 +177,7 @@ struct BankManagementView: View {
             }
             .tint(.financeAccent)
         }
-        .swipeActions(edge: .trailing) {
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
                 deleteBank(bank)
             } label: {
@@ -188,6 +196,26 @@ struct BankManagementView: View {
             style: .continuous
         )
         .fill(.thinMaterial)
+    }
+
+    @MainActor
+    private func showSwipeHintIfNeeded() async {
+        guard !hasShownSwipeHint, !accessibilityReduceMotion, let firstBank = banks.first else { return }
+        hasShownSwipeHint = true
+        hintedBankID = firstBank.id
+
+        do {
+            try await Task.sleep(for: .milliseconds(500))
+            withAnimation(.easeInOut(duration: 0.42)) { swipeHintOffset = 22 }
+            try await Task.sleep(for: .milliseconds(560))
+            withAnimation(.easeInOut(duration: 0.42)) { swipeHintOffset = 0 }
+            try await Task.sleep(for: .milliseconds(520))
+            withAnimation(.easeInOut(duration: 0.42)) { swipeHintOffset = -22 }
+            try await Task.sleep(for: .milliseconds(560))
+            withAnimation(.easeInOut(duration: 0.42)) { swipeHintOffset = 0 }
+        } catch {
+            swipeHintOffset = 0
+        }
     }
 
     private func accountCountText(for bank: Bank) -> String {
