@@ -39,7 +39,6 @@ struct WalletAutomationSetupView: View {
                 }
             }
         }
-        .presentationDragIndicator(.visible)
     }
 
     private var introduction: some View {
