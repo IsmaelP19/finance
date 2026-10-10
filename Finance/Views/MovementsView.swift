@@ -915,6 +915,7 @@ struct MovementsView: View {
             } label: {
                 Label("Eliminar", systemImage: "trash")
             }
+            .tint(.red)
         }
     }
 
@@ -1022,11 +1023,22 @@ struct MovementsView: View {
         guard lastAppliedCategoryNavigationRequestID != request.id else { return }
         lastAppliedCategoryNavigationRequestID = request.id
 
+        let targetType: MovementListTypeFilter
+        let targetDate: MovementListDateFilter
+        switch request.scope {
+        case .all:
+            targetType = .all
+            targetDate = .all
+        case .currentMonthExpenses:
+            targetType = .expense
+            targetDate = .currentMonth
+        }
+
         let targetSelection = MovementFilterSelection(
             accountID: nil,
-            type: .all,
+            type: targetType,
             categories: [.category(request.categoryID)],
-            date: .all
+            date: targetDate
         )
         if filterSelection != targetSelection {
             ignoredNavigationFilterSelection = targetSelection
@@ -1036,9 +1048,9 @@ struct MovementsView: View {
         }
 
         selectedAccountFilterID = nil
-        selectedTypeFilter = .all
+        selectedTypeFilter = targetType
         selectedCategoryFilters = targetSelection.categories
-        selectedDateFilter = .all
+        selectedDateFilter = targetDate
         searchText = ""
         categoryNavigationRequest = nil
         reloadMovements(refreshAvailableYears: true)

@@ -24,8 +24,14 @@ private enum QuickExpenseSheet: Identifiable {
 }
 
 struct CategoryMovementNavigationRequest: Equatable {
+    enum Scope: Equatable {
+        case all
+        case currentMonthExpenses
+    }
+
     let id = UUID()
     let categoryID: UUID
+    var scope: Scope = .all
 }
 
 private enum FinanceTab: Hashable {
@@ -71,7 +77,13 @@ struct ContentView: View {
 
     private func tabContent(pendingRecurringCount: Int) -> some View {
         TabView(selection: $selectedTab) {
-            ChartsView()
+            ChartsView(onSelectBudgetCategoryMovements: { categoryID in
+                categoryMovementNavigationRequest = CategoryMovementNavigationRequest(
+                    categoryID: categoryID,
+                    scope: .currentMonthExpenses
+                )
+                selectedTab = .movements
+            })
                 .tabItem {
                     Label("Inicio", systemImage: "house.fill")
                 }

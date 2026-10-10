@@ -142,6 +142,7 @@ struct AccountListView: View {
                                 } label: {
                                     Label("Eliminar", systemImage: "trash")
                                 }
+                                .tint(.red)
                             }
                         }
                     }

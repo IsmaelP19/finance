@@ -41,16 +41,11 @@ struct AccountRowView: View {
 
             Spacer(minLength: 12)
 
-            VStack(alignment: .trailing, spacing: 3) {
-                Text(account.balance.masked(hideBalances))
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(account.balance.isNegative ? .red : .primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                Text("Saldo")
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(.secondary)
-            }
+            Text(account.balance.masked(hideBalances))
+                .font(.body.weight(.semibold))
+                .foregroundStyle(account.balance.isNegative ? .red : .primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
 
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))

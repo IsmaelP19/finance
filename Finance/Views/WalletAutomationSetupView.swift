@@ -93,19 +93,18 @@ struct WalletAutomationSetupView: View {
             WalletSetupStep(number: 1, title: "Selecciona las tarjetas", detail: "Abre la plantilla en Atajos. En «Al usar», marca las tarjetas Wallet de la misma cuenta.")
             WalletSetupStep(number: 2, title: "Añade Finance", detail: "Debajo de «Texto», añade «Registrar gasto desde Wallet».")
 
-            VStack(alignment: .leading, spacing: FinanceGlassTokens.Spacing.small) {
-                Text("3. Completa los campos")
-                    .font(.headline)
-                    .accessibilityAddTraits(.isHeader)
-                Text("Elige la cuenta bancaria y asigna:")
-                    .font(.body)
+            WalletSetupStep(
+                number: 3,
+                title: "Completa los campos",
+                detail: "Elige la cuenta bancaria y asigna:",
+                accessibilityExtra: "Importe: Texto. Comercio: Comercio. Tarjeta: Tarjeta o pase. Fecha: Fecha actual. Moneda: Código de Finance, por ejemplo EUR."
+            ) {
                 WalletFieldRow(label: "Importe", value: "Texto")
                 WalletFieldRow(label: "Comercio", value: "Comercio")
                 WalletFieldRow(label: "Tarjeta", value: "Tarjeta o pase")
                 WalletFieldRow(label: "Fecha", value: "Fecha actual")
                 WalletFieldRow(label: "Moneda", value: "Código de Finance (p. ej. EUR)")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
 
             Text("Activa solo tarjetas que siempre paguen en esa moneda.")
                 .font(.subheadline)
@@ -167,12 +166,28 @@ private struct WalletFieldRow: View {
     }
 }
 
-private struct WalletSetupStep: View {
+private struct WalletSetupStep<Content: View>: View {
     @ScaledMetric(relativeTo: .headline) private var markerSize = 36.0
 
     let number: Int
     let title: String
     let detail: String
+    let accessibilityExtra: String?
+    let content: Content
+
+    init(
+        number: Int,
+        title: String,
+        detail: String,
+        accessibilityExtra: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.number = number
+        self.title = title
+        self.detail = detail
+        self.accessibilityExtra = accessibilityExtra
+        self.content = content()
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: FinanceGlassTokens.Spacing.medium) {
@@ -190,11 +205,28 @@ private struct WalletSetupStep: View {
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                content
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Paso \(number): \(title). \(detail)")
+        .accessibilityLabel(accessibilityLabelText)
+    }
+
+    private var accessibilityLabelText: String {
+        var label = "Paso \(number): \(title). \(detail)"
+        if let accessibilityExtra, !accessibilityExtra.isEmpty {
+            label += " \(accessibilityExtra)"
+        }
+        return label
+    }
+}
+
+extension WalletSetupStep where Content == EmptyView {
+    init(number: Int, title: String, detail: String, accessibilityExtra: String? = nil) {
+        self.init(number: number, title: title, detail: detail, accessibilityExtra: accessibilityExtra) {
+            EmptyView()
+        }
     }
 }
 

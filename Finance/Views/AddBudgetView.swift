@@ -180,6 +180,7 @@ struct AddBudgetView: View {
                     } label: {
                         Label("Eliminar", systemImage: "trash")
                     }
+                    .tint(.red)
                 }
             }
 

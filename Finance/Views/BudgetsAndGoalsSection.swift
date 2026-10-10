@@ -19,6 +19,7 @@ struct BudgetsSection: View {
     let budgets: [Budget]
     let movements: [Movement]
     let currencyCode: String
+    let onSelectCategoryMovements: (UUID) -> Void
 
     @State private var showingAddBudget = false
     @State private var showingDetail = false
@@ -107,7 +108,15 @@ struct BudgetsSection: View {
         }
         .sheet(isPresented: $showingDetail) {
             if let budget {
-                BudgetDetailView(budget: budget, movements: movements, currencyCode: currencyCode)
+                BudgetDetailView(
+                    budget: budget,
+                    movements: movements,
+                    currencyCode: currencyCode,
+                    onSelectCategoryMovements: { categoryID in
+                        showingDetail = false
+                        onSelectCategoryMovements(categoryID)
+                    }
+                )
             }
         }
         .confirmationDialog(
@@ -383,6 +392,7 @@ struct BudgetDetailView: View {
     let budget: Budget
     let movements: [Movement]
     let currencyCode: String
+    let onSelectCategoryMovements: (UUID) -> Void
 
     private var sortedItems: [BudgetItem] {
         budget.items
@@ -531,7 +541,10 @@ struct BudgetDetailView: View {
                         BudgetItemRow(
                             item: item,
                             spent: item.category.map { spentByCategory[$0.id, default: 0] } ?? 0,
-                            currencyCode: currencyCode
+                            currencyCode: currencyCode,
+                            onTap: item.category.map { category in
+                                { onSelectCategoryMovements(category.id) }
+                            }
                         )
                     }
                 }
@@ -1107,6 +1120,7 @@ private struct BudgetItemRow: View {
     let item: BudgetItem
     let spent: Decimal
     let currencyCode: String
+    let onTap: (() -> Void)?
 
     private var progress: Double {
         guard item.allocatedAmount > 0 else { return 0 }
@@ -1121,7 +1135,21 @@ private struct BudgetItemRow: View {
 
     private var remaining: Decimal { item.allocatedAmount - spent }
 
+    @ViewBuilder
     var body: some View {
+        if let onTap {
+            Button(action: onTap) {
+                cardContent
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Muestra los gastos de esta categoría del mes actual")
+        } else {
+            cardContent
+        }
+    }
+
+    private var cardContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 if let cat = item.category {

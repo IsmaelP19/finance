@@ -49,6 +49,8 @@ private struct ChartsDashboardData {
 
 /// Pestana de graficos y resumen del patrimonio.
 struct ChartsView: View {
+    let onSelectBudgetCategoryMovements: (UUID) -> Void
+
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage(AppCurrency.storageKey) private var appCurrencyCode = AppCurrency.fallbackCode
@@ -184,7 +186,8 @@ struct ChartsView: View {
                         BudgetsSection(
                             budgets: budgets,
                             movements: movements,
-                            currencyCode: appCurrencyCode
+                            currencyCode: appCurrencyCode,
+                            onSelectCategoryMovements: onSelectBudgetCategoryMovements
                         )
 
                         PatrimonyPieChart(data: data.pieTypeBalances, currencyCode: appCurrencyCode)

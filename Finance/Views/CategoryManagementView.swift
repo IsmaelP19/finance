@@ -106,24 +106,25 @@ struct CategoryManagementView: View {
             onSelectCategoryMovements(category.id)
         } label: {
             categoryRowContent(category)
+                .padding(.leading, 16)
+                .padding(.trailing, 16)
+                .padding(.vertical, 10)
+                .background { categoryRowBackground(category) }
+                .overlay(alignment: .bottom) {
+                    if category.id != categories.last?.id {
+                        Rectangle()
+                            .fill(.primary.opacity(0.08))
+                            .frame(height: 1)
+                            .padding(.leading, 72)
+                            .padding(.trailing, 16)
+                            .accessibilityHidden(true)
+                    }
+                }
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Ver movimientos de \(category.name), \(movementCountText(for: category))")
         .accessibilityHint("Activa para ver movimientos. Acciones disponibles: Editar y Eliminar.")
-        .padding(.leading, 16)
-        .padding(.trailing, 16)
-        .padding(.vertical, 10)
-        .background { categoryRowBackground(category) }
-        .overlay(alignment: .bottom) {
-            if category.id != categories.last?.id {
-                Rectangle()
-                    .fill(.primary.opacity(0.08))
-                    .frame(height: 1)
-                    .padding(.leading, 72)
-                    .padding(.trailing, 16)
-                    .accessibilityHidden(true)
-            }
-        }
         .offset(x: category.id == hintedCategoryID ? swipeHintOffset : 0)
         .financeGlassClearListRow(insets: EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
         .swipeActions(edge: .leading, allowsFullSwipe: false) {

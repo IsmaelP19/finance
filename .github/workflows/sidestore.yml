@@ -131,9 +131,10 @@ jobs:
             --previous "$RUNNER_TEMP/previous-source.json" \
             --source-url 'https://ismaelp19.github.io/finance/source.json' \
             --download-url "https://github.com/$GITHUB_REPOSITORY/releases/download/sidestore-$GITHUB_RUN_NUMBER/Finance.ipa" \
-            --icon-url 'https://ismaelp19.github.io/finance/icon.png' \
+            --icon-url 'https://ismaelp19.github.io/finance/app-icon.png' \
             --output site/source.json
           cp Finance/Assets.xcassets/AppIcon.appiconset/appicon-light.png site/icon.png
+          cp Finance/Assets.xcassets/AppIcon.appiconset/appicon-light.png site/app-icon.png
           mkdir -p site/screenshots
           for screenshot in home.png movements.png investments.png wrapped-september.png; do
             cp "docs/screenshots/$screenshot" "site/screenshots/$screenshot"
