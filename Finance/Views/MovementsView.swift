@@ -112,6 +112,11 @@ private struct MovementRowData: Identifiable {
     var id: UUID { movement.id }
 }
 
+private struct MovementDayGroup: Identifiable {
+    let id: Date
+    var rows: [MovementRowData]
+}
+
 private struct MovementEditingSelection: Identifiable {
     let id: UUID
     let movement: Movement
@@ -205,6 +210,12 @@ struct MovementsView: View {
     private static let movementPageSize = 20
     private static let movementFetchBatchSize = 120
     private static let movementSummaryBatchSize = 60
+    private static let movementDayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "es_ES")
+        formatter.dateFormat = "EEEE, d MMM"
+        return formatter
+    }()
 
     @Binding var categoryNavigationRequest: CategoryMovementNavigationRequest?
     let isActiveTab: Bool
@@ -446,6 +457,17 @@ struct MovementsView: View {
         }
     }
 
+    private var visibleMovementDayGroups: [MovementDayGroup] {
+        visibleMovementRows.reduce(into: []) { groups, row in
+            let day = calendar.startOfDay(for: row.movement.occurredAt)
+            if groups.last?.id == day {
+                groups[groups.count - 1].rows.append(row)
+            } else {
+                groups.append(MovementDayGroup(id: day, rows: [row]))
+            }
+        }
+    }
+
     private var archivedAccountIDs: Set<UUID> {
         Set(accounts.filter(\.isArchived).map(\.id))
     }
@@ -486,16 +508,9 @@ struct MovementsView: View {
 
                 if !activeAccounts.isEmpty {
                     accountFilterControl
-                        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 8, trailing: 16))
+                        .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 4, trailing: 16))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
-                }
-
-                if shouldShowFiltersHeader {
-                    summaryHeaderContent
-                    .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 8, trailing: 16))
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
                 }
 
                 if shouldShowExpandedPendingRecurringSection && !pendingRecurringMovements.isEmpty {
@@ -525,12 +540,7 @@ struct MovementsView: View {
                     )
                     .financeGlassCenteredEmptyListRow(minHeight: 460)
                 } else if hasAnyMovements && movementCount == 0 {
-                    FinanceEmptyStateContent(
-                        "Sin movimientos con estos filtros",
-                        systemImage: "line.3.horizontal.decrease.circle",
-                        description: Text("Ajusta cuenta, tipo o búsqueda para ver más resultados")
-                    )
-                    .financeGlassCenteredEmptyListRow(minHeight: 460)
+                    filteredEmptyState
                 } else {
                     if shouldShowExpandedPendingRecurringSection && !pendingRecurringMovements.isEmpty {
                         MovementInlineSectionHeader(
@@ -830,6 +840,25 @@ struct MovementsView: View {
     }
 
     @ViewBuilder
+    private var filteredEmptyState: some View {
+        let content = FinanceEmptyStateContent(
+            "Sin movimientos con estos filtros",
+            systemImage: "line.3.horizontal.decrease.circle",
+            description: Text("Ajusta cuenta, tipo o búsqueda para ver más resultados")
+        )
+
+        if pendingRecurringMovements.isEmpty {
+            content.financeGlassCenteredEmptyListRow(minHeight: 460)
+        } else {
+            content
+                .padding(.vertical, 16)
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+        }
+    }
+
+    @ViewBuilder
     private func pendingRecurringRow(_ pending: PendingRecurringMovement) -> some View {
         PendingRecurringMovementRowView(
             pending: pending,
@@ -866,9 +895,20 @@ struct MovementsView: View {
     }
 
     private var movementRowsSection: some View {
-        Section {
-            ForEach(visibleMovementRows) { row in
-                movementRow(for: row)
+        Group {
+            ForEach(visibleMovementDayGroups) { group in
+                Section {
+                    ForEach(group.rows) { row in
+                        movementRow(for: row)
+                    }
+                } header: {
+                    Text(movementDayTitle(for: group.id))
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .textCase(nil)
+                    .padding(.top, 8)
+                    .accessibilityAddTraits(.isHeader)
+                }
             }
 
             if visibleFilteredMovements.count < movementCount {
@@ -894,6 +934,10 @@ struct MovementsView: View {
         .listRowSeparator(.hidden)
         .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
         .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityValue(row.movement.occurredAt.asSpanishShortDate())
+        .accessibilityHint("Abre el detalle del movimiento")
         .onTapGesture {
             presentMovementDetail(for: row.movement)
         }
@@ -917,6 +961,12 @@ struct MovementsView: View {
             }
             .tint(.red)
         }
+    }
+
+    private func movementDayTitle(for date: Date) -> String {
+        let title = Self.movementDayFormatter.string(from: date)
+        return title.prefix(1).uppercased(with: Self.movementDayFormatter.locale)
+            + title.dropFirst()
     }
 
     private var movementPaginationRow: some View {
@@ -1868,8 +1918,8 @@ struct MovementsView: View {
     }
 
     private var filtersHeader: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(activePeriodLabel)
                         .font(.title3)
@@ -1903,7 +1953,7 @@ struct MovementsView: View {
                     }
                     .font(.subheadline.weight(.semibold))
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
+                    .padding(.vertical, 8)
                     .background(Color.financeAccent.opacity(0.13), in: Capsule())
                     .contentShape(Capsule())
                 }
@@ -1935,10 +1985,10 @@ struct MovementsView: View {
             }
             .scrollClipDisabled()
         }
-        .padding(14)
+        .padding(12)
         .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.hero)
         .padding(.horizontal, 16)
-        .padding(.vertical, 4)
+        .padding(.vertical, 2)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -2342,8 +2392,8 @@ private struct MovementSummaryView: View {
     let hideBalances: Bool
 
     var body: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 12) {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
                 SummaryPill(title: "Ingresos", value: totalIncome.masked(hideBalances, code: currencyCode), color: .green)
                 Divider().opacity(0.35)
                 SummaryPill(title: "Gastos", value: totalExpense.masked(hideBalances, code: currencyCode), color: .red)
@@ -2351,7 +2401,7 @@ private struct MovementSummaryView: View {
 
             Divider().opacity(0.25)
 
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 SummaryPill(title: "Balance", value: netBalance.masked(hideBalances, code: currencyCode), color: netBalance >= 0 ? .green : .red)
                 Divider().opacity(0.35)
                 SummaryPill(title: "Movimientos", value: "\(movementCount)", color: .financeAccent)
@@ -2363,23 +2413,23 @@ private struct MovementSummaryView: View {
 
 private struct MovementSummaryLoadingView: View {
     var body: some View {
-        VStack(spacing: 10) {
-            HStack(spacing: 10) {
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
                 RoundedRectangle(cornerRadius: 14)
                     .fill(Color.secondary.opacity(0.14))
-                    .frame(height: 58)
+                    .frame(height: 48)
                 RoundedRectangle(cornerRadius: 14)
                     .fill(Color.secondary.opacity(0.14))
-                    .frame(height: 58)
+                    .frame(height: 48)
             }
 
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.secondary.opacity(0.12))
-                .frame(height: 34)
+                .frame(height: 30)
 
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.secondary.opacity(0.12))
-                .frame(height: 34)
+                .frame(height: 30)
         }
         .financeGlassCard(cornerRadius: FinanceGlassTokens.Radius.card)
         .redacted(reason: .placeholder)
@@ -2505,6 +2555,8 @@ private struct PendingRecurringMovementRowView: View {
 
 @MainActor
 private struct MovementRowView: View, @MainActor Equatable {
+    @Environment(\.colorScheme) private var colorScheme
+
     let movement: Movement
     let currencyCode: String
     let hideBalances: Bool
@@ -2535,20 +2587,8 @@ private struct MovementRowView: View, @MainActor Equatable {
         return "Saldo: \(resultingBalance.masked(hideBalances, code: currencyCode))"
     }
 
-    private var reimbursementExpectedText: String? {
-        guard movement.type == .expense, movement.isSharedExpense else { return nil }
-        let pending = movement.pendingReimbursementAmount(recoveredAmount: recoveredReimbursementAmount)
-        guard pending > 0 else { return nil }
-        return "Pendiente: \(pending.masked(hideBalances, code: currencyCode))"
-    }
-
     private var detailLines: [String] {
         var lines: [String] = [accountAndBankText]
-
-        if let reimbursementExpectedText {
-            lines.append(reimbursementExpectedText)
-        }
-
         if let balanceAfterText {
             lines.append(balanceAfterText)
         }
@@ -2604,18 +2644,72 @@ private struct MovementRowView: View, @MainActor Equatable {
     }
 
     var body: some View {
-        RecurringMovementRowContent(
-            type: movement.type,
-            concept: movement.concept,
-            badges: badgeItems,
-            detailLines: detailLines,
-            amountText: displayAmount,
-            amountColor: displayAmountColor,
-            trailingInfoText: personalAmountText,
-            dateText: movement.occurredAt.asSpanishShortDate(),
-            style: .movementListCard
-        )
-        .contentTransition(.opacity)
+        movementIdentity
+            .padding(.vertical, 12)
+            .padding(.horizontal, 14)
+            .background(Color.primary.opacity(colorScheme == .dark ? 0.045 : 0.038), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.07), lineWidth: 1)
+            )
+            .padding(.vertical, 2)
+            .contentTransition(.opacity)
+    }
+
+    private var movementIdentity: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: movement.type.icon)
+                .font(.body.weight(.semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(movement.type.color)
+                .frame(width: 40, height: 40)
+                .background(movement.type.color.opacity(colorScheme == .dark ? 0.18 : 0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(alignment: .top, spacing: 20) {
+                    Text(movement.concept)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    amountColumn
+                        .frame(width: 100, alignment: .trailing)
+                }
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        ForEach(badgeItems) { badge in
+                            CategoryChipView(name: badge.name, iconName: badge.iconName, iconRaw: badge.iconRaw, color: badge.color)
+                                .fixedSize()
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(badgeItems) { badge in
+                            CategoryChipView(name: badge.name, iconName: badge.iconName, iconRaw: badge.iconRaw, color: badge.color)
+                        }
+                    }
+                }
+
+                ForEach(detailLines, id: \.self) { line in
+                    Text(line)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var amountColumn: some View {
+        Text(displayAmount)
+            .font(.headline.weight(.semibold))
+            .foregroundStyle(displayAmountColor)
+            .fixedSize(horizontal: false, vertical: true)
+            .multilineTextAlignment(.trailing)
     }
 
     private var displayAmount: String {
@@ -2638,9 +2732,4 @@ private struct MovementRowView: View, @MainActor Equatable {
         }
     }
 
-    private var personalAmountText: String? {
-        guard movement.type == .expense, movement.isSharedExpense else { return nil }
-        let signedPersonal = movement.statsExpenseAmount * movement.type.signMultiplier
-        return "Mi parte: \(signedPersonal.masked(hideBalances, code: currencyCode))"
-    }
 }
